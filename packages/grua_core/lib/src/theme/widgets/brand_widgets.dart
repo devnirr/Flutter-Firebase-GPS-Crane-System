@@ -20,19 +20,27 @@ class FloatingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final card = DecoratedBox(
+    // The shadow goes on a DecoratedBox and the surface colour on a Material,
+    // rather than both on the DecoratedBox. ListTile and InkWell paint their
+    // splashes onto the nearest Material ancestor, so a *coloured* box between
+    // them and it silently swallows every ripple — the card looks right and
+    // nothing responds to touch.
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: BrandColors.white,
         borderRadius: borderRadius,
         boxShadow: Shadows.floating,
       ),
-      child: Padding(padding: padding, child: child),
-    );
-
-    if (onTap == null) return card;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(borderRadius: borderRadius, onTap: onTap, child: card),
+      child: Material(
+        color: BrandColors.white,
+        borderRadius: borderRadius,
+        clipBehavior: Clip.antiAlias,
+        child: onTap == null
+            ? Padding(padding: padding, child: child)
+            : InkWell(
+                onTap: onTap,
+                child: Padding(padding: padding, child: child),
+              ),
+      ),
     );
   }
 }
@@ -55,15 +63,21 @@ class BottomActionSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Same split as FloatingCard: shadow on the box, colour on the Material,
+    // so anything ink-based dropped into a sheet still ripples.
     return DecoratedBox(
       decoration: const BoxDecoration(
-        color: BrandColors.white,
         borderRadius: Corners.sheet,
         boxShadow: Shadows.sheet,
       ),
-      child: SafeArea(
-        top: false,
-        child: Padding(padding: padding, child: child),
+      child: Material(
+        color: BrandColors.white,
+        borderRadius: Corners.sheet,
+        clipBehavior: Clip.antiAlias,
+        child: SafeArea(
+          top: false,
+          child: Padding(padding: padding, child: child),
+        ),
       ),
     );
   }

@@ -16,6 +16,10 @@ dependencies:
   grua_core:
     path: ../../packages/grua_core
 
+  # State and routing are used directly by screens in every app.
+  flutter_riverpod: ^3.1.0
+  go_router: ^18.0.1
+
   # Maps + location
   google_maps_flutter: ^2.18.0
   geolocator: ^14.0.3

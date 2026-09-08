@@ -1,0 +1,156 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:grua_core/grua_core.dart';
+
+import '../../router.dart';
+
+/// Dominican mobile prefixes. Numbers here are +1 with one of these area
+/// codes, so validating on them catches the common typo of a missing digit
+/// before we spend an SMS on it.
+const _doAreaCodes = {'809', '829', '849'};
+
+class PhoneScreen extends ConsumerStatefulWidget {
+  const PhoneScreen({super.key});
+
+  @override
+  ConsumerState<PhoneScreen> createState() => _PhoneScreenState();
+}
+
+class _PhoneScreenState extends ConsumerState<PhoneScreen> {
+  final _controller = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  var _sending = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String get _digits => _controller.text.replaceAll(RegExp(r'\D'), '');
+
+  bool get _isValid =>
+      _digits.length == 10 && _doAreaCodes.contains(_digits.substring(0, 3));
+
+  Future<void> _submit() async {
+    if (!_isValid || _sending) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+
+    final e164 = '+1$_digits';
+    final result =
+        await ref.read(authRepositoryProvider).startPhoneVerification(e164);
+    if (!mounted) return;
+
+    result.fold(
+      (verificationId) => context.push(
+        '${Routes.otp}?vid=$verificationId&phone=${Uri.encodeComponent(e164)}',
+      ),
+      (failure) => setState(() {
+        _sending = false;
+        _error = failure.userMessage;
+      }),
+    );
+    if (mounted && result.isOk) setState(() => _sending = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Scaffold(
+      appBar: AppBar(
+        leading: BackButton(onPressed: () => context.pop()),
+        title: const GruaLogo(size: 74, showWordmark: false),
+      ),
+      body: SafeArea(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
+            children: [
+              const SizedBox(height: Insets.xl),
+              Text('¿Cuál es tu número?', style: text.headlineMedium),
+              const SizedBox(height: Insets.sm),
+              Text(
+                'Te enviaremos un código por SMS para confirmar que eres tú.',
+                style: text.bodyLarge?.copyWith(color: BrandColors.grey600),
+              ),
+              const SizedBox(height: Insets.xxxl),
+              const FieldLabel('Número de teléfono'),
+              const SizedBox(height: Insets.sm),
+              TextFormField(
+                controller: _controller,
+                autofocus: true,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.done,
+                onChanged: (_) => setState(() => _error = null),
+                onFieldSubmitted: (_) => _submit(),
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(10),
+                  _DoPhoneFormatter(),
+                ],
+                style: text.headlineSmall,
+                decoration: const InputDecoration(
+                  prefixText: '+1  ',
+                  hintText: '809-555-1234',
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: Insets.lg),
+                InlineNotice(message: _error!, tone: NoticeTone.error),
+              ],
+              const SizedBox(height: Insets.xl),
+              ElevatedButton(
+                onPressed: _isValid && !_sending ? _submit : null,
+                child: _sending
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: BrandColors.white,
+                        ),
+                      )
+                    : const Text('Enviar código'),
+              ),
+              const SizedBox(height: Insets.lg),
+              Text(
+                'Solo aceptamos números dominicanos (809, 829 y 849).',
+                textAlign: TextAlign.center,
+                style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Formats as `809-555-1234` while keeping the raw digits in the model.
+class _DoPhoneFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i == 3 || i == 6) buffer.write('-');
+      buffer.write(digits[i]);
+    }
+    final formatted = buffer.toString();
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}

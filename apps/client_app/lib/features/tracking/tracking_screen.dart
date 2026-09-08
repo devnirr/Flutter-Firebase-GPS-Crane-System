@@ -1,0 +1,557 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:grua_core/grua_core.dart';
+
+import '../../router.dart';
+
+/// What the customer watches while they wait on the shoulder.
+///
+/// Red ground, the status as the headline, the map in a card with the truck
+/// gliding across it, and three actions at the bottom. The status line is
+/// deliberately vague about dispatch: a customer watching `offered` flick back
+/// to `pending_dispatch` five times as the cascade works loses confidence in a
+/// system that is behaving correctly.
+class TrackingScreen extends ConsumerWidget {
+  const TrackingScreen({required this.serviceId, super.key});
+
+  final String serviceId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final serviceAsync = ref.watch(serviceByIdProvider(serviceId));
+
+    return Scaffold(
+      backgroundColor: BrandColors.red,
+      body: serviceAsync.when(
+        loading: () => const Center(
+          child: CircularProgressIndicator(color: BrandColors.white),
+        ),
+        error: (error, _) => _ErrorBody(
+          message: 'No pudimos cargar tu servicio.',
+          onBack: () => context.go(Routes.home),
+        ),
+        data: (service) {
+          if (service == null) {
+            return _ErrorBody(
+              message: 'Este servicio ya no existe.',
+              onBack: () => context.go(Routes.home),
+            );
+          }
+          return _TrackingBody(service: service);
+        },
+      ),
+    );
+  }
+}
+
+class _TrackingBody extends ConsumerWidget {
+  const _TrackingBody({required this.service});
+
+  final Service service;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tracking = ref.watch(serviceTrackingProvider(service.id)).value;
+    final text = Theme.of(context).textTheme;
+    final now = DateTime.now().toUtc();
+
+    if (service.isTerminal) {
+      return _TerminalBody(service: service);
+    }
+
+    return SafeArea(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
+            child: Row(
+              children: [
+                const GruaLogo(size: 78, variant: GruaLogoVariant.onDark),
+                const Spacer(),
+                Text(
+                  service.code,
+                  style: text.labelMedium?.copyWith(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Insets.gutter,
+              vertical: Insets.md,
+            ),
+            child: Text(
+              service.status.label,
+              textAlign: TextAlign.center,
+              style: text.headlineLarge?.copyWith(color: BrandColors.white),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
+              child: _MapCard(service: service, tracking: tracking, now: now),
+            ),
+          ),
+          const SizedBox(height: Insets.lg),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
+            child: _DriverCard(service: service, tracking: tracking, now: now),
+          ),
+          const SizedBox(height: Insets.lg),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              Insets.gutter,
+              0,
+              Insets.gutter,
+              Insets.lg,
+            ),
+            child: _Actions(service: service),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MapCard extends StatelessWidget {
+  const _MapCard({
+    required this.service,
+    required this.tracking,
+    required this.now,
+  });
+
+  final Service service;
+  final ServiceTracking? tracking;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final truckAt = tracking?.position;
+    final stale = tracking?.isStale(now) ?? true;
+
+    return ClipRRect(
+      borderRadius: Corners.brLg,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: SchematicMap(
+              center: truckAt ?? service.pickup.geo,
+              zoom: 14.2,
+              showAttribution: false,
+              route: [
+                service.pickup.geo,
+                if (service.dropoff != null) service.dropoff!.geo,
+              ],
+              markers: [
+                MapMarker(
+                  position: service.pickup.geo,
+                  kind: MapMarkerKind.pickup,
+                ),
+                if (service.dropoff != null)
+                  MapMarker(
+                    position: service.dropoff!.geo,
+                    kind: MapMarkerKind.dropoff,
+                  ),
+                if (truckAt != null)
+                  MapMarker(
+                    position: truckAt,
+                    kind: stale
+                        ? MapMarkerKind.truckStale
+                        : MapMarkerKind.truckOnService,
+                    heading: tracking?.heading ?? 0,
+                  ),
+              ],
+            ),
+          ),
+          if (tracking != null)
+            Positioned(
+              top: Insets.lg,
+              left: 0,
+              right: 0,
+              child: Center(child: _EtaBubble(tracking: tracking!, stale: stale)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The "ETA 12 mins" callout from the mockup.
+class _EtaBubble extends StatelessWidget {
+  const _EtaBubble({required this.tracking, required this.stale});
+
+  final ServiceTracking tracking;
+  final bool stale;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return FloatingCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.lg,
+        vertical: Insets.md,
+      ),
+      borderRadius: Corners.brMd,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            stale ? Icons.wifi_off : Icons.local_shipping,
+            size: 20,
+            color: stale ? BrandColors.grey600 : BrandColors.red,
+          ),
+          const SizedBox(width: Insets.sm),
+          Text(
+            // A frozen marker in the wrong place is worse than admitting the
+            // connection dropped.
+            stale ? 'Reconectando con el chofer…' : 'Llega en ${tracking.etaLabel}',
+            style: text.titleMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DriverCard extends StatelessWidget {
+  const _DriverCard({
+    required this.service,
+    required this.tracking,
+    required this.now,
+  });
+
+  final Service service;
+  final ServiceTracking? tracking;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    if (!service.hasDriver) {
+      return FloatingCard(
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            ),
+            const SizedBox(width: Insets.lg),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Buscando la grúa más cercana', style: text.titleSmall),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Te avisamos apenas un chofer acepte.',
+                    style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final remaining = tracking?.remainingMeters ?? 0;
+    final distanceLabel = remaining >= 1000
+        ? '${(remaining / 1000).toStringAsFixed(1)} km'
+        : '$remaining m';
+
+    return FloatingCard(
+      child: Column(
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: BrandColors.redTint,
+                child: Text(
+                  service.driverName.isEmpty ? '?' : service.driverName[0],
+                  style: text.titleLarge?.copyWith(color: BrandColors.red),
+                ),
+              ),
+              const SizedBox(width: Insets.lg),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(service.driverName, style: text.titleMedium),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        if (service.truckPlate.isNotEmpty) service.truckPlate,
+                        if (service.truckLabel.isNotEmpty) service.truckLabel,
+                      ].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.star, size: 15, color: BrandColors.warning),
+                      const SizedBox(width: 2),
+                      Text(
+                        service.driverRating.toStringAsFixed(1),
+                        style: text.labelMedium,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    distanceLabel,
+                    style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const Divider(height: Insets.xxl),
+          RouteSummary(
+            pickup: service.pickup.displayAddress,
+            pickupReference: service.pickup.reference,
+            dropoff: service.dropoff?.displayAddress,
+          ),
+          const SizedBox(height: Insets.md),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  service.payment.method.label,
+                  style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+                ),
+              ),
+              Text(service.totalCents.formatDOP, style: text.titleMedium),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Actions extends ConsumerWidget {
+  const _Actions({required this.service});
+
+  final Service service;
+
+  Future<void> _cancel(BuildContext context, WidgetRef ref) async {
+    final now = DateTime.now().toUtc();
+    final fee = service.cancellationIncursFee(now);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('¿Cancelar el servicio?'),
+        content: Text(
+          fee
+              ? 'El chofer ya va en camino, así que se aplicará un cargo por '
+                  'cancelación.'
+              : 'Todavía no se aplica ningún cargo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Volver'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: BrandColors.danger),
+            child: const Text('Sí, cancelar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final result = await ref.read(functionsGatewayProvider).cancelService(
+          serviceId: service.id,
+          reason: 'client_request',
+        );
+    if (!context.mounted) return;
+
+    result.fold(
+      (_) => context.go(Routes.home),
+      (failure) => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(failure.userMessage)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final canContact = service.canChat;
+
+    return Row(
+      children: [
+        Expanded(
+          child: _ActionButton(
+            icon: Icons.chat_bubble_outline,
+            label: 'Chat',
+            onTap: canContact
+                ? () => context.push(Routes.chatFor(service.id))
+                : null,
+          ),
+        ),
+        const SizedBox(width: Insets.md),
+        Expanded(
+          child: _ActionButton(
+            icon: Icons.call_outlined,
+            label: 'Llamar',
+            onTap: canContact
+                ? () => ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Llamando a ${service.driverPhone}…'),
+                      ),
+                    )
+                : null,
+          ),
+        ),
+        const SizedBox(width: Insets.md),
+        Expanded(
+          child: _ActionButton(
+            icon: Icons.close,
+            label: 'Cancelar',
+            destructive: true,
+            onTap: service.isCancellableByClient
+                ? () => _cancel(context, ref)
+                : null,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final color = !enabled
+        ? BrandColors.grey400
+        : destructive
+            ? BrandColors.danger
+            : BrandColors.ink;
+
+    return Material(
+      color: BrandColors.white,
+      borderRadius: Corners.brMd,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: Corners.brMd,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Insets.md),
+          child: Column(
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(height: Insets.xs),
+              Text(
+                label,
+                style: Theme.of(context)
+                    .textTheme
+                    .labelMedium
+                    ?.copyWith(color: color),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown once the service ends, so the screen resolves rather than sitting on a
+/// map that will never move again.
+class _TerminalBody extends StatelessWidget {
+  const _TerminalBody({required this.service});
+
+  final Service service;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = service.status == ServiceStatus.closed ||
+        service.status == ServiceStatus.completed;
+
+    return SafeArea(
+      child: Column(
+        children: [
+          Expanded(
+            child: EmptyState(
+              title: completed ? 'Servicio completado' : 'Servicio cancelado',
+              message: completed
+                  ? 'Gracias por usar Grúas RD. Puedes ver la factura en tu '
+                      'historial.'
+                  : 'Este servicio fue cancelado. Puedes pedir otra grúa cuando '
+                      'lo necesites.',
+              icon: completed ? Icons.check_circle_outline : Icons.cancel_outlined,
+              tone: completed ? EmptyStateTone.success : EmptyStateTone.neutral,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(Insets.gutter),
+            child: Column(
+              children: [
+                ElevatedButton(
+                  onPressed: () => context.go(Routes.home),
+                  child: const Text('Volver al inicio'),
+                ),
+                const SizedBox(height: Insets.md),
+                OutlinedButton(
+                  onPressed: () => context.go(Routes.detailFor(service.id)),
+                  child: const Text('Ver detalle y factura'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorBody extends StatelessWidget {
+  const _ErrorBody({required this.message, required this.onBack});
+
+  final String message;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Center(
+        child: EmptyState(
+          title: 'Algo salió mal',
+          message: message,
+          icon: Icons.error_outline,
+          tone: EmptyStateTone.error,
+          actionLabel: 'Ir al inicio',
+          onAction: onBack,
+        ),
+      ),
+    );
+  }
+}
