@@ -66,3 +66,10 @@ android/key.properties
 # ---- OS ----
 .DS_Store
 Thumbs.db
+
+# ---- Local agent tooling ----
+# Installed by the Firebase CLI, not part of the product. Commit these instead
+# if the team wants everyone on the same skill versions.
+.agents/
+.claude/
+skills-lock.json

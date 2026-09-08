@@ -57,6 +57,7 @@ class DefaultFirebaseOptions {
     appId: '1:134649057031:web:b4da1b0878dbbb7a1affa2',
     messagingSenderId: '134649057031',
     projectId: 'gruasrd-ce2ae',
+    databaseURL: 'https://gruasrd-ce2ae-default-rtdb.firebaseio.com',
     authDomain: 'gruasrd-ce2ae.firebaseapp.com',
     storageBucket: 'gruasrd-ce2ae.firebasestorage.app',
     measurementId: 'G-FW90CK42RG',

@@ -51,6 +51,7 @@ class DefaultFirebaseOptions {
     appId: '1:134649057031:web:0b57b30251a82f471affa2',
     messagingSenderId: '134649057031',
     projectId: 'gruasrd-ce2ae',
+    databaseURL: 'https://gruasrd-ce2ae-default-rtdb.firebaseio.com',
     authDomain: 'gruasrd-ce2ae.firebaseapp.com',
     storageBucket: 'gruasrd-ce2ae.firebasestorage.app',
     measurementId: 'G-K1W5T264RR',
@@ -61,6 +62,7 @@ class DefaultFirebaseOptions {
     appId: '1:134649057031:android:c378ad17253652ee1affa2',
     messagingSenderId: '134649057031',
     projectId: 'gruasrd-ce2ae',
+    databaseURL: 'https://gruasrd-ce2ae-default-rtdb.firebaseio.com',
     storageBucket: 'gruasrd-ce2ae.firebasestorage.app',
   );
   static const FirebaseOptions ios = FirebaseOptions(
@@ -68,6 +70,7 @@ class DefaultFirebaseOptions {
     appId: '1:134649057031:ios:204b54614e3132d61affa2',
     messagingSenderId: '134649057031',
     projectId: 'gruasrd-ce2ae',
+    databaseURL: 'https://gruasrd-ce2ae-default-rtdb.firebaseio.com',
     storageBucket: 'gruasrd-ce2ae.firebasestorage.app',
     iosBundleId: 'com.gruasrd.driverApp',
   );

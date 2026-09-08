@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "134649057031",
+    "firebase_url": "https://gruasrd-ce2ae-default-rtdb.firebaseio.com",
     "project_id": "gruasrd-ce2ae",
     "storage_bucket": "gruasrd-ce2ae.firebasestorage.app"
   },
@@ -10,6 +11,25 @@
         "mobilesdk_app_id": "1:134649057031:android:264379479dc49bef1affa2",
         "android_client_info": {
           "package_name": "com.gruasrd.client_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAPhool68mqF-XYyWF_a9BTnmMVramlTLU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:134649057031:android:c378ad17253652ee1affa2",
+        "android_client_info": {
+          "package_name": "com.gruasrd.driver_app"
         }
       },
       "oauth_client": [],
