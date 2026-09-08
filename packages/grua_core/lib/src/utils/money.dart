@@ -7,14 +7,25 @@ import 'package:intl/intl.dart';
 /// reconciles by hand. Every field that holds money is named `*Cents`, and this
 /// extension is the only sanctioned way to turn one into text.
 extension MoneyCents on int {
+  /// Deliberately **not** `es_DO`.
+  ///
+  /// intl's `es_DO` data formats currency the European way and puts the symbol
+  /// last — `2.499,99 RD$` — but the Dominican Republic writes money the US
+  /// way, symbol first: `RD$ 2,499.99`. Using the locale here produces
+  /// invoices that look wrong to every customer who reads one, so the grouping
+  /// pattern is pinned to `en_US` and the symbol supplied explicitly.
+  ///
+  /// Dates are a different matter and *do* use `es_DO` — see `DoTime`.
+  static const String _numberLocale = 'en_US';
+
   static final NumberFormat _dop = NumberFormat.currency(
-    locale: 'es_DO',
+    locale: _numberLocale,
     symbol: r'RD$ ',
     decimalDigits: 2,
   );
 
   static final NumberFormat _dopCompact = NumberFormat.currency(
-    locale: 'es_DO',
+    locale: _numberLocale,
     symbol: r'RD$ ',
     decimalDigits: 0,
   );
@@ -29,7 +40,7 @@ extension MoneyCents on int {
   /// The peso part only, for split displays like a large "2,500" over a small
   /// "RD$".
   String get formatDOPAmountOnly =>
-      NumberFormat.decimalPattern('es_DO').format(this / 100);
+      NumberFormat.decimalPattern(_numberLocale).format(this / 100);
 
   double get asPesos => this / 100;
 }
