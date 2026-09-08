@@ -91,10 +91,16 @@ final functionsGatewayProvider = Provider<FunctionsGateway>(
 
 /// Binds every repository to the in-memory demo backend.
 ///
-/// Used by `--dart-define=DEMO_MODE=true` builds and by widget tests. Pass a
-/// pre-seeded [backend] from a test to control the fixture.
-List<Override> demoOverrides({DemoBackend? backend, UserRole role = UserRole.client}) {
+/// Used by demo builds and by widget tests. Pass a pre-seeded [backend] from a
+/// test to control the fixture, and [actingAs] to sign in as somebody other
+/// than the seeded customer — the driver app runs the same wiring as a chofer.
+List<Override> demoOverrides({
+  DemoBackend? backend,
+  UserRole role = UserRole.client,
+  String? actingAs,
+}) {
   final instance = backend ?? (DemoBackend()..seed());
+  if (actingAs != null) instance.currentUserId = actingAs;
   return [
     demoBackendProvider.overrideWithValue(instance),
     authRepositoryProvider

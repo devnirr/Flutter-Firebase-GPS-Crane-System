@@ -27,12 +27,24 @@ import '../pricing.dart';
 /// money are the server's job; nothing here should ever be pointed at a real
 /// customer.
 class DemoBackend {
-  DemoBackend({math.Random? random, DateTime Function()? clock})
-      : _random = random ?? math.Random(7),
+  DemoBackend({
+    math.Random? random,
+    DateTime Function()? clock,
+    this.dispatchDelay = const Duration(seconds: 6),
+    this.driveStep = const Duration(milliseconds: 1500),
+  })  : _random = random ?? math.Random(7),
         _now = clock ?? DateTime.now;
 
   final math.Random _random;
   final DateTime Function() _now;
+
+  /// How long the simulated cascade takes to assign a chofer. Six seconds in
+  /// the app so a reviewer sees the "buscando grúa" state; near-zero in tests,
+  /// which should not spend real time waiting on a fake dispatcher.
+  final Duration dispatchDelay;
+
+  /// Interval between simulated GPS fixes while a truck is moving.
+  final Duration driveStep;
 
   final Map<String, AppUser> _users = {};
   final Map<String, Driver> _drivers = {};
@@ -471,7 +483,7 @@ class DemoBackend {
   /// Walks the service through the real state machine on a compressed clock, so
   /// a reviewer sees the whole flow in about a minute instead of forty.
   void _scheduleDispatch(String serviceId) {
-    _after(const Duration(seconds: 6), () {
+    _after(dispatchDelay, () {
       final service = _services[serviceId];
       if (service == null || service.status != ServiceStatus.pendingDispatch) return;
 
@@ -543,7 +555,7 @@ class DemoBackend {
     var step = 0;
     final start = _tracking[serviceId]?.position ?? target;
 
-    final timer = Timer.periodic(const Duration(milliseconds: 1500), (t) {
+    final timer = Timer.periodic(driveStep, (t) {
       step++;
       final service = _services[serviceId];
       if (service == null || service.isTerminal) {

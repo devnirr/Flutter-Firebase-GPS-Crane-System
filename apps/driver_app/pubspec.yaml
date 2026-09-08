@@ -47,6 +47,7 @@ dev_dependencies:
     sdk: flutter
   integration_test:
     sdk: flutter
+  intl: ^0.20.3
   very_good_analysis: ^11.0.0
   build_runner: ^2.15.1
   mocktail: ^1.0.5
