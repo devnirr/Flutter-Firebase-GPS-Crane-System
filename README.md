@@ -135,14 +135,33 @@ void main() => runGruaApp(
 That one argument is the whole switch. With it the apps use Firestore; without
 it they use the demo backend, and neither the screens nor the tests change.
 
-### 4. Push the rules
+### 4. Enable the services
+
+Four steps in the console, one click each. Firestore rules deploy without
+them, but the rest do not:
+
+| Console page | Why |
+|---|---|
+| **Authentication** → Sign-in method → enable **Phone** and **Email/Password** | Customers sign in by phone; choferes and staff by email |
+| **Realtime Database** → Create Database → **us-central1** | Live truck positions |
+| **Storage** → Get Started | Driver documents and service photos |
+| **Upgrade to Blaze** | Cloud Functions, the Routes API, and Storage on projects created after Oct 2024 |
+
+The Realtime Database and Storage buckets cannot be created from the CLI —
+`firebase database:instances:create` refuses to make the *default* instance and
+points you at `firebase init database`, which is interactive.
+
+### 5. Push the rules
 
 ```bash
-firebase use dev
-firebase deploy --only firestore:rules,firestore:indexes,database,storage
+firebase deploy --only "firestore:rules,firestore:indexes,database,storage"
 ```
 
-### 5. Or skip the cloud and use the emulator
+**Quote the list in PowerShell.** Without quotes PowerShell splits on the
+commas before the CLI sees them, and you get
+`Cannot understand what targets to deploy`.
+
+### 6. Or skip the cloud and use the emulator
 
 Nothing above is needed to run the real Firestore code locally:
 
