@@ -1,0 +1,136 @@
+import '../domain/enums.dart';
+import '../domain/models/remote_config_models.dart';
+import '../domain/models/service.dart';
+import '../utils/date_time_do.dart';
+import '../utils/money.dart';
+
+/// The pricing formula, in one place.
+///
+/// This is a port of `functions/src/lib/pricing.ts`, and the two must stay
+/// identical: the app uses it to show a customer what a tow will cost before
+/// they commit, and the server uses it to decide what to actually charge. When
+/// they disagree the server wins, and the customer sees a price change at the
+/// worst possible moment — so any edit here is an edit there.
+///
+/// Everything is integer DOP cents. The only division is in the surcharge
+/// helpers, and each rounds before it returns.
+abstract final class Pricing {
+  /// Builds a full quote for a tow.
+  ///
+  /// [at] must be an instant, not a local wall clock: night-rate boundaries are
+  /// evaluated in `America/Santo_Domingo`, which is where a UTC-based
+  /// implementation quietly applies the 22:00 surcharge at 6 p.m.
+  static Quote quoteFor({
+    required PricingConfig config,
+    required TruckType truckType,
+    required double distanceKm,
+    required DateTime at,
+    bool chargeItbis = true,
+    int waitingMinutes = 0,
+    int tollsCents = 0,
+  }) {
+    final baseCents = config.baseCentsFor(truckType);
+    final perKmCents = config.perKmCentsFor(truckType);
+
+    final billableKm =
+        (distanceKm - config.includedKm).clamp(0.0, double.infinity);
+    final distanceCents = (billableKm * perKmCents).round();
+
+    final surcharges = <QuoteSurcharge>[];
+
+    final local = DoTime.toLocal(at);
+    if (config.isNightHour(local.hour)) {
+      surcharges.add(
+        QuoteSurcharge(
+          code: 'nocturno',
+          label: 'Recargo nocturno',
+          cents: Money.bps(baseCents, config.nightSurchargeBps),
+        ),
+      );
+    }
+
+    if (config.holidayDates.contains(DoTime.dateKey(at))) {
+      surcharges.add(
+        QuoteSurcharge(
+          code: 'feriado',
+          label: 'Recargo por día feriado',
+          cents: Money.bps(baseCents, config.holidaySurchargeBps),
+        ),
+      );
+    }
+
+    final billableWaiting =
+        (waitingMinutes - config.freeWaitingMinutes).clamp(0, 1 << 30);
+    if (billableWaiting > 0) {
+      surcharges.add(
+        QuoteSurcharge(
+          code: 'espera',
+          label: 'Tiempo de espera ($billableWaiting min)',
+          cents: billableWaiting * config.perWaitingMinuteCents,
+        ),
+      );
+    }
+
+    if (tollsCents > 0) {
+      surcharges.add(
+        QuoteSurcharge(code: 'peajes', label: 'Peajes', cents: tollsCents),
+      );
+    }
+
+    final surchargeTotal = surcharges.fold(0, (sum, s) => sum + s.cents);
+    final subtotal = baseCents + distanceCents + surchargeTotal;
+    final itbis = (chargeItbis && config.chargeItbis) ? Money.itbis(subtotal) : 0;
+
+    return Quote(
+      pricingVersion: config.version,
+      baseCents: baseCents,
+      includedKm: config.includedKm,
+      perKmCents: perKmCents,
+      distanceKm: distanceKm,
+      distanceCents: distanceCents,
+      surcharges: surcharges,
+      subtotalCents: subtotal,
+      itbisCents: itbis,
+      totalCents: subtotal + itbis,
+    );
+  }
+
+  /// What a client owes for cancelling after the grace period.
+  static int cancellationFeeCents({
+    required PricingConfig config,
+    required DateTime? acceptedAt,
+    required DateTime now,
+  }) {
+    if (acceptedAt == null) return 0;
+    final grace = Duration(minutes: config.cancellationGraceMinutes);
+    if (now.difference(acceptedAt) <= grace) return 0;
+    return config.cancellationFeeCents;
+  }
+
+  /// How much to hold on the card at accept time: the quote plus headroom for
+  /// waiting and reroutes, so a normal job needs one authorization and one
+  /// capture rather than a second charge the customer did not expect.
+  static int authorizationAmountCents({
+    required PricingConfig config,
+    required int quoteTotalCents,
+  }) =>
+      quoteTotalCents + Money.bps(quoteTotalCents, config.authorizationBufferBps);
+
+  /// The company's cut of a completed job.
+  static int commissionCents({
+    required PricingConfig config,
+    required int grossCents,
+  }) =>
+      Money.bps(grossCents, config.commissionBps);
+
+  /// The truck type a vehicle needs. Mirrors [ServiceVehicle.inferredTruckType]
+  /// and exists so the server can call the same rule without a model instance.
+  static TruckType inferTruckType({
+    required VehicleType vehicleType,
+    required VehicleCondition condition,
+  }) {
+    if (condition.requiresFlatbed) return TruckType.plataforma;
+    if (vehicleType == VehicleType.camion) return TruckType.pesada;
+    return TruckType.gancho;
+  }
+}
