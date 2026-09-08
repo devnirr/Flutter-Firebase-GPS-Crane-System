@@ -271,6 +271,12 @@ abstract interface class FunctionsGateway {
     String? comment,
   });
 
+  /// A short-lived signed URL for an invoice PDF.
+  ///
+  /// Minted by a callable rather than read from Storage: the bucket refuses
+  /// client reads, so a leaked path is not a leaked document.
+  Future<Result<String>> invoiceDownloadUrl(String invoiceId);
+
   /// Pushes the chofer's live ETA to `tracking/{serviceId}` for the client.
   Future<Result<void>> publishEta({
     required String serviceId,

@@ -688,6 +688,16 @@ class DemoFunctionsGateway implements FunctionsGateway {
       const Result.ok(null);
 
   @override
+  Future<Result<String>> invoiceDownloadUrl(String invoiceId) async => _delayed(
+        const Result.err(
+          Failure(
+            FailureCode.unknown,
+            message: 'Las facturas en PDF no están disponibles en modo demo.',
+          ),
+        ),
+      );
+
+  @override
   Future<Result<void>> publishEta({
     required String serviceId,
     required int etaSeconds,

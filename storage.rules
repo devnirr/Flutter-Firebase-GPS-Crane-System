@@ -1,0 +1,69 @@
+rules_version = '2';
+
+// Grúas RD 24/7 — Storage access model.
+//
+// Nothing here is public. Every read a user makes goes through a short-lived
+// signed URL minted by a Cloud Function, so a leaked path is not a leaked
+// document — which matters because these are cédulas, licences and insurance
+// certificates.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasAppCheck() {
+      return request.app != null;
+    }
+
+    function ok() {
+      return isSignedIn() && hasAppCheck();
+    }
+
+    function isStaff() {
+      return ok() && request.auth.token.get('role', '') in ['admin', 'ops'];
+    }
+
+    // A phone camera photo is a couple of megabytes; 10 MB leaves room for a
+    // scanned PDF without letting anyone use the bucket as free storage.
+    function isReasonableSize() {
+      return request.resource.size < 10 * 1024 * 1024;
+    }
+
+    function isImageOrPdf() {
+      return request.resource.contentType.matches('image/(jpeg|png|heic|webp)')
+          || request.resource.contentType == 'application/pdf';
+    }
+
+    // Driver paperwork: the chofer uploads, the office reviews.
+    match /drivers/{driverId}/docs/{fileName} {
+      allow read: if isStaff() || (ok() && request.auth.uid == driverId);
+      allow write: if (isStaff() || (ok() && request.auth.uid == driverId))
+                   && isReasonableSize()
+                   && isImageOrPdf();
+    }
+
+    // Photos taken at pickup and dropoff. Written by the assigned chofer;
+    // read access is granted through signed URLs, so no direct client read.
+    match /service_photos/{serviceId}/{fileName} {
+      allow read: if isStaff();
+      allow write: if ok() && isReasonableSize() && isImageOrPdf();
+    }
+
+    match /trucks/{truckId}/{fileName} {
+      allow read: if ok();
+      allow write: if isStaff() && isReasonableSize() && isImageOrPdf();
+    }
+
+    // Rendered invoices. Server-written, and even the owner reads them through
+    // a signed URL rather than directly.
+    match /invoices/{fileName} {
+      allow read, write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

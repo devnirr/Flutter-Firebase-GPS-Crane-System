@@ -1,0 +1,25 @@
+{
+  "rules": {
+    "live": {
+      ".read": "auth != null && (auth.token.role === 'admin' || auth.token.role === 'ops')",
+      "$driverId": {
+        ".read": "auth != null && auth.uid === $driverId",
+        ".write": "auth != null && auth.uid === $driverId",
+        ".validate": "newData.hasChildren(['lat', 'lng', 'isOnline', 'updatedAt'])",
+        "lat": { ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90" },
+        "lng": { ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180" },
+        "geohash": { ".validate": "newData.isString() && newData.val().length <= 12" },
+        "heading": { ".validate": "newData.isNumber()" },
+        "speedKmh": { ".validate": "newData.isNumber()" },
+        "accuracy": { ".validate": "newData.isNumber()" },
+        "isOnline": { ".validate": "newData.isBoolean()" },
+        "state": { ".validate": "newData.isString() && (newData.val() === 'idle' || newData.val() === 'on_service')" },
+        "truckType": { ".validate": "newData.isString()" },
+        "serviceId": { ".validate": "newData.isString() || newData.val() === null" },
+        "updatedAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+    "$other": { ".read": false, ".write": false }
+  }
+}

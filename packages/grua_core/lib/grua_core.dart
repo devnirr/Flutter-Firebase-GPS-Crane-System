@@ -14,6 +14,9 @@ export 'src/config/app_config.dart';
 export 'src/data/converters.dart';
 export 'src/data/demo/demo_backend.dart';
 export 'src/data/demo/demo_repositories.dart';
+export 'src/data/firebase/firebase_bootstrap.dart';
+export 'src/data/firebase/firebase_repositories.dart';
+export 'src/data/firebase/functions_gateway.dart';
 export 'src/data/paths.dart';
 export 'src/data/pricing.dart';
 

@@ -75,6 +75,103 @@ the rule that a chofer cannot go offline while holding a job.
 
 ---
 
+## Connecting Firebase
+
+The Firestore, Realtime Database and Storage rules, the indexes, the emulator
+config and the real repository implementations are all written. What is missing
+is a project, which needs your Google account.
+
+The apps fall back to the demo backend when Firebase is not configured, so
+nothing breaks while you work through this.
+
+### 1. Install the CLIs
+
+```bash
+npm install -g firebase-tools          # already installed here
+dart pub global activate flutterfire_cli
+```
+
+The emulator suite also needs **Java 11+** (`java -version`). Install a JDK if
+you do not have one — Firestore and Database emulators are Java processes.
+
+### 2. Sign in and create the project
+
+```bash
+firebase login
+firebase projects:create grua-rd-dev --display-name "Grúas RD (dev)"
+```
+
+Then in the Firebase console, enable:
+
+- **Authentication** → Phone (customers) and Email/Password (choferes, staff)
+- **Firestore** → production mode, region `nam5` or `us-east1`
+- **Realtime Database** → the live-position index is in `database.rules.json`
+- **Storage**
+- **Blaze plan** — Cloud Functions and the Routes API both require it
+
+### 3. Generate the Dart config
+
+```bash
+cd apps/client_app && flutterfire configure --project=grua-rd-dev
+cd ../driver_app  && flutterfire configure --project=grua-rd-dev
+cd ../admin_web   && flutterfire configure --project=grua-rd-dev
+```
+
+This writes `lib/firebase_options.dart` in each app. Those files are
+gitignored — they carry per-project keys, and every developer regenerates them.
+
+Then pass the options into the shared bootstrap, in each app's `main.dart`:
+
+```dart
+import 'firebase_options.dart';
+
+void main() => runGruaApp(
+      appKind: AppKind.client,
+      builder: ClientApp.new,
+      firebaseOptions: DefaultFirebaseOptions.currentPlatform,   // add this
+    );
+```
+
+That one argument is the whole switch. With it the apps use Firestore; without
+it they use the demo backend, and neither the screens nor the tests change.
+
+### 4. Push the rules
+
+```bash
+firebase use dev
+firebase deploy --only firestore:rules,firestore:indexes,database,storage
+```
+
+### 5. Or skip the cloud and use the emulator
+
+Nothing above is needed to run the real Firestore code locally:
+
+```bash
+firebase emulators:start          # needs Java
+```
+
+Then run any app with `--dart-define=USE_EMULATORS=true`. The SDKs are pointed
+at localhost automatically, and the emulator UI is at http://localhost:4000.
+
+### What the rules enforce
+
+The governing rule is that **the apps read and the server writes**. Every field
+that decides who is assigned, who gets paid, or what a tow costs is written only
+by a Cloud Function through the Admin SDK, which bypasses rules entirely — so
+those collections are `allow write: if false` rather than a clever condition. A
+rule that can be reasoned about wrongly is worse than one that cannot be written
+at all.
+
+Chat is the single exception: messages are written straight from the apps so
+they land instantly, and the constraints on that one write are correspondingly
+specific — the sender must be the author, the service must be theirs and still
+open, the text 1–1000 characters, and no other field may appear.
+
+App Check is required on every rule. Retrofitting it after launch means a
+forced-update release.
+
+---
+
 ## Turning on real maps
 
 Without a Maps API key the apps draw a schematic map — a correctly projected

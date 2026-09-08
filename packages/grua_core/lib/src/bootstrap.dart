@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'config/app_config.dart';
+import 'data/firebase/firebase_bootstrap.dart';
 import 'domain/enums.dart';
 import 'providers.dart';
 import 'theme/brand.dart';
@@ -20,14 +22,22 @@ import 'theme/brand.dart';
 /// misconfigured locale while the driver app is fine is a bug nobody finds
 /// until a Sunday.
 ///
-/// [backendOverrides] chooses the data layer. Until Firebase credentials exist
-/// the apps run against the in-memory demo backend, which is also what widget
-/// tests use.
+/// The data layer is chosen at startup, in this order:
+///
+/// 1. [backendOverrides], when a caller passes one — tests and demos do.
+/// 2. Firebase, when [firebaseOptions] is supplied and initialization succeeds.
+/// 3. The in-memory demo backend.
+///
+/// Falling back rather than failing is deliberate. A fresh clone has no
+/// `firebase_options.dart`, and somebody evaluating the repo should see the
+/// product, not a crash screen telling them to run a CLI they have not heard
+/// of yet.
 Future<void> runGruaApp({
   required AppKind appKind,
   required Widget Function() builder,
   UserRole demoRole = UserRole.client,
   List<Override> Function()? backendOverrides,
+  FirebaseOptions? firebaseOptions,
 }) async {
   await runZonedGuarded(
     () async {
@@ -69,10 +79,20 @@ Future<void> runGruaApp({
         ),
       );
 
+      final usingFirebase = backendOverrides == null &&
+          await FirebaseBootstrap.initialize(
+            config: config,
+            options: firebaseOptions,
+          );
+
       final overrides = <Override>[
         appConfigProvider.overrideWithValue(config),
-        ...?backendOverrides?.call(),
-        if (backendOverrides == null) ...demoOverrides(role: demoRole),
+        if (backendOverrides != null)
+          ...backendOverrides()
+        else if (usingFirebase)
+          ...FirebaseBootstrap.overrides(config)
+        else
+          ...demoOverrides(role: demoRole),
       ];
 
       runApp(ProviderScope(overrides: overrides, child: builder()));

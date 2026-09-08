@@ -1,0 +1,281 @@
+rules_version = '2';
+
+// Grúas RD 24/7 — Firestore access model.
+//
+// The governing rule: the apps read, the server writes. Every field that
+// decides who gets paid, who is assigned, or what a tow costs is written only
+// by a Cloud Function through the Admin SDK, which bypasses these rules
+// entirely. So most collections below are read-only to clients and the `write`
+// clauses are deliberately `false` rather than a clever condition — a rule that
+// can be reasoned about wrongly is worse than one that cannot be written at all.
+//
+// The single exception is chat. Messages are written straight from the apps so
+// they land instantly, and the constraints on that write are correspondingly
+// specific: the sender must be the author, the service must be one of theirs,
+// the text must be a sane length, and no other field may appear.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // App Check is enforced everywhere. Retrofitting it after launch means a
+    // forced-update release, so it is on from the first write.
+    function hasAppCheck() {
+      return request.app != null;
+    }
+
+    function ok() {
+      return isSignedIn() && hasAppCheck();
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function role() {
+      return request.auth.token.get('role', '');
+    }
+
+    function isAdmin() {
+      return ok() && role() == 'admin';
+    }
+
+    // Dispatchers can see everything and assign work, but cannot create
+    // accounts, change tariffs or manage roles.
+    function isStaff() {
+      return ok() && (role() == 'admin' || role() == 'ops');
+    }
+
+    function isDriver() {
+      return ok() && role() == 'driver';
+    }
+
+    // Reads the service being addressed. Costs one document read, which is why
+    // it is only used where the answer genuinely depends on the parent.
+    function service(serviceId) {
+      return get(/databases/$(database)/documents/services/$(serviceId)).data;
+    }
+
+    function isPartyTo(svc) {
+      return ok() && (uid() == svc.clientId || uid() == svc.get('driverId', ''));
+    }
+
+    // True when the incoming document changes nothing outside `allowed`.
+    function onlyChanges(allowed) {
+      return request.resource.data.diff(resource.data)
+        .affectedKeys().hasOnly(allowed);
+    }
+
+    // ---------------------------------------------------------------------
+    // users — the customer's own profile
+    // ---------------------------------------------------------------------
+
+    match /users/{userId} {
+      allow read: if ok() && (uid() == userId || isStaff());
+
+      // Creation goes through an Auth blocking function so the server decides
+      // the role, not the client.
+      allow create: if false;
+
+      // A whitelist, not a blacklist. `blocked`, `activeServiceId` and the
+      // gateway customer id are all things a modified client would love to set.
+      allow update: if ok() && uid() == userId && onlyChanges([
+        'name', 'email', 'rnc', 'locale', 'preferredPaymentMethod',
+        'defaultPaymentMethodId', 'photoUrl', 'updatedAt',
+        'termsAcceptedAt', 'termsVersionAccepted'
+      ]);
+
+      allow delete: if false;
+
+      // Saved vehicles and places are the customer's own scratch space.
+      match /vehicles/{vehicleId} {
+        allow read, write: if ok() && uid() == userId;
+      }
+      match /places/{placeId} {
+        allow read, write: if ok() && uid() == userId;
+      }
+
+      // One document per device, so a token FCM reports as unregistered can be
+      // deleted by id rather than pruned out of an array.
+      match /tokens/{tokenId} {
+        allow read, write: if ok() && uid() == userId;
+      }
+
+      // The in-app inbox: written by triggers, marked read by the owner.
+      match /notifications/{notificationId} {
+        allow read: if ok() && uid() == userId;
+        allow update: if ok() && uid() == userId && onlyChanges(['readAt']);
+        allow create, delete: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // drivers — created and controlled by the office
+    // ---------------------------------------------------------------------
+
+    match /drivers/{driverId} {
+      allow read: if ok() && (uid() == driverId || isStaff());
+
+      // Every field here decides whether somebody can work or what they are
+      // owed. All of it is server-written.
+      allow write: if false;
+
+      match /documents/{docType} {
+        allow read: if ok() && (uid() == driverId || isStaff());
+        allow write: if false;
+      }
+
+      match /tokens/{tokenId} {
+        allow read, write: if ok() && uid() == driverId;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // trucks
+    // ---------------------------------------------------------------------
+
+    match /trucks/{truckId} {
+      // A chofer needs to read the grúa assigned to them; the fleet list is
+      // staff-only.
+      allow read: if isStaff() ||
+        (isDriver() && resource.data.get('assignedDriverId', '') == uid());
+      allow write: if false;
+    }
+
+    match /trucks_by_plate/{plate} {
+      // A uniqueness index, written transactionally by createTruck.
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // services — the order
+    // ---------------------------------------------------------------------
+
+    match /services/{serviceId} {
+      allow read: if isStaff() || isPartyTo(resource.data);
+
+      // Status, driver, quote and payment are the whole system. None of them
+      // are ever written from a phone.
+      allow create, update, delete: if false;
+
+      // One exclusive offer per chofer. Only the addressee can see theirs —
+      // a chofer must not be able to enumerate what everyone else was offered.
+      match /offers/{driverId} {
+        allow read: if isStaff() || (ok() && uid() == driverId);
+        allow write: if false;
+      }
+
+      // The append-only transition log. This is the audit trail, so nothing
+      // may edit or remove an entry.
+      match /events/{eventId} {
+        allow read: if isStaff() || isPartyTo(service(serviceId));
+        allow write: if false;
+      }
+
+      // The one subcollection the apps write directly.
+      match /messages/{messageId} {
+        allow read: if isStaff() || isPartyTo(service(serviceId));
+
+        allow create: if ok()
+          && isPartyTo(service(serviceId))
+          // Chat opens when a chofer is assigned and closes when the job ends.
+          && service(serviceId).status in
+             ['accepted', 'arrived', 'in_progress']
+          && request.resource.data.senderId == uid()
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.keys().hasOnly([
+               'senderId', 'senderRole', 'text', 'clientMsgId', 'sentAt', 'readAt'
+             ]);
+
+        // Marking read is the only edit; the text itself is immutable.
+        allow update: if ok()
+          && isPartyTo(service(serviceId))
+          && onlyChanges(['readAt']);
+
+        allow delete: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // tracking — the chofer's live position on one service
+    // ---------------------------------------------------------------------
+
+    // Mirrored from RTDB by a trigger so the customer subscribes to exactly one
+    // document and never gains read access to the rest of the fleet.
+    match /tracking/{serviceId} {
+      allow read: if isStaff() || isPartyTo(service(serviceId));
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // money
+    // ---------------------------------------------------------------------
+
+    match /invoices/{invoiceId} {
+      allow read: if isStaff() || (ok() && resource.data.clientId == uid());
+      allow write: if false;
+    }
+
+    match /earnings/{driverId} {
+      allow read: if isStaff() || (ok() && uid() == driverId);
+      allow write: if false;
+
+      match /{document=**} {
+        allow read: if isStaff() || (ok() && uid() == driverId);
+        allow write: if false;
+      }
+    }
+
+    // Idempotency records for gateway webhooks. Server-only, both ways.
+    match /webhook_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // configuration and reporting
+    // ---------------------------------------------------------------------
+
+    match /config/{document} {
+      // Tariffs and dispatch tuning are readable by any signed-in app so the
+      // client can show a price breakdown; only the server writes them.
+      allow read: if ok();
+      allow write: if false;
+
+      // NCF sequences are a different matter: they are fiscal numbering, and
+      // nothing outside the allocator has any business reading them.
+      match /ncf/{sequence} {
+        allow read, write: if false;
+      }
+    }
+
+    match /reports/{document=**} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    match /audit/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Everything not named above is denied.
+    //
+    // Without this a new collection is readable by nobody but also silently
+    // un-modelled; with it, an unmatched path fails loudly the first time
+    // somebody adds a feature and forgets the rules.
+    // ---------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

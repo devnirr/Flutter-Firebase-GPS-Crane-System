@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "grua-rd-dev",
+    "dev": "grua-rd-dev",
+    "stg": "grua-rd-stg",
+    "prod": "grua-rd-prod"
+  }
+}
