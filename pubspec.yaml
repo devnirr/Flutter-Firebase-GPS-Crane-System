@@ -1,0 +1,17 @@
+name: grua_rd_workspace
+description: >-
+  Grúa RD — 24/7 tow-truck dispatch for the Dominican Republic.
+  Monorepo root. See prompt.md for the build playbook and CLAUDE.md for the spec.
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+workspace:
+  - packages/grua_core
+  - apps/client_app
+  - apps/driver_app
+  - apps/admin_web
+
+dev_dependencies:
+  melos: ^7.1.0

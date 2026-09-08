@@ -1,0 +1,32 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "**/generated_plugin_registrant.dart"
+    - "**/firebase_options*.dart"
+    - "build/**"
+  errors:
+    invalid_annotation_target: ignore
+    todo: ignore
+  language:
+    strict-casts: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    public_member_api_docs: false
+    lines_longer_than_80_chars: false
+    always_use_package_imports: false
+    prefer_double_quotes: false
+    flutter_style_todos: false
+    one_member_abstracts: false
+    sort_pub_dependencies: false
+    # Dart 3.13's nameless `new(...)` constructor form. Valid, but it hides
+    # the type at the declaration site and reads as a typo to most people.
+    unnecessary_type_name_in_constructor: false
+    unnecessary_const_in_enum_constructor: false
+    # Stating a default explicitly is often clearer in theme and config code.
+    avoid_redundant_argument_values: false
+    prefer_int_literals: false

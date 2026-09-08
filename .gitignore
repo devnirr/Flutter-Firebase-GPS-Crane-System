@@ -1,0 +1,63 @@
+# ---- Dart / Flutter ----
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+**/doc/api/
+*.iml
+.idea/
+.vscode/
+*.log
+
+# Workspace resolves at the root only.
+packages/*/pubspec.lock
+apps/*/pubspec.lock
+
+# ---- Generated code ----
+*.g.dart
+*.freezed.dart
+*.config.dart
+
+# ---- Secrets: never commit ----
+config/dev.json
+config/stg.json
+config/prod.json
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase_options*.dart
+.firebase/
+.env
+.env.*
+service-account*.json
+*.jks
+*.keystore
+key.properties
+
+# ---- Firebase emulator state ----
+.emulator-data/
+firebase-debug.log
+firestore-debug.log
+database-debug.log
+ui-debug.log
+pubsub-debug.log
+
+# ---- Node ----
+node_modules/
+functions/lib/
+npm-debug.log*
+
+# ---- Platform ----
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/ephemeral/
+android/.gradle/
+android/local.properties
+android/key.properties
+*.lock.hcl
+
+# ---- OS ----
+.DS_Store
+Thumbs.db

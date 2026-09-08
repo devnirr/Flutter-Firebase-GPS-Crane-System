@@ -1,0 +1,40 @@
+name: admin_web
+description: "Grúas RD 24/7 — panel de administración."
+publish_to: none
+version: 1.0.0+1
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  grua_core:
+    path: ../../packages/grua_core
+
+  google_maps_flutter: ^2.18.0
+  google_maps_flutter_web: ^0.6.3
+
+  cupertino_icons: ^1.0.9
+  fl_chart: ^1.2.0
+  file_picker: ^12.2.0
+  url_launcher: ^6.3.2
+  shared_preferences: ^2.5.5
+  csv: ^8.0.0
+  data_table_2: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  very_good_analysis: ^11.0.0
+  build_runner: ^2.15.1
+  mocktail: ^1.0.5
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

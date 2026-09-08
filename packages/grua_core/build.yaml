@@ -1,0 +1,10 @@
+targets:
+  $default:
+    builders:
+      json_serializable:
+        options:
+          # Firestore documents evolve; a missing field must default, not throw.
+          explicit_to_json: true
+          field_rename: none
+          create_to_json: true
+          include_if_null: false

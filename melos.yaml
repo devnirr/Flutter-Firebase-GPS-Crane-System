@@ -1,0 +1,71 @@
+name: grua_rd
+
+packages:
+  - packages/**
+  - apps/**
+
+command:
+  bootstrap:
+    environment:
+      sdk: ^3.13.0
+
+scripts:
+  analyze:
+    description: Static analysis across every package.
+    run: dart analyze --fatal-infos .
+
+  format:
+    description: Format all Dart sources.
+    run: dart format --line-length 100 packages apps
+
+  format:check:
+    description: Fail if anything is unformatted.
+    run: dart format --line-length 100 --set-exit-if-changed packages apps
+
+  gen:
+    description: Run build_runner across packages that need codegen.
+    run: dart run build_runner build --delete-conflicting-outputs
+    packageFilters:
+      dependsOn: build_runner
+
+  gen:watch:
+    description: Watch mode for codegen.
+    run: dart run build_runner watch --delete-conflicting-outputs
+    packageFilters:
+      scope: grua_core
+
+  test:
+    description: Run every Dart/Flutter test suite.
+    run: flutter test
+    packageFilters:
+      dirExists: test
+
+  test:functions:
+    description: Run the Cloud Functions test suite against the emulators.
+    run: npm --prefix functions test
+
+  emulators:
+    description: Start the Firebase emulator suite.
+    run: firebase emulators:start --import=.emulator-data --export-on-exit
+
+  seed:
+    description: Seed the running emulator suite with demo data.
+    run: npm --prefix functions run seed
+
+  dev:client:
+    description: Run the client app against the local emulators.
+    run: flutter run --flavor dev --dart-define-from-file=config/dev.json --dart-define=USE_EMULATORS=true
+    packageFilters:
+      scope: client_app
+
+  dev:driver:
+    description: Run the driver app against the local emulators.
+    run: flutter run --flavor dev --dart-define-from-file=config/dev.json --dart-define=USE_EMULATORS=true
+    packageFilters:
+      scope: driver_app
+
+  dev:admin:
+    description: Run the admin panel against the local emulators.
+    run: flutter run -d chrome --dart-define-from-file=config/dev.json --dart-define=USE_EMULATORS=true
+    packageFilters:
+      scope: admin_web
