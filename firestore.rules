@@ -58,7 +58,7 @@ service cloud.firestore {
 
     // Reads the service being addressed. Costs one document read, which is why
     // it is only used where the answer genuinely depends on the parent.
-    function service(serviceId) {
+    function serviceDoc(serviceId) {
       return get(/databases/$(database)/documents/services/$(serviceId)).data;
     }
 
@@ -175,18 +175,18 @@ service cloud.firestore {
       // The append-only transition log. This is the audit trail, so nothing
       // may edit or remove an entry.
       match /events/{eventId} {
-        allow read: if isStaff() || isPartyTo(service(serviceId));
+        allow read: if isStaff() || isPartyTo(serviceDoc(serviceId));
         allow write: if false;
       }
 
       // The one subcollection the apps write directly.
       match /messages/{messageId} {
-        allow read: if isStaff() || isPartyTo(service(serviceId));
+        allow read: if isStaff() || isPartyTo(serviceDoc(serviceId));
 
         allow create: if ok()
-          && isPartyTo(service(serviceId))
+          && isPartyTo(serviceDoc(serviceId))
           // Chat opens when a chofer is assigned and closes when the job ends.
-          && service(serviceId).status in
+          && serviceDoc(serviceId).status in
              ['accepted', 'arrived', 'in_progress']
           && request.resource.data.senderId == uid()
           && request.resource.data.text is string
@@ -198,7 +198,7 @@ service cloud.firestore {
 
         // Marking read is the only edit; the text itself is immutable.
         allow update: if ok()
-          && isPartyTo(service(serviceId))
+          && isPartyTo(serviceDoc(serviceId))
           && onlyChanges(['readAt']);
 
         allow delete: if false;
@@ -212,7 +212,7 @@ service cloud.firestore {
     // Mirrored from RTDB by a trigger so the customer subscribes to exactly one
     // document and never gains read access to the rest of the fleet.
     match /tracking/{serviceId} {
-      allow read: if isStaff() || isPartyTo(service(serviceId));
+      allow read: if isStaff() || isPartyTo(serviceDoc(serviceId));
       allow write: if false;
     }
 

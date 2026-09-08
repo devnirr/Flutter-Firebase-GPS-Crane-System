@@ -24,9 +24,13 @@ apps/*/pubspec.lock
 # a fresh clone runs with no setup. Real keys only ever live in stg/prod.
 config/stg.json
 config/prod.json
-**/google-services.json
-**/GoogleService-Info.plist
-**/firebase_options*.dart
+
+# Firebase client config (firebase_options.dart, google-services.json,
+# GoogleService-Info.plist) is deliberately NOT ignored. Those values are not
+# secrets: they ship inside every published binary and are readable from any
+# installed app. Security comes from the Firestore rules and App Check, not
+# from hiding an API key. Ignoring them would only mean main.dart imports a
+# file a fresh clone does not have, and the repo would not compile.
 .firebase/
 .env
 .env.*
