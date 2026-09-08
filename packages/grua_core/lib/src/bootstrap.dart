@@ -81,6 +81,50 @@ Future<void> runGruaApp({
   );
 }
 
+/// Frames a phone app inside a phone-sized viewport when it is previewed in a
+/// desktop browser.
+///
+/// The phone products are portrait-locked and laid out for a thumb; stretched
+/// across a 1920-px window they are unreviewable, and a reviewer would be
+/// judging a layout the product never ships. Running them on web is the only
+/// way to see them without an Android emulator, so the frame makes that
+/// preview honest.
+///
+/// Call it from `MaterialApp.builder`, not around `MaterialApp`: the app
+/// re-derives MediaQuery from the view at its root, so an override placed
+/// outside it is discarded.
+Widget webPhoneFrame(BuildContext context, Widget child) {
+  if (!kIsWeb) return child;
+
+  final media = MediaQuery.of(context);
+  // A narrow browser is already phone-shaped — framing it again would just
+  // shrink it.
+  if (media.size.width <= 560) return child;
+
+  const phone = Size(412, 880);
+
+  return ColoredBox(
+    color: BrandColors.sidebar,
+    child: Center(
+      child: SizedBox.fromSize(
+        size: phone,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: MediaQuery(
+            data: media.copyWith(
+              size: phone,
+              padding: EdgeInsets.zero,
+              viewPadding: EdgeInsets.zero,
+              viewInsets: EdgeInsets.zero,
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// Localization delegates and supported locales, shared by all three apps.
 abstract final class GruaLocalization {
   static const Locale spanishDominican = Locale('es', 'DO');

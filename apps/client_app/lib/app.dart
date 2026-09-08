@@ -28,9 +28,12 @@ class ClientApp extends ConsumerWidget {
           minScaleFactor: 0.9,
           maxScaleFactor: 1.3,
         );
-        return MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaler: scale),
-          child: child ?? const SizedBox.shrink(),
+        return webPhoneFrame(
+          context,
+          MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: scale),
+            child: child ?? const SizedBox.shrink(),
+          ),
         );
       },
     );

@@ -1,0 +1,9 @@
+{
+  "FLAVOR": "dev",
+  "FIREBASE_PROJECT_ID": "grua-rd-dev",
+  "FUNCTIONS_REGION": "us-east1",
+  "GOOGLE_MAPS_API_KEY": "",
+  "STRIPE_PUBLISHABLE_KEY": "",
+  "USE_EMULATORS": false,
+  "EMULATOR_HOST": "localhost"
+}

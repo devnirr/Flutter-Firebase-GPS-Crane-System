@@ -20,7 +20,8 @@ apps/*/pubspec.lock
 *.config.dart
 
 # ---- Secrets: never commit ----
-config/dev.json
+# dev.json holds no secrets (empty keys, dev project) so it is committed and
+# a fresh clone runs with no setup. Real keys only ever live in stg/prod.
 config/stg.json
 config/prod.json
 **/google-services.json
