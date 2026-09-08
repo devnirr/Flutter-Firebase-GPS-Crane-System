@@ -62,7 +62,13 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
         ),
         const VerticalDivider(width: 1),
         Expanded(
-          child: _LiveMap(services: ordered, live: live, selected: selected, now: now),
+          child: _LiveMap(
+            services: ordered,
+            live: live,
+            selected: selected,
+            now: now,
+            hasApiKey: ref.watch(hasMapsKeyProvider),
+          ),
         ),
         if (selected != null) ...[
           const VerticalDivider(width: 1),
@@ -234,12 +240,14 @@ class _LiveMap extends StatelessWidget {
     required this.live,
     required this.selected,
     required this.now,
+    required this.hasApiKey,
   });
 
   final List<Service> services;
   final List<DriverLivePosition> live;
   final Service? selected;
   final DateTime now;
+  final bool hasApiKey;
 
   @override
   Widget build(BuildContext context) {
@@ -248,8 +256,9 @@ class _LiveMap extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(
-          child: SchematicMap(
+          child: GruaMap(
             center: selected?.pickup.geo ?? DoLocations.defaultCenter,
+            hasApiKey: hasApiKey,
             zoom: selected == null ? 12.4 : 13.6,
             route: selected?.dropoff == null
                 ? const []

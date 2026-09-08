@@ -14,6 +14,7 @@ import 'domain/models/remote_config_models.dart';
 import 'domain/models/service.dart';
 import 'domain/models/truck.dart';
 import 'domain/repositories.dart';
+import 'location/location_service.dart';
 
 /// Dependency wiring for all three apps.
 ///
@@ -119,6 +120,36 @@ List<Override> demoOverrides({
         .overrideWithValue(DemoFunctionsGateway(instance)),
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Device
+// ---------------------------------------------------------------------------
+
+/// Device location and geocoding. Overridable in tests with a fake geolocator.
+final locationServiceProvider = Provider<LocationService>(
+  (ref) => LocationService(),
+);
+
+/// Whether a Maps API key was supplied at build time.
+///
+/// Screens pass this to `GruaMap`, which renders a real Google map when it is
+/// true and the drawn fallback when it is false. Keeping the decision in one
+/// provider means no screen has to know how the map is sourced.
+final hasMapsKeyProvider = Provider<bool>(
+  (ref) => ref.watch(appConfigProvider).googleMapsApiKey.isNotEmpty,
+);
+
+/// The customer's current position, resolved once per screen entry.
+final currentPlaceProvider = FutureProvider<ResolvedPlace?>((ref) async {
+  final result = await ref.watch(locationServiceProvider).currentPlace();
+  return result.valueOrNull;
+});
+
+/// What is blocking location right now, if anything. Watched by the screens
+/// that need to explain it.
+final locationBlockerProvider = FutureProvider<LocationBlocker>(
+  (ref) => ref.watch(locationServiceProvider).check(),
+);
 
 // ---------------------------------------------------------------------------
 // Session

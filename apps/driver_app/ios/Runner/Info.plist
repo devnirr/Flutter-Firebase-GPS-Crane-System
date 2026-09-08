@@ -66,5 +66,16 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Usamos tu ubicación para enviarte los servicios más cercanos y para que el cliente vea tu grúa en camino.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Necesitamos tu ubicación siempre para asignarte servicios y mostrar tu grúa al cliente, incluso con la app en segundo plano.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>remote-notification</string>
+	</array>
+	<key>MapsApiKey</key>
+	<string>$(MAPS_API_KEY)</string>
 </dict>
 </plist>

@@ -30,6 +30,9 @@ export 'src/domain/models/truck.dart';
 export 'src/domain/repositories.dart';
 export 'src/domain/value_objects.dart';
 
+// Location
+export 'src/location/location_service.dart';
+
 // Dependency wiring
 export 'src/providers.dart';
 
@@ -38,6 +41,7 @@ export 'src/theme/app_theme.dart';
 export 'src/theme/brand.dart';
 export 'src/theme/widgets/brand_widgets.dart';
 export 'src/theme/widgets/grua_logo.dart';
+export 'src/theme/widgets/grua_map.dart';
 export 'src/theme/widgets/schematic_map.dart';
 
 // Utilities

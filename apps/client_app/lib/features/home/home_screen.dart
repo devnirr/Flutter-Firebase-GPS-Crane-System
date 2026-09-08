@@ -31,8 +31,9 @@ class HomeScreen extends ConsumerWidget {
       body: Stack(
         children: [
           Positioned.fill(
-            child: SchematicMap(
+            child: GruaMap(
               center: DoLocations.defaultCenter,
+              hasApiKey: ref.watch(hasMapsKeyProvider),
               zoom: 13.4,
               markers: [
                 const MapMarker(

@@ -90,7 +90,12 @@ class _TrackingBody extends ConsumerWidget {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
-              child: _MapCard(service: service, tracking: tracking, now: now),
+              child: _MapCard(
+                service: service,
+                tracking: tracking,
+                now: now,
+                hasApiKey: ref.watch(hasMapsKeyProvider),
+              ),
             ),
           ),
           const SizedBox(height: Insets.lg),
@@ -119,11 +124,13 @@ class _MapCard extends StatelessWidget {
     required this.service,
     required this.tracking,
     required this.now,
+    required this.hasApiKey,
   });
 
   final Service service;
   final ServiceTracking? tracking;
   final DateTime now;
+  final bool hasApiKey;
 
   @override
   Widget build(BuildContext context) {
@@ -135,9 +142,12 @@ class _MapCard extends StatelessWidget {
       child: Stack(
         children: [
           Positioned.fill(
-            child: SchematicMap(
+            child: GruaMap(
               center: truckAt ?? service.pickup.geo,
+              hasApiKey: hasApiKey,
               zoom: 14.2,
+              // The camera follows the truck, so panning would only fight it.
+              interactive: false,
               showAttribution: false,
               route: [
                 service.pickup.geo,

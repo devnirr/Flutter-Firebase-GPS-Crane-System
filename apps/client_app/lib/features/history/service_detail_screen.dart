@@ -30,9 +30,11 @@ class ServiceDetailScreen extends ConsumerWidget {
                   height: 180,
                   child: ClipRRect(
                     borderRadius: Corners.brLg,
-                    child: SchematicMap(
+                    child: GruaMap(
                       center: service.pickup.geo,
+                      hasApiKey: ref.watch(hasMapsKeyProvider),
                       zoom: 13,
+                      interactive: false,
                       showAttribution: false,
                       route: [
                         service.pickup.geo,

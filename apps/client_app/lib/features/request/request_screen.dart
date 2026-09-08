@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import 'location_picker_screen.dart';
 import 'quote_sheet.dart';
 import 'request_controller.dart';
 
@@ -60,33 +61,70 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
     );
   }
 
+  /// Opens the map picker and folds the result back into the draft.
+  Future<void> _pickLocation({required bool isPickup}) async {
+    final draft = ref.read(requestControllerProvider);
+    final picked = await Navigator.of(context).push<ServiceLocation>(
+      MaterialPageRoute(
+        builder: (_) => LocationPickerScreen(
+          title: isPickup ? '¿Dónde estás?' : '¿A dónde la llevamos?',
+          initial: isPickup ? draft.pickup : draft.dropoff,
+          requireReference: isPickup,
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+
+    final controller = ref.read(requestControllerProvider.notifier);
+    if (isPickup) {
+      controller.setPickup(picked);
+      _pickup.text = picked.address;
+      _reference.text = picked.reference;
+    } else {
+      controller.setDropoff(picked);
+      _dropoff.text = picked.address;
+    }
+  }
+
+  /// Folds any address text the customer edited by hand back onto the point
+  /// they already chose on the map.
   void _syncLocations() {
     final controller = ref.read(requestControllerProvider.notifier);
     final draft = ref.read(requestControllerProvider);
 
-    controller.setPickup(
-      (draft.pickup ??
-              const ServiceLocation(geo: DoLocations.defaultCenter))
-          .copyWith(
-        address: _pickup.text.trim(),
-        reference: _reference.text.trim(),
-      ),
-    );
-
-    final dropoffText = _dropoff.text.trim();
-    if (dropoffText.isNotEmpty) {
-      controller.setDropoff(
-        (draft.dropoff ??
-                // Stand-in coordinates until the map picker lands; the address
-                // text is what the chofer actually navigates by today.
-                const ServiceLocation(geo: DoLocations.santoDomingo))
-            .copyWith(address: dropoffText),
+    final pickup = draft.pickup;
+    if (pickup != null) {
+      controller.setPickup(
+        pickup.copyWith(
+          address: _pickup.text.trim(),
+          reference: _reference.text.trim(),
+        ),
       );
+    }
+
+    final dropoff = draft.dropoff;
+    if (dropoff != null) {
+      controller.setDropoff(dropoff.copyWith(address: _dropoff.text.trim()));
     }
   }
 
   Future<void> _continue() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final chosen = ref.read(requestControllerProvider);
+    if (chosen.pickup == null) {
+      _showMissing('Marca dónde estás para poder enviarte la grúa.');
+      return;
+    }
+    if (chosen.dropoff == null) {
+      _showMissing('Marca a dónde llevamos el vehículo.');
+      return;
+    }
+    if (chosen.pickup!.reference.trim().isEmpty) {
+      _showMissing('Escribe una referencia del punto de recogida.');
+      return;
+    }
+
     _syncVehicle();
     _syncLocations();
 
@@ -94,8 +132,7 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
     await controller.requestQuote();
     if (!mounted) return;
 
-    final draft = ref.read(requestControllerProvider);
-    if (draft.quote == null) return;
+    if (ref.read(requestControllerProvider).quote == null) return;
 
     final serviceId = await showModalBottomSheet<String>(
       context: context,
@@ -108,6 +145,10 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
       controller.reset();
       context.go(Routes.trackingFor(serviceId));
     }
+  }
+
+  void _showMissing(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -211,39 +252,23 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                     const SizedBox(height: Insets.xxl),
                     Text('¿Dónde estás?', style: text.headlineSmall),
                     const SizedBox(height: Insets.lg),
-                    TextFormField(
-                      controller: _pickup,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.my_location, color: BrandColors.red),
-                        hintText: 'Dirección de recogida',
-                      ),
-                      validator: (v) => (v?.trim().isEmpty ?? true)
-                          ? 'Necesitamos saber dónde estás.'
-                          : null,
+                    _LocationField(
+                      icon: Icons.my_location,
+                      iconColor: BrandColors.red,
+                      label: 'Punto de recogida',
+                      value: draft.pickup?.address ?? '',
+                      reference: draft.pickup?.reference ?? '',
+                      hint: 'Toca para marcarlo en el mapa',
+                      onTap: () => _pickLocation(isPickup: true),
                     ),
                     const SizedBox(height: Insets.md),
-                    TextFormField(
-                      controller: _reference,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.push_pin_outlined,
-                            color: BrandColors.grey400),
-                        hintText: 'Referencia (frente al colmado, km 12…)',
-                      ),
-                      validator: (v) => (v?.trim().isEmpty ?? true)
-                          ? 'Una referencia ayuda al chofer a encontrarte.'
-                          : null,
-                    ),
-                    const SizedBox(height: Insets.md),
-                    TextFormField(
-                      controller: _dropoff,
-                      decoration: const InputDecoration(
-                        prefixIcon:
-                            Icon(Icons.flag_outlined, color: BrandColors.ink),
-                        hintText: '¿A dónde la llevamos?',
-                      ),
-                      validator: (v) => (v?.trim().isEmpty ?? true)
-                          ? 'Indica el destino.'
-                          : null,
+                    _LocationField(
+                      icon: Icons.flag_outlined,
+                      iconColor: BrandColors.ink,
+                      label: 'Destino',
+                      value: draft.dropoff?.address ?? '',
+                      hint: '¿A dónde la llevamos?',
+                      onTap: () => _pickLocation(isPickup: false),
                     ),
 
                     if (draft.failure != null) ...[
@@ -539,6 +564,87 @@ class _PhotoStrip extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// A tappable summary of a chosen point.
+///
+/// Not a text field: a typed address with no coordinates behind it cannot be
+/// dispatched to, so the only way to set a location is the map.
+class _LocationField extends StatelessWidget {
+  const _LocationField({
+    required this.icon,
+    required this.iconColor,
+    required this.label,
+    required this.value,
+    required this.hint,
+    required this.onTap,
+    this.reference = '',
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String label;
+  final String value;
+  final String reference;
+  final String hint;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final chosen = value.isNotEmpty;
+
+    return Material(
+      color: BrandColors.white,
+      borderRadius: Corners.brMd,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: Corners.brMd,
+        child: Container(
+          padding: const EdgeInsets.all(Insets.lg),
+          decoration: BoxDecoration(
+            borderRadius: Corners.brMd,
+            border: Border.all(
+              color: chosen ? BrandColors.grey200 : BrandColors.redTintStrong,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: iconColor, size: 20),
+              const SizedBox(width: Insets.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    FieldLabel(label),
+                    const SizedBox(height: 2),
+                    Text(
+                      chosen ? value : hint,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: chosen
+                          ? text.titleSmall
+                          : text.bodyMedium
+                              ?.copyWith(color: BrandColors.grey400),
+                    ),
+                    if (reference.isNotEmpty)
+                      Text(
+                        reference,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            text.bodySmall?.copyWith(color: BrandColors.grey600),
+                      ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: BrandColors.grey400),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import 'location_publisher.dart';
 
 /// The chofer's home: online switch, today's earnings, and the open work.
 ///
@@ -18,6 +19,10 @@ class DriverHomeScreen extends ConsumerWidget {
     final driver = ref.watch(currentDriverProvider).value;
     final earnings = ref.watch(driverEarningsProvider).value;
     final pending = ref.watch(activeServicesProvider).value ?? const [];
+
+    // Watched, not read: this is what starts and stops position publishing,
+    // and it must follow the chofer's online state rather than a button press.
+    ref.watch(locationPublisherProvider);
 
     if (driver == null) return const Scaffold(body: BrandLoader());
 

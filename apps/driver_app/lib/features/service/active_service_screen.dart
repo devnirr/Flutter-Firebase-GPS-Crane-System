@@ -184,8 +184,9 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
                       height: 190,
                       child: ClipRRect(
                         borderRadius: Corners.brLg,
-                        child: SchematicMap(
+                        child: GruaMap(
                           center: tracking?.position ?? service.pickup.geo,
+                          hasApiKey: ref.watch(hasMapsKeyProvider),
                           zoom: 14,
                           showAttribution: false,
                           route: [

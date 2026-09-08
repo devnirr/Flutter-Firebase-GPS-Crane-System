@@ -15,6 +15,11 @@ android {
     }
 
     defaultConfig {
+        // Supplied by the build environment, never committed. An empty value
+        // is fine: the app falls back to the drawn map.
+        manifestPlaceholders["MAPS_API_KEY"] =
+            System.getenv("MAPS_API_KEY") ?: ""
+
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.gruasrd.driver_app"
         // You can update the following values to match your application needs.

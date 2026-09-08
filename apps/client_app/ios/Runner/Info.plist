@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Usamos tu ubicación para saber dónde enviarte la grúa.</string>
+	<key>MapsApiKey</key>
+	<string>$(MAPS_API_KEY)</string>
 </dict>
 </plist>
