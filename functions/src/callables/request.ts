@@ -27,6 +27,7 @@ import {
 } from '../lib/geo.js';
 import { requireClient, requireNotInMaintenance } from '../lib/guards.js';
 import { buildQuote, loadPricing, signQuote, verifyQuote } from '../lib/pricing.js';
+import { quoteSigningSecret } from '../lib/secrets.js';
 import { serviceCode } from '../lib/time.js';
 import { dispatchNext } from '../dispatch/dispatchNext.js';
 import { region } from './region.js';
@@ -140,7 +141,9 @@ async function assertCovered(pickup: LatLng, dropoff: LatLng): Promise<void> {
  * `route.distanceMeters`, and the signature covers the resulting total either
  * way.
  */
-export const quoteService = onCall({ region, cors: true }, async (request) => {
+export const quoteService = onCall(
+  { region, cors: true, secrets: [quoteSigningSecret] },
+  async (request) => {
   const parsed = quoteInput.safeParse(request.data);
   if (!parsed.success) throw invalidArgument('Revisa los datos e intenta de nuevo.');
 
@@ -201,7 +204,9 @@ export const quoteService = onCall({ region, cors: true }, async (request) => {
  * requests — and returns the existing id so the app can deep-link to it rather
  * than leaving them on a dead end.
  */
-export const requestService = onCall({ region, cors: true }, async (request) => {
+export const requestService = onCall(
+  { region, cors: true, secrets: [quoteSigningSecret] },
+  async (request) => {
   const parsed = requestInput.safeParse(request.data);
   if (!parsed.success) throw invalidArgument('Revisa los datos e intenta de nuevo.');
 
