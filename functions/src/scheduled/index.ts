@@ -1,0 +1,182 @@
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { logger } from 'firebase-functions/v2';
+
+import { OfferState, ServiceStatus } from '../lib/enums.js';
+import { FieldValue, Paths, Timestamp } from '../lib/firestore.js';
+import { alertAdmins } from '../lib/push.js';
+import { loadDispatchConfig } from '../dispatch/dispatchNext.js';
+import { expireOffer } from '../dispatch/offers.js';
+import { region } from '../callables/region.js';
+
+/**
+ * The safety nets.
+ *
+ * Neither of these is the mechanism for anything — offers expire by Cloud Task,
+ * and choferes go offline by pressing a switch. They exist because both of those
+ * can fail silently, and the failure mode is a customer waiting forever on a
+ * screen that says "buscando grúa".
+ */
+
+/**
+ * Force-expires offers whose Cloud Task never fired.
+ *
+ * Every minute, which is why the task exists at all: a minute of slack on a
+ * 25-second offer would triple the customer's wait. This only catches the cases
+ * where the task was dropped, the enqueue failed, or the function crashed
+ * mid-cascade.
+ *
+ * The ten-second grace stops this racing the task itself for offers that are
+ * expiring right now.
+ */
+export const sweepExpiredOffers = onSchedule(
+  { schedule: 'every 1 minutes', region, timeZone: 'America/Santo_Domingo' },
+  async () => {
+    const cutoff = Timestamp.fromMillis(Date.now() - 10000);
+
+    const stuck = await Paths.services()
+      .where('status', '==', ServiceStatus.offered)
+      .where('dispatch.offerExpiresAt', '<', cutoff)
+      .limit(50)
+      .get();
+
+    if (stuck.empty) return;
+
+    logger.warn('sweep.expiredOffers', { count: stuck.size });
+
+    for (const doc of stuck.docs) {
+      const offeredTo =
+        ((doc.data()['dispatch'] as Record<string, unknown>)['offeredTo'] as
+          | string[]
+          | undefined) ?? [];
+      const driverId = offeredTo[offeredTo.length - 1];
+      if (!driverId) continue;
+
+      try {
+        await expireOffer({ serviceId: doc.id, driverId });
+      } catch (error) {
+        // One bad service must not stop the sweep for the other forty-nine.
+        logger.error('sweep.expireFailed', { serviceId: doc.id, error });
+      }
+    }
+  },
+);
+
+/**
+ * Takes choferes offline when their phone stops reporting.
+ *
+ * A truck whose last fix is minutes old is not dispatchable — the phone lost
+ * signal, the app was killed, or the battery optimiser stopped the foreground
+ * service. Dispatch already filters on staleness, so this is about the *panel*:
+ * a dispatcher looking at a green marker that has not moved in ten minutes is
+ * being lied to.
+ *
+ * If such a chofer is holding a job, that is a real operational problem and the
+ * office needs to know rather than find out from the customer.
+ */
+export const reapStaleDrivers = onSchedule(
+  { schedule: 'every 2 minutes', region, timeZone: 'America/Santo_Domingo' },
+  async () => {
+    const config = await loadDispatchConfig();
+    // More generous than the dispatch filter: this changes stored state, so it
+    // should only fire when the phone is properly gone, not briefly in a tunnel.
+    const cutoff = Date.now() - Math.max(config.stalePositionMs * 3, 300000);
+
+    const snap = await Paths.liveRoot().orderByChild('isOnline').equalTo(true).get();
+    const all = snap.val() as Record<string, Record<string, unknown>> | null;
+    if (!all) return;
+
+    const stale = Object.entries(all).filter(
+      ([, position]) => ((position['updatedAt'] as number | undefined) ?? 0) < cutoff,
+    );
+    if (stale.length === 0) return;
+
+    logger.warn('reap.staleDrivers', { count: stale.length });
+
+    for (const [driverId, position] of stale) {
+      await Paths.live(driverId).update({ isOnline: false, updatedAt: Date.now() });
+      await Paths.driver(driverId).update({
+        isOnline: false,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      const serviceId = position['serviceId'] as string | undefined;
+      if (serviceId) {
+        await alertAdmins(
+          'Chofer sin señal en servicio',
+          'Un chofer con un servicio activo dejó de reportar su ubicación.',
+          { driverId, serviceId, type: 'driver_stale' },
+        );
+      }
+    }
+  },
+);
+
+/**
+ * Gives up on services nobody ever took.
+ *
+ * `needs_manual` means a dispatcher was asked to intervene. If nobody has after
+ * an hour, the customer has long since called someone else, and leaving the
+ * service open distorts every queue and report it appears in.
+ */
+export const expireAbandonedServices = onSchedule(
+  { schedule: 'every 30 minutes', region, timeZone: 'America/Santo_Domingo' },
+  async () => {
+    const cutoff = Timestamp.fromMillis(Date.now() - 60 * 60 * 1000);
+
+    const abandoned = await Paths.services()
+      .where('status', '==', ServiceStatus.needsManual)
+      .where('createdAt', '<', cutoff)
+      .limit(50)
+      .get();
+
+    if (abandoned.empty) return;
+
+    for (const doc of abandoned.docs) {
+      await doc.ref.update({
+        status: ServiceStatus.expired,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await Paths.events(doc.id).add({
+        event: 'failService',
+        from: ServiceStatus.needsManual,
+        to: ServiceStatus.expired,
+        actorId: 'system',
+        actorRole: 'system',
+        meta: { reason: 'abandoned' },
+        at: FieldValue.serverTimestamp(),
+      });
+
+      const clientId = doc.data()['clientId'] as string | undefined;
+      if (clientId) {
+        await Paths.user(clientId).update({
+          activeServiceId: FieldValue.delete(),
+        });
+      }
+    }
+
+    logger.warn('sweep.abandonedServices', { count: abandoned.size });
+  },
+);
+
+/** Marks any offer document left dangling, so the panel does not show it open. */
+export const tidyOrphanedOffers = onSchedule(
+  { schedule: 'every 24 hours', region, timeZone: 'America/Santo_Domingo' },
+  async () => {
+    const cutoff = Timestamp.fromMillis(Date.now() - 24 * 60 * 60 * 1000);
+
+    const stale = await Paths.services()
+      .where('status', 'in', [ServiceStatus.closed, ServiceStatus.cancelled])
+      .where('updatedAt', '<', cutoff)
+      .limit(100)
+      .get();
+
+    for (const doc of stale.docs) {
+      const offers = await Paths.offers(doc.id)
+        .where('state', '==', OfferState.sent)
+        .get();
+      for (const offer of offers.docs) {
+        await offer.ref.update({ state: OfferState.cancelled });
+      }
+    }
+  },
+);

@@ -224,6 +224,9 @@ abstract interface class FunctionsGateway {
     required TruckType truckType,
     required PaymentMethod paymentMethod,
     required String quoteSignature,
+    /// Echoed back from [quoteService]. The signature covers it, so the server
+    /// can tell an expired quote from a tampered one.
+    required DateTime quoteExpiresAt,
     String? paymentMethodId,
     String? notes,
   });

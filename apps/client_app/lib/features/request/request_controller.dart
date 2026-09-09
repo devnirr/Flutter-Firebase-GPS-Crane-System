@@ -173,6 +173,7 @@ class RequestController extends Notifier<RequestDraft> {
           truckType: quote.truckType,
           paymentMethod: state.paymentMethod,
           quoteSignature: quote.signature,
+          quoteExpiresAt: quote.expiresAt,
           notes: state.notes.isEmpty ? null : state.notes,
         );
 

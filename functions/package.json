@@ -1,0 +1,33 @@
+{
+  "name": "grua-rd-functions",
+  "version": "1.0.0",
+  "description": "Cloud Functions for Grúas RD 24/7 — dispatch, service lifecycle, payments.",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:emulator": "firebase emulators:exec --only firestore,database,auth \"vitest run --mode emulator\"",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.3.2",
+    "geofire-common": "^6.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.12",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

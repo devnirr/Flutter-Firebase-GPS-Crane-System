@@ -129,6 +129,7 @@ Future<void> main() async {
       truckType: TruckType.gancho,
       paymentMethod: PaymentMethod.cash,
       quoteSignature: quote.valueOrNull!.signature,
+      quoteExpiresAt: quote.valueOrNull!.expiresAt,
     );
     expect(first.isOk, isTrue);
 
@@ -139,6 +140,7 @@ Future<void> main() async {
       truckType: TruckType.gancho,
       paymentMethod: PaymentMethod.cash,
       quoteSignature: quote.valueOrNull!.signature,
+      quoteExpiresAt: quote.valueOrNull!.expiresAt,
     );
     expect(second.isErr, isTrue);
     expect(

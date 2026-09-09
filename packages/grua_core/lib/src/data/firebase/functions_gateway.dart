@@ -142,6 +142,7 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
     required TruckType truckType,
     required PaymentMethod paymentMethod,
     required String quoteSignature,
+    required DateTime quoteExpiresAt,
     String? paymentMethodId,
     String? notes,
   }) =>
@@ -152,6 +153,7 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         'truckType': truckType.wire,
         'paymentMethod': paymentMethod.wire,
         'quoteSignature': quoteSignature,
+        'quoteExpiresAtMs': quoteExpiresAt.millisecondsSinceEpoch,
         'paymentMethodId': ?paymentMethodId,
         'notes': ?notes,
       }, (data) => data['serviceId'] as String? ?? '');
@@ -265,6 +267,6 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
 
   @override
   Future<Result<String>> invoiceDownloadUrl(String invoiceId) =>
-      _call('getInvoiceUrl', {'invoiceId': invoiceId},
+      _call('invoiceDownloadUrl', {'invoiceId': invoiceId},
           (data) => data['url'] as String? ?? '');
 }

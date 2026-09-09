@@ -507,6 +507,7 @@ class DemoFunctionsGateway implements FunctionsGateway {
     required TruckType truckType,
     required PaymentMethod paymentMethod,
     required String quoteSignature,
+    required DateTime quoteExpiresAt,
     String? paymentMethodId,
     String? notes,
   }) async {
