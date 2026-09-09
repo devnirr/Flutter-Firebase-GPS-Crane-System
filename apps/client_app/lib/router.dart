@@ -6,6 +6,7 @@ import 'package:grua_core/grua_core.dart';
 import 'features/auth/otp_screen.dart';
 import 'features/auth/phone_screen.dart';
 import 'features/auth/profile_setup_screen.dart';
+import 'features/auth/register_screen.dart';
 import 'features/auth/welcome_screen.dart';
 import 'features/chat/chat_screen.dart';
 import 'features/history/history_screen.dart';
@@ -18,6 +19,7 @@ import 'features/tracking/tracking_screen.dart';
 abstract final class Routes {
   static const welcome = '/bienvenida';
   static const phone = '/telefono';
+  static const register = '/registro';
   static const otp = '/codigo';
   static const profileSetup = '/completar-perfil';
   static const home = '/';
@@ -63,6 +65,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final location = state.matchedLocation;
       final onAuthFlow = location == Routes.welcome ||
           location == Routes.phone ||
+          location == Routes.register ||
           location == Routes.otp;
 
       if (!signedIn) return onAuthFlow ? null : Routes.welcome;
@@ -92,6 +95,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: Routes.phone,
         builder: (_, _) => const PhoneScreen(),
+      ),
+      GoRoute(
+        path: Routes.register,
+        builder: (_, _) => const RegisterScreen(),
       ),
       GoRoute(
         path: Routes.otp,

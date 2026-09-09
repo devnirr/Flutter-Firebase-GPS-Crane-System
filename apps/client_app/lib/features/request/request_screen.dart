@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../router.dart';
 import 'location_picker_screen.dart';
@@ -23,6 +27,7 @@ class RequestScreen extends ConsumerStatefulWidget {
 
 class _RequestScreenState extends ConsumerState<RequestScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _picker = ImagePicker();
   final _make = TextEditingController();
   final _model = TextEditingController();
   final _plate = TextEditingController();
@@ -147,6 +152,42 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
     }
   }
 
+  /// Asks where the photo comes from, then hands the picked file to the draft.
+  ///
+  /// The picker is capped well below full sensor resolution on purpose: these
+  /// photos exist so a chofer knows what he is driving to, and a 12-megapixel
+  /// original is a slow upload from a roadside with one bar for no extra
+  /// information.
+  Future<void> _addPhoto() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _PhotoSourceSheet(),
+    );
+    if (source == null || !mounted) return;
+
+    try {
+      final file = await _picker.pickImage(
+        source: source,
+        maxWidth: 1600,
+        imageQuality: 80,
+      );
+      if (file == null || !mounted) return;
+      ref.read(requestControllerProvider.notifier).addPhoto(file.path);
+    } on PlatformException {
+      // Almost always a denied camera or photos permission. There is nothing
+      // to retry in-app, so say what to fix.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No pudimos abrir la cámara ni la galería. Revisa los permisos.',
+          ),
+        ),
+      );
+    }
+  }
+
   void _showMissing(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
@@ -241,9 +282,7 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                     const SizedBox(height: Insets.lg),
                     _PhotoStrip(
                       paths: draft.photoPaths,
-                      onAdd: () => ref
-                          .read(requestControllerProvider.notifier)
-                          .addPhoto('demo-${draft.photoPaths.length}'),
+                      onAdd: _addPhoto,
                       onRemove: (path) => ref
                           .read(requestControllerProvider.notifier)
                           .removePhoto(path),
@@ -309,24 +348,37 @@ class _Header extends StatelessWidget {
 
   final VoidCallback onBack;
 
+  /// How far the arrow sits in from the edge of the screen.
+  static const double _backInset = Insets.lg;
+
+  /// The inset plus the button's tap target, mirrored on the right so the
+  /// mark stays centred.
+  static const double _backSlotWidth = _backInset + kMinInteractiveDimension;
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       bottom: false,
       child: SizedBox(
         height: 116,
-        child: Stack(
-          alignment: Alignment.center,
+        // A Row, not a Stack: the button owns the left end of the banner
+        // outright, so it can never end up floating over the mark however the
+        // logo is sized. The Row centres its children vertically, which is
+        // what puts the button level with the middle of the banner.
+        child: Row(
           children: [
-            const GruaLogo(size: 98, variant: GruaLogoVariant.onDark),
-            Positioned(
-              left: Insets.sm,
-              top: 0,
+            Padding(
+              padding: const EdgeInsets.only(left: _backInset),
               child: IconButton(
                 onPressed: onBack,
+                iconSize: 30,
                 icon: const Icon(Icons.arrow_back, color: BrandColors.white),
               ),
             ),
+            const Expanded(child: Center(child: GruaLogo(size: 98))),
+            // Balances the button, so the mark sits on the true centre of the
+            // screen rather than being pushed right by it.
+            const SizedBox(width: _backSlotWidth),
           ],
         ),
       ),
@@ -547,7 +599,8 @@ class _PhotoStrip extends StatelessWidget {
                   color: BrandColors.grey200,
                   borderRadius: Corners.brMd,
                 ),
-                child: const Icon(Icons.image_outlined, color: BrandColors.grey600),
+                clipBehavior: Clip.antiAlias,
+                child: _PhotoThumb(path: paths[index]),
               ),
               Positioned(
                 top: 2,
@@ -647,5 +700,91 @@ class _LocationField extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Where a photo comes from.
+///
+/// Two options, both one tap. Somebody standing next to a broken car in
+/// traffic is not going to work through a menu, and the camera comes first
+/// because photographing the car in front of them is the common case.
+class _PhotoSourceSheet extends StatelessWidget {
+  const _PhotoSourceSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return BottomActionSheet(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Agregar foto',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: Insets.md),
+          ListTile(
+            leading: const Icon(
+              Icons.photo_camera_outlined,
+              color: BrandColors.red,
+            ),
+            title: const Text('Cámara'),
+            onTap: () => Navigator.of(context).pop(ImageSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(
+              Icons.photo_library_outlined,
+              color: BrandColors.red,
+            ),
+            title: const Text('Galería'),
+            onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A picked photo, read once and kept.
+///
+/// The bytes come through [XFile] rather than `Image.file` so there is one code
+/// path: image_picker returns a filesystem path on a phone and a blob URL in a
+/// browser, and `dart:io` cannot be imported into a web build at all. At three
+/// photos capped at 1600px this costs little and saves a conditional import.
+class _PhotoThumb extends StatefulWidget {
+  const _PhotoThumb({required this.path});
+
+  final String path;
+
+  @override
+  State<_PhotoThumb> createState() => _PhotoThumbState();
+}
+
+class _PhotoThumbState extends State<_PhotoThumb> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final bytes = await XFile(widget.path).readAsBytes();
+      if (mounted) setState(() => _bytes = bytes);
+    } on Object {
+      // A thumbnail that will not decode is not worth an error message to
+      // somebody waiting on a tow. The placeholder icon stays put.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    if (bytes == null) {
+      return const Icon(Icons.image_outlined, color: BrandColors.grey600);
+    }
+    return Image.memory(bytes, width: 92, height: 92, fit: BoxFit.cover);
   }
 }

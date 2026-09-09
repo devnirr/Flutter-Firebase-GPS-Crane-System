@@ -120,10 +120,30 @@ class DemoUserRepository implements UserRepository {
   final DemoBackend _backend;
 
   @override
-  Stream<AppUser?> watchUser(String uid) => _backend.serviceUpdates
-      .map((_) => _backend.user(uid))
-      .distinct()
-      .startWith(_backend.user(uid));
+  // Keyed off userUpdates, not serviceUpdates: a profile edit has to be visible
+  // on its own, without waiting for some unrelated service event to come along
+  // and shake the stream.
+  Stream<AppUser?> watchUser(String uid) =>
+      _backend.userUpdates.map((users) => users[uid]).distinct();
+
+  @override
+  Stream<List<AppUser>> watchAllClients({int limit = 500}) =>
+      _backend.userUpdates.map((users) {
+        final clients = users.values
+            .where((user) => user.role == UserRole.client)
+            .toList()
+          // Newest first, matching the Firestore ordering. Users seeded
+          // without a createdAt sort last rather than crashing the sort.
+          ..sort((a, b) {
+            final left = a.createdAt;
+            final right = b.createdAt;
+            if (left == null || right == null) {
+              return left == null ? (right == null ? 0 : 1) : -1;
+            }
+            return right.compareTo(left);
+          });
+        return clients.take(limit).toList();
+      });
 
   @override
   Future<Result<AppUser>> fetchUser(String uid) async {
@@ -140,6 +160,7 @@ class DemoUserRepository implements UserRepository {
     String? name,
     String? email,
     String? rnc,
+    String? address,
     PaymentMethod? preferredPaymentMethod,
   }) async {
     final user = _backend.user(uid);
@@ -151,10 +172,29 @@ class DemoUserRepository implements UserRepository {
         name: name ?? user.name,
         email: email ?? user.email,
         rnc: rnc ?? user.rnc,
+        address: address ?? user.address,
         preferredPaymentMethod:
             preferredPaymentMethod ?? user.preferredPaymentMethod,
       ),
     );
+    return _delayed(const Result.ok(null));
+  }
+
+  // Saved vehicles live only for the life of the demo session, which is all
+  // the demo backend promises for anything else either.
+  final Map<String, Map<String, ServiceVehicle>> _vehicles = {};
+
+  @override
+  Stream<List<ServiceVehicle>> watchVehicles(String uid) =>
+      Stream.value((_vehicles[uid] ?? {}).values.toList());
+
+  @override
+  Future<Result<void>> saveVehicle(
+    String uid,
+    ServiceVehicle vehicle, {
+    String id = UserRepository.primaryVehicleId,
+  }) async {
+    (_vehicles[uid] ??= {})[id] = vehicle;
     return _delayed(const Result.ok(null));
   }
 
@@ -455,6 +495,16 @@ class DemoFunctionsGateway implements FunctionsGateway {
   DemoFunctionsGateway(this._backend);
 
   final DemoBackend _backend;
+
+  @override
+  // The demo backend hands out a fully-formed customer at startup, so there is
+  // never a missing document to create.
+  Future<Result<void>> ensureProfile({String locale = 'es_DO'}) async =>
+      const Result.ok(null);
+
+  @override
+  // The demo session already presents whichever role the app asked for.
+  Future<Result<void>> bootstrapFirstAdmin() async => const Result.ok(null);
 
   @override
   Future<Result<QuoteResult>> quoteService({

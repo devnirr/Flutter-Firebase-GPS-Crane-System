@@ -65,6 +65,7 @@ class DemoBackend {
   final _servicesController = StreamController<Map<String, Service>>.broadcast();
   final _driversController = StreamController<Map<String, Driver>>.broadcast();
   final _liveController = StreamController<Map<String, DriverLivePosition>>.broadcast();
+  final _usersController = StreamController<Map<String, AppUser>>.broadcast();
   final _messagesController = StreamController<String>.broadcast();
   final _trackingController = StreamController<String>.broadcast();
 
@@ -83,14 +84,81 @@ class DemoBackend {
     if (_seeded) return;
     _seeded = true;
 
-    _users['demo-client-1'] = AppUser(
-      id: 'demo-client-1',
-      phone: '+18095551234',
-      name: 'Ramón Peña',
-      email: 'ramon@example.do',
-      preferredPaymentMethod: PaymentMethod.cash,
-      completedServices: 4,
-      createdAt: _now().subtract(const Duration(days: 210)),
+    // `demo-client-1` is the account the client app signs in as; the rest are
+    // here so the customer roster in the panel has something to show.
+    const clientSpecs =
+        <(String, String, String, String, String, PaymentMethod, int, int)>[
+      (
+        'demo-client-1',
+        'Ramón Peña',
+        '+18095551234',
+        'ramon@example.do',
+        '',
+        PaymentMethod.cash,
+        4,
+        210,
+      ),
+      (
+        'demo-client-2',
+        'Yokasta Almonte',
+        '+18095552345',
+        'yokasta@example.do',
+        '',
+        PaymentMethod.card,
+        11,
+        140,
+      ),
+      (
+        'demo-client-3',
+        'Autorepuestos del Este SRL',
+        '+18092223456',
+        'flota@autorepuestosdeleste.do',
+        '131246789',
+        PaymentMethod.card,
+        26,
+        95,
+      ),
+      (
+        'demo-client-4',
+        'Franklin Ureña',
+        '+18293334567',
+        '',
+        '',
+        PaymentMethod.cash,
+        1,
+        22,
+      ),
+      (
+        'demo-client-5',
+        'Deiby Mercedes',
+        '+18494445678',
+        'deiby@example.do',
+        '',
+        PaymentMethod.cash,
+        0,
+        3,
+      ),
+    ];
+
+    for (final (id, name, phone, email, rnc, payment, completed, ageDays)
+        in clientSpecs) {
+      _users[id] = AppUser(
+        id: id,
+        phone: phone,
+        name: name,
+        email: email,
+        rnc: rnc,
+        preferredPaymentMethod: payment,
+        completedServices: completed,
+        createdAt: _now().subtract(Duration(days: ageDays)),
+      );
+    }
+
+    // One blocked account, so the panel's blocked state is visible in demo
+    // mode instead of only ever appearing in production.
+    _users['demo-client-4'] = _users['demo-client-4']!.copyWith(
+      blocked: true,
+      blockedReason: r'Servicio sin pagar en efectivo (RD$3,200)',
     );
 
     const truckSpecs = <(String, String, String, String, TruckType, int)>[
@@ -376,6 +444,11 @@ class DemoBackend {
     yield* _servicesController.stream;
   }
 
+  Stream<Map<String, AppUser>> get userUpdates async* {
+    yield Map.unmodifiable(_users);
+    yield* _usersController.stream;
+  }
+
   Stream<Map<String, Driver>> get driverUpdates async* {
     yield Map.unmodifiable(_drivers);
     yield* _driversController.stream;
@@ -409,6 +482,7 @@ class DemoBackend {
 
   void upsertUser(AppUser user) {
     _users[user.id] = user;
+    _emitUsers();
   }
 
   void setLive(DriverLivePosition position) {
@@ -782,6 +856,8 @@ class DemoBackend {
   void _emitDrivers() => _driversController.add(Map.unmodifiable(_drivers));
 
   void _emitLive() => _liveController.add(Map.unmodifiable(_live));
+
+  void _emitUsers() => _usersController.add(Map.unmodifiable(_users));
 
   void dispose() {
     for (final timer in _timers) {

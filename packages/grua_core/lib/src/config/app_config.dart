@@ -40,6 +40,7 @@ class AppConfig {
     required this.useEmulators,
     required this.emulatorHost,
     required this.functionsRegion,
+    this.disableAppVerification = false,
   });
 
   /// Reads every value from the compile-time environment.
@@ -59,6 +60,12 @@ class AppConfig {
       googleMapsApiKey: const String.fromEnvironment('GOOGLE_MAPS_API_KEY'),
       stripePublishableKey: const String.fromEnvironment('STRIPE_PUBLISHABLE_KEY'),
       useEmulators: const bool.fromEnvironment('USE_EMULATORS'),
+      // Deliberately ANDed with kDebugMode rather than just read: a release
+      // binary that skips reCAPTCHA and Play Integrity would let anyone mint
+      // an SMS code for a number they do not own, so the define cannot turn
+      // this on outside a debug build no matter how the build is invoked.
+      disableAppVerification: kDebugMode &&
+          const bool.fromEnvironment('DISABLE_APP_VERIFICATION'),
       emulatorHost: const String.fromEnvironment(
         'EMULATOR_HOST',
         // 10.0.2.2 is the host loopback as seen from the Android emulator.
@@ -77,6 +84,14 @@ class AppConfig {
   final String googleMapsApiKey;
   final String stripePublishableKey;
   final bool useEmulators;
+
+  /// Skips SMS app verification so the phone numbers registered under
+  /// Authentication > Sign-in method > Phone > "Phone numbers for testing"
+  /// sign in with their fixed code and no reCAPTCHA or Play Integrity check.
+  ///
+  /// Debug builds only, and opt-in with
+  /// `--dart-define=DISABLE_APP_VERIFICATION=true`.
+  final bool disableAppVerification;
   final String emulatorHost;
   final String functionsRegion;
 
@@ -105,6 +120,13 @@ class AppConfig {
     }
     if (useEmulators) {
       throw StateError('USE_EMULATORS must never be true in a production build.');
+    }
+    // Unreachable while the flag is gated on kDebugMode, kept so the guard
+    // survives anyone loosening that gate.
+    if (disableAppVerification) {
+      throw StateError(
+        'DISABLE_APP_VERIFICATION must never be true in a production build.',
+      );
     }
   }
 

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
@@ -6,45 +8,37 @@ import '../../router.dart';
 
 /// The first screen a new customer sees.
 ///
-/// Black ground with the outlined mark, and the two entry points raised into a
-/// white sheet at the bottom where a thumb reaches. Somebody opening this app
-/// is usually stranded on a road, so there is nothing else on it.
+/// Plain black ground carrying nothing but the mark, and the two entry points
+/// raised into a white sheet at the bottom where a thumb reaches. Somebody
+/// opening this app is usually stranded on a road, so there is nothing else.
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-
     return Scaffold(
       backgroundColor: BrandColors.ink,
       body: Column(
         children: [
+          // The mark holds the black area on its own, so it takes as much of
+          // it as it can. Sizing off the constraints rather than a fixed width
+          // keeps it clear of the sheet on short screens, where the height runs
+          // out well before the width does.
           Expanded(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                const Positioned.fill(child: _DiagonalStripes()),
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const GruaLogo(size: 168, variant: GruaLogoVariant.outline),
-                    const SizedBox(height: Insets.xxl),
-                    Text(
-                      'Grúas cuando más las necesitas',
-                      textAlign: TextAlign.center,
-                      style: text.titleMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.72),
-                      ),
-                    ),
-                  ],
+            child: LayoutBuilder(
+              builder: (context, constraints) => Center(
+                child: GruaLogo(
+                  size: math.min(
+                    constraints.maxWidth * 0.82,
+                    constraints.maxHeight * 0.82 / GruaLogo.artworkRatio,
+                  ),
                 ),
-              ],
+              ),
             ),
           ),
           _EntrySheet(
             onPhone: () => context.push(Routes.phone),
-            onRegister: () => context.push(Routes.phone),
+            onRegister: () => context.push(Routes.register),
           ),
         ],
       ),
@@ -60,84 +54,43 @@ class _EntrySheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-
     return BottomActionSheet(
+      // The sheet stands 1.6x its old height: the two buttons keep their
+      // proportions and the extra room goes into the padding and the gaps, so
+      // the sheet grows without the buttons stretching out of shape.
       padding: const EdgeInsets.fromLTRB(
         Insets.gutter,
-        Insets.xxl,
+        64,
         Insets.gutter,
-        Insets.xl,
+        72,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           OutlinedButton(
             onPressed: onPhone,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(58),
-              side: const BorderSide(color: BrandColors.red, width: 1.6),
-              foregroundColor: BrandColors.red,
-              shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
-              textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            child: const Text('Entrar con teléfono'),
+            style: _entryButton,
+            child: const Text('Entrar con Teléfono'),
           ),
-          const SizedBox(height: Insets.md),
+          const SizedBox(height: 28),
           OutlinedButton(
             onPressed: onRegister,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(58),
-              side: const BorderSide(color: BrandColors.grey200, width: 1.6),
-              foregroundColor: BrandColors.ink,
-              shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
-              textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
+            style: _entryButton,
             child: const Text('Registrarme'),
           ),
-          const SizedBox(height: Insets.lg),
-          Text(
-            'Al continuar aceptas nuestros Términos y la Política de '
-            'privacidad.',
-            textAlign: TextAlign.center,
-            style: text.bodySmall?.copyWith(color: BrandColors.grey600),
-          ),
+          const SizedBox(height: 20),
         ],
       ),
     );
   }
 }
 
-/// The faint red hatching behind the mark, from the mockup.
-class _DiagonalStripes extends StatelessWidget {
-  const _DiagonalStripes();
-
-  @override
-  Widget build(BuildContext context) =>
-      const CustomPaint(painter: _StripePainter());
-}
-
-class _StripePainter extends CustomPainter {
-  const _StripePainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = BrandColors.red.withValues(alpha: 0.14)
-      ..strokeWidth = 14;
-
-    // Only the upper-right corner is hatched, so the mark stays on clean black.
-    canvas
-      ..save()
-      ..clipRect(
-        Rect.fromLTWH(size.width * 0.45, 0, size.width, size.height * 0.5),
-      );
-    for (var x = size.width * 0.2; x < size.width * 1.6; x += 34) {
-      canvas.drawLine(Offset(x, -40), Offset(x - size.height, size.height), paint);
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_StripePainter oldDelegate) => false;
-}
+/// Both entry points wear the same outline, so neither reads as the lesser
+/// choice and the two can never drift apart in height or colour.
+final ButtonStyle _entryButton = OutlinedButton.styleFrom(
+  minimumSize: const Size.fromHeight(58),
+  side: const BorderSide(color: BrandColors.red, width: 1.6),
+  foregroundColor: BrandColors.red,
+  shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
+  textStyle: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+);

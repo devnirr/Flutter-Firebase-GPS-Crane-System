@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
+import 'registration_controller.dart';
+
 class OtpScreen extends ConsumerStatefulWidget {
   const OtpScreen({required this.verificationId, required this.phone, super.key});
 
@@ -67,17 +69,35 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         );
     if (!mounted) return;
 
-    result.fold(
-      // The router's redirect takes it from here: once the auth stream emits a
-      // uid, it sends us to the profile step or straight home.
-      (_) => setState(() => _verifying = false),
-      (failure) => setState(() {
+    if (result.isErr) {
+      final failure = result.fold((_) => null, (failure) => failure)!;
+      setState(() {
         _verifying = false;
         _error = failure.userMessage;
         _controller.clear();
         _focus.requestFocus();
-      }),
-    );
+      });
+      return;
+    }
+
+    // Signed in. If this code came from the register screen there are answers
+    // waiting to be written, and they can only be written now that there is an
+    // account to write them to. It is a no-op for a plain sign-in.
+    final applied =
+        await ref.read(registrationControllerProvider.notifier).apply();
+    if (!mounted) return;
+
+    // From here the router's redirect takes over: once the profile stream
+    // reports a name it sends us home, and without one to the profile step.
+    setState(() {
+      _verifying = false;
+      // The account exists either way, so a failure here is not a dead end -
+      // say so and let the profile step collect what did not save.
+      _error = applied.fold(
+        (_) => null,
+        (failure) => failure.userMessage,
+      );
+    });
   }
 
   Future<void> _resend() async {
@@ -101,7 +121,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: BackButton(onPressed: () => context.pop()),
-        title: const GruaLogo(size: 74, showWordmark: false),
+        title: const GruaLogo(size: 74),
       ),
       body: SafeArea(
         child: ListView(

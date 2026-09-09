@@ -66,7 +66,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: BackButton(onPressed: () => context.pop()),
-        title: const GruaLogo(size: 74, showWordmark: false),
+        title: const GruaLogo(size: 74),
       ),
       body: SafeArea(
         child: Form(

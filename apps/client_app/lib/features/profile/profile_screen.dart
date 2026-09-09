@@ -10,7 +10,7 @@ class ProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user = ref.watch(currentUserProvider).value;
+    final userAsync = ref.watch(currentUserProvider);
     final settings = ref.watch(appSettingsProvider).value;
     final config = ref.watch(appConfigProvider);
     final text = Theme.of(context).textTheme;
@@ -21,9 +21,31 @@ class ProfileScreen extends ConsumerWidget {
         leading: BackButton(onPressed: () => context.pop()),
         title: const Text('Mi cuenta'),
       ),
-      body: user == null
-          ? const BrandLoader()
-          : ListView(
+      // Three states, not two. Reading `.value` alone made an error and a
+      // missing document both look like "still loading", which is how this
+      // screen came to spin forever when the profile document did not exist.
+      body: userAsync.when(
+        loading: () => const BrandLoader(),
+        error: (error, _) => EmptyState(
+          icon: Icons.cloud_off_outlined,
+          tone: EmptyStateTone.error,
+          title: 'No pudimos cargar tu perfil',
+          message: error is Failure
+              ? error.userMessage
+              : 'Revisa tu conexión e intenta de nuevo.',
+          actionLabel: 'Reintentar',
+          onAction: () => _retry(ref),
+        ),
+        data: (user) => user == null
+            ? EmptyState(
+                icon: Icons.person_off_outlined,
+                title: 'Tu perfil no está listo',
+                message: 'Todavía estamos creando tu cuenta. Revisa tu '
+                    'conexión e intenta de nuevo.',
+                actionLabel: 'Reintentar',
+                onAction: () => _retry(ref),
+              )
+            : ListView(
               padding: const EdgeInsets.all(Insets.lg),
               children: [
                 FloatingCard(
@@ -135,7 +157,17 @@ class ProfileScreen extends ConsumerWidget {
                 ),
               ],
             ),
+      ),
     );
+  }
+
+  /// Re-runs the server-side profile creation, then re-reads the document.
+  ///
+  /// Both halves matter: the retry is here because the document was missing,
+  /// and only the callable can create one.
+  Future<void> _retry(WidgetRef ref) async {
+    await ref.read(functionsGatewayProvider).ensureProfile();
+    ref.invalidate(currentUserProvider);
   }
 
   void _notYet(BuildContext context) {

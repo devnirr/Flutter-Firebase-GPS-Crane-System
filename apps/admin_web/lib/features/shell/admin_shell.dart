@@ -58,6 +58,7 @@ class _Sidebar extends ConsumerWidget {
   static const _items = <({String label, IconData icon, String route})>[
     (label: 'Operaciones', icon: Icons.map_outlined, route: Routes.operations),
     (label: 'Servicios', icon: Icons.list_alt_outlined, route: Routes.services),
+    (label: 'Clientes', icon: Icons.people_outline, route: Routes.clients),
     (label: 'Choferes', icon: Icons.badge_outlined, route: Routes.drivers),
     (label: 'Grúas', icon: Icons.local_shipping_outlined, route: Routes.trucks),
     (label: 'Reportes', icon: Icons.insights_outlined, route: Routes.reports),
@@ -80,7 +81,7 @@ class _Sidebar extends ConsumerWidget {
             ),
             child: Row(
               children: [
-                const GruaLogo(size: 52, showWordmark: false),
+                const GruaLogo(size: 52),
                 const SizedBox(width: Insets.md),
                 Expanded(
                   child: Text(

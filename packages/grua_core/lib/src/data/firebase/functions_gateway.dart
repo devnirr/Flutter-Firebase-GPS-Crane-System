@@ -104,6 +104,14 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   // -------------------------------------------------------------------------
 
   @override
+  Future<Result<void>> ensureProfile({String locale = 'es_DO'}) =>
+      _callVoid('ensureProfile', {'locale': locale});
+
+  @override
+  Future<Result<void>> bootstrapFirstAdmin() =>
+      _callVoid('bootstrapFirstAdmin', {});
+
+  @override
   Future<Result<QuoteResult>> quoteService({
     required ServiceLocation pickup,
     required ServiceLocation dropoff,

@@ -65,7 +65,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen> {
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
-      appBar: AppBar(title: const GruaLogo(size: 74, showWordmark: false)),
+      appBar: AppBar(title: const GruaLogo(size: 74)),
       body: SafeArea(
         child: Form(
           key: _formKey,

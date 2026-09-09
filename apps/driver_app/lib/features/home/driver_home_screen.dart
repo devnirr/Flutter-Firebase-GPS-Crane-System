@@ -108,7 +108,7 @@ class _Header extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(Insets.lg, Insets.md, Insets.lg, Insets.lg),
       child: Row(
         children: [
-          const GruaLogo(size: 62, showWordmark: false),
+          const GruaLogo(size: 62),
           const SizedBox(width: Insets.md),
           Expanded(
             child: Column(

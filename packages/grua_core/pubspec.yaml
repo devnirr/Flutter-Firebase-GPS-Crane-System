@@ -65,3 +65,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # The brand mark ships with the package rather than each app, so all three
+    # products draw the same logo without re-declaring the asset.
+    - assets/icons/

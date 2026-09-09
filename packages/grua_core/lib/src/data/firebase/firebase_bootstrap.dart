@@ -48,6 +48,23 @@ abstract final class FirebaseBootstrap {
 
     if (config.useEmulators) await _useEmulators(config);
 
+    // Lets the console's test phone numbers through with their fixed code and
+    // no reCAPTCHA (web) or Play Integrity (Android) round trip. Debug builds
+    // only - see AppConfig.disableAppVerification.
+    if (config.disableAppVerification) {
+      await FirebaseAuth.instance.setSettings(
+        appVerificationDisabledForTesting: true,
+      );
+    }
+    // Said out loud either way: "I passed the define" and "the define reached
+    // the build" are different claims, and only this line settles it.
+    if (kDebugMode) {
+      debugPrint(
+        '[grua] SMS app verification: '
+        '${config.disableAppVerification ? "DISABLED (test numbers)" : "enabled"}',
+      );
+    }
+
     // Offline persistence is not a nicety here. A customer requesting a tow is
     // frequently on a highway with one bar, and a chofer's app must keep
     // rendering the job it already has when the signal drops.
@@ -55,6 +72,23 @@ abstract final class FirebaseBootstrap {
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: true,
         cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+      );
+    } else {
+      // On the web, Firestore's default transport is WebChannel: one long-lived
+      // streaming connection per listener. Plenty of networks between here and
+      // Google — corporate proxies, some antivirus TLS inspectors, a few
+      // Dominican ISPs, and anything doing IPv6 badly — accept the handshake
+      // and then never deliver the stream, which the browser eventually reports
+      // as ERR_CONNECTION_TIMED_OUT. The snapshot listener simply never fires,
+      // so every screen sits on its spinner with nothing in the logs but a
+      // timeout.
+      //
+      // Auto-detect gives the SDK one attempt at WebChannel and falls back to
+      // long polling — ordinary XHR round trips, which those middleboxes pass —
+      // when it does not come up. Forcing it outright would cost the office a
+      // slower, chattier connection on networks where streaming works fine.
+      FirebaseFirestore.instance.settings = const Settings(
+        webExperimentalAutoDetectLongPolling: true,
       );
     }
 

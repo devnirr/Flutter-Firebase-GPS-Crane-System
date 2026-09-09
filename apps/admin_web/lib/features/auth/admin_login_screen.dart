@@ -21,6 +21,11 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
   var _busy = false;
   String? _error;
 
+  /// Set when the credentials were right but the account carries no staff
+  /// claim. Offering the bootstrap only in that state keeps it out of the way
+  /// of everybody who simply mistyped a password.
+  var _offerBootstrap = false;
+
   @override
   void dispose() {
     _email.dispose();
@@ -56,11 +61,68 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
       setState(() {
         _busy = false;
         _error = 'Esta cuenta no tiene acceso al panel.';
+        _offerBootstrap = true;
       });
       return;
     }
 
     setState(() => _busy = false);
+  }
+
+  /// Claims the admin role for the very first administrator.
+  ///
+  /// The server decides whether this is allowed: it refuses unless the
+  /// account is on the `ADMIN_BOOTSTRAP_EMAILS` allowlist and no admin exists
+  /// yet. Signing in again is what mints a token carrying the new claim.
+  Future<void> _bootstrap() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    final auth = ref.read(authRepositoryProvider);
+    final signedIn =
+        await auth.signInWithEmail(_email.text.trim(), _password.text);
+    if (!mounted) return;
+    if (signedIn case Err(:final failure)) {
+      setState(() {
+        _busy = false;
+        _error = failure.userMessage;
+      });
+      return;
+    }
+
+    final granted = await ref.read(functionsGatewayProvider).bootstrapFirstAdmin();
+    if (!mounted) return;
+
+    if (granted case Err(:final failure)) {
+      await auth.signOut();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = failure.userMessage;
+      });
+      return;
+    }
+
+    // The claim only reaches the app in a freshly minted token.
+    final role = await auth.currentRole(forceRefresh: true);
+    if (!mounted) return;
+    if (!role.isStaff) {
+      await auth.signOut();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'El servidor no otorgó el acceso. Revisa ADMIN_BOOTSTRAP_EMAILS.';
+      });
+      return;
+    }
+
+    setState(() {
+      _busy = false;
+      _offerBootstrap = false;
+    });
   }
 
   @override
@@ -106,6 +168,13 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
                   if (_error != null) ...[
                     const SizedBox(height: Insets.lg),
                     InlineNotice(message: _error!, tone: NoticeTone.error),
+                    if (_offerBootstrap) ...[
+                      const SizedBox(height: Insets.md),
+                      TextButton(
+                        onPressed: _busy ? null : _bootstrap,
+                        child: const Text('Soy el primer administrador'),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: Insets.xl),
                   ElevatedButton(

@@ -97,6 +97,40 @@ Future<void> main() async {
     expect(find.text('001-1234567-8'), findsOneWidget);
   });
 
+  testWidgets('the clients screen lists registered customers', (tester) async {
+    setDesktopSize(tester);
+    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    await tester.tap(find.text('Clientes').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ramón Peña'), findsOneWidget);
+    expect(find.text('809-555-1234'), findsOneWidget);
+    // Choferes share the users collection in Firestore but not this roster.
+    expect(find.text('Luis Fernández'), findsNothing);
+    // The seeded blocked account proves the state renders, not just the name.
+    expect(find.text('Bloqueado'), findsOneWidget);
+  });
+
+  testWidgets('the client search narrows the roster', (tester) async {
+    setDesktopSize(tester);
+    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    await tester.tap(find.text('Clientes').last);
+    await tester.pumpAndSettle();
+
+    // Typed the way a dispatcher reads it off a screen, with dashes.
+    await tester.enterText(find.byType(TextField).last, '809-555-2345');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Yokasta Almonte'), findsOneWidget);
+    expect(find.text('Ramón Peña'), findsNothing);
+  });
+
   testWidgets('a narrow window says so instead of reflowing', (tester) async {
     setWindow(tester, const Size(760, 900));
 

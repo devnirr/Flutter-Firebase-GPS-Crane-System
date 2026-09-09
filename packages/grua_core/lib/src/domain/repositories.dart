@@ -49,17 +49,44 @@ abstract interface class AuthRepository {
 }
 
 abstract interface class UserRepository {
+  /// The document id registration writes its one vehicle to.
+  static const String primaryVehicleId = 'principal';
+
   Stream<AppUser?> watchUser(String uid);
+
+  /// The customer roster, for the office. Newest registration first, because
+  /// the reason to open this list is nearly always "who just signed up".
+  ///
+  /// Staff-only in practice: the rules let a dispatcher read `users/` and
+  /// refuse the same query to everyone else, so calling this from the client
+  /// app fails rather than quietly handing over the customer base.
+  Stream<List<AppUser>> watchAllClients({int limit = 500});
 
   Future<Result<AppUser>> fetchUser(String uid);
 
-  /// Only the client-writable whitelist: name, email, rnc, locale, preferences.
+  /// Only the client-writable whitelist: name, email, rnc, address, locale,
+  /// preferences. Anything else is refused by the rules, so passing it here
+  /// would fail the whole write rather than be ignored.
   Future<Result<void>> updateProfile(
     String uid, {
     String? name,
     String? email,
     String? rnc,
+    String? address,
     PaymentMethod? preferredPaymentMethod,
+  });
+
+  /// The vehicles a customer has saved, newest first.
+  Stream<List<ServiceVehicle>> watchVehicles(String uid);
+
+  /// Writes one saved vehicle under a caller-chosen id.
+  ///
+  /// Registration always passes [primaryVehicleId] so signing up twice
+  /// overwrites rather than accumulating near-duplicates.
+  Future<Result<void>> saveVehicle(
+    String uid,
+    ServiceVehicle vehicle, {
+    String id,
   });
 
   Future<Result<void>> registerFcmToken(String uid, String token, String platform);
@@ -210,6 +237,24 @@ class QuoteResult {
 /// Everything that changes state lives here, because everything that changes
 /// state is a Cloud Function call.
 abstract interface class FunctionsGateway {
+  /// Creates the caller's `users/` document if it does not exist yet.
+  ///
+  /// The security rules forbid a client from creating its own user document,
+  /// because `role` and `blocked` are not the client's to decide. So the
+  /// document only comes into being through this call, and until it does the
+  /// customer has no profile for any screen to read.
+  ///
+  /// Idempotent: it costs one read when the document is already there, which
+  /// is what makes calling it on every launch reasonable.
+  Future<Result<void>> ensureProfile({String locale});
+
+  /// Grants the caller the admin claim, once, when nobody holds it yet.
+  ///
+  /// The server also requires the caller's email to be on the
+  /// `ADMIN_BOOTSTRAP_EMAILS` allowlist, so this cannot be used to escalate
+  /// later. It is permanently inert after the first admin exists.
+  Future<Result<void>> bootstrapFirstAdmin();
+
   Future<Result<QuoteResult>> quoteService({
     required ServiceLocation pickup,
     required ServiceLocation dropoff,

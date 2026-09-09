@@ -11,6 +11,12 @@ class ClientApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final config = ref.watch(appConfigProvider);
 
+    // Watched, not read: a customer who has just signed in has no `users/`
+    // document until the server makes one, and every screen that reads a
+    // profile waits forever without it. Watching from the root means it runs
+    // on a fresh sign-in and on a cold start of an existing session alike.
+    ref.watch(ensureProfileProvider);
+
     return MaterialApp.router(
       title: config.flavor.appName,
       debugShowCheckedModeBanner: false,

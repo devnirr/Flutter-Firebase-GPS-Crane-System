@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import 'features/auth/admin_login_screen.dart';
+import 'features/clients/clients_screen.dart';
 import 'features/drivers/drivers_screen.dart';
 import 'features/operations/operations_screen.dart';
 import 'features/reports/reports_screen.dart';
@@ -14,6 +15,7 @@ abstract final class Routes {
   static const login = '/entrar';
   static const operations = '/';
   static const services = '/servicios';
+  static const clients = '/clientes';
   static const drivers = '/choferes';
   static const trucks = '/gruas';
   static const reports = '/reportes';
@@ -45,6 +47,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       final location = state.matchedLocation;
 
       if (!signedIn) return location == Routes.login ? null : Routes.login;
+
+      // A session restored from a page refresh never passes through the login
+      // screen, so the staff check has to live here too. Without it an account
+      // with no role lands in the panel and every query fails with a
+      // permission error that reads like an outage.
+      final role = ref.read(currentRoleProvider);
+      if (role.isLoading) return null;
+      if (!(role.value ?? UserRole.unknown).isStaff) {
+        return location == Routes.login ? null : Routes.login;
+      }
+
       if (location == Routes.login) return Routes.operations;
       return null;
     },
@@ -66,6 +79,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               selectedServiceId: state.uri.queryParameters['id'],
             ),
           ),
+          GoRoute(path: Routes.clients, builder: (_, _) => const ClientsScreen()),
           GoRoute(path: Routes.drivers, builder: (_, _) => const DriversScreen()),
           GoRoute(path: Routes.trucks, builder: (_, _) => const TrucksScreen()),
           GoRoute(path: Routes.reports, builder: (_, _) => const ReportsScreen()),
@@ -86,14 +100,21 @@ final routerProvider = Provider<GoRouter>((ref) {
 
 class _RouterRefresh extends ChangeNotifier {
   _RouterRefresh(Ref ref) {
-    _subscription = ref.listen(authStateProvider, (_, _) => notifyListeners());
+    // The role matters as much as the session: the redirect refuses anyone
+    // without a staff claim, so it has to re-run when that claim arrives.
+    _subscriptions = [
+      ref.listen(authStateProvider, (_, _) => notifyListeners()),
+      ref.listen(currentRoleProvider, (_, _) => notifyListeners()),
+    ];
   }
 
-  late final ProviderSubscription<Object?> _subscription;
+  late final List<ProviderSubscription<Object?>> _subscriptions;
 
   @override
   void dispose() {
-    _subscription.close();
+    for (final subscription in _subscriptions) {
+      subscription.close();
+    }
     super.dispose();
   }
 }

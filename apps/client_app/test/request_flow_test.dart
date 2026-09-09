@@ -37,7 +37,7 @@ Future<void> main() async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Entrar con teléfono'), findsOneWidget);
+    expect(find.text('Entrar con Teléfono'), findsOneWidget);
     expect(find.text('Registrarme'), findsOneWidget);
   });
 
@@ -45,7 +45,7 @@ Future<void> main() async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Entrar con teléfono'));
+    await tester.tap(find.text('Entrar con Teléfono'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextFormField).first, '8095551234');
@@ -59,6 +59,36 @@ Future<void> main() async {
     await tester.pumpAndSettle(const Duration(seconds: 1));
 
     expect(find.text('PEDIR GRÚA 24/7'), findsOneWidget);
+  });
+
+  testWidgets('registering carries the form answers onto the new profile',
+      (tester) async {
+    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Registrarme'));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear tu cuenta'), findsOneWidget);
+
+    final fields = find.byType(TextFormField);
+    await tester.enterText(fields.at(0), 'Andrés Familia');
+    await tester.enterText(fields.at(1), '8095551234');
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Crear cuenta'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Crear cuenta'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    await tester.enterText(find.byType(TextField).first, '123456');
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    // The name was typed before the account existed. Seeing it in the greeting
+    // proves it survived the SMS step and was written afterwards.
+    expect(find.text('Hola, Andrés'), findsOneWidget);
   });
 
   test('a short verification code is rejected with a specific message', () async {

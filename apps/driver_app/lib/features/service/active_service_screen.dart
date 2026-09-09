@@ -139,7 +139,7 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
               padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
               child: Row(
                 children: [
-                  const GruaLogo(size: 62, showWordmark: false),
+                  const GruaLogo(size: 62),
                   const SizedBox(width: Insets.md),
                   Expanded(
                     child: Column(

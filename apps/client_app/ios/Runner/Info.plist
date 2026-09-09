@@ -68,6 +68,10 @@
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Usamos tu ubicación para saber dónde enviarte la grúa.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Usamos la cámara para que puedas fotografiar tu vehículo y el chofer llegue preparado.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Usamos tus fotos para que puedas adjuntar imágenes de tu vehículo a la solicitud.</string>
 	<key>MapsApiKey</key>
 	<string>$(MAPS_API_KEY)</string>
 </dict>

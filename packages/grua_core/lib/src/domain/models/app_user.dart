@@ -24,6 +24,11 @@ abstract class AppUser with _$AppUser {
     /// RNC turns the receipt into a "crédito fiscal" (NCF type 01) instead of
     /// the default "consumo" (02).
     @Default('') String rnc,
+
+    /// Where the customer usually keeps the car. Free text rather than a
+    /// geocoded point: it is typed once at registration to save repeating it,
+    /// and the real pickup is still picked on the map at request time.
+    @Default('') String address,
     @Default('') String photoUrl,
     @Default(UserRole.client) UserRole role,
     @Default('es_DO') String locale,

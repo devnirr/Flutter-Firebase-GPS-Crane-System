@@ -24,14 +24,21 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // App Check is enforced everywhere. Retrofitting it after launch means a
-    // forced-update release, so it is on from the first write.
+    // Kept, unused, for the change that provisions App Check. Retrofitting it
+    // after launch means a forced-update release, so it should go back into
+    // ok() as soon as the clients can actually produce a token.
     function hasAppCheck() {
       return request.app != null;
     }
 
+    // No client calls FirebaseAppCheck.activate() yet, so requiring a token
+    // here denies every read and write the apps make - it does not raise the
+    // bar for an attacker, it just takes the product offline. Add
+    // hasAppCheck() back in the same change that provisions App Check in the
+    // console, activates it in the Flutter bootstrap, and sets
+    // ENFORCE_APP_CHECK=true on the functions. All four together, or none.
     function ok() {
-      return isSignedIn() && hasAppCheck();
+      return isSignedIn();
     }
 
     function uid() {
@@ -86,7 +93,7 @@ service cloud.firestore {
       // A whitelist, not a blacklist. `blocked`, `activeServiceId` and the
       // gateway customer id are all things a modified client would love to set.
       allow update: if ok() && uid() == userId && onlyChanges([
-        'name', 'email', 'rnc', 'locale', 'preferredPaymentMethod',
+        'name', 'email', 'rnc', 'address', 'locale', 'preferredPaymentMethod',
         'defaultPaymentMethodId', 'photoUrl', 'updatedAt',
         'termsAcceptedAt', 'termsVersionAccepted'
       ]);

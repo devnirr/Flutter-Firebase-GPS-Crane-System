@@ -67,7 +67,7 @@ class _TrackingBody extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
             child: Row(
               children: [
-                const GruaLogo(size: 78, variant: GruaLogoVariant.onDark),
+                const GruaLogo(size: 78),
                 const Spacer(),
                 Text(
                   service.code,

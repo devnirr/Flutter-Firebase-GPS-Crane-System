@@ -91,7 +91,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               children: [
                 const SizedBox(height: Insets.huge),
                 const Center(
-                  child: GruaLogo(size: 150, variant: GruaLogoVariant.onDark),
+                  child: GruaLogo(size: 150),
                 ),
                 const SizedBox(height: Insets.xxl),
                 Text(
@@ -166,14 +166,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   onPressed: _signingIn ? null : _forgotPassword,
                   style: TextButton.styleFrom(foregroundColor: BrandColors.white),
                   child: const Text('Olvidé mi contraseña'),
-                ),
-
-                const SizedBox(height: Insets.xxl),
-                Text(
-                  'Las cuentas de chofer las crea la oficina. Si no puedes '
-                  'entrar, comunícate con administración.',
-                  textAlign: TextAlign.center,
-                  style: text.bodySmall?.copyWith(color: Colors.white70),
                 ),
                 const SizedBox(height: Insets.xxl),
               ],

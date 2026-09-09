@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
@@ -33,6 +34,18 @@ import '../paths.dart';
 /// Maps a thrown Firebase error onto a [Failure] the UI already knows how to
 /// render, so no screen ever has to interpret a plugin exception.
 Failure _mapError(Object error) {
+  // Anything that lands on FailureCode.unknown reaches the user as a generic
+  // "Algo salió mal", which is right for them and useless for us. Log the raw
+  // plugin error in debug so the actual code is one glance away.
+  if (kDebugMode) {
+    final code = switch (error) {
+      fb.FirebaseAuthException(:final code) => code,
+      FirebaseException(:final code) => code,
+      _ => null,
+    };
+    debugPrint('[grua] Firebase error ${code ?? error.runtimeType}: $error');
+  }
+
   if (error is fb.FirebaseAuthException) {
     return switch (error.code) {
       'invalid-verification-code' => const Failure(
@@ -193,6 +206,25 @@ class FirestoreUserRepository implements UserRepository {
       Paths.user(uid).snapshots().map((snap) => snap.data());
 
   @override
+  Stream<List<AppUser>> watchAllClients({int limit = 500}) => Paths.users()
+      .orderBy('createdAt', descending: true)
+      .limit(limit)
+      .snapshots()
+      // The role is filtered here rather than in the query on purpose. Adding
+      // `where('role', ...)` would turn this into a composite index that has to
+      // be deployed before the screen works at all, and it would buy nothing:
+      // `ensureProfile` is the only writer of `users/`, choferes live in
+      // `drivers/`, and an admin promoted from a customer account keeps
+      // `role: client` on the document because `setAdminRole` only moves the
+      // custom claim. The stored field is a hint, not the authority.
+      .map(
+        (snap) => snap.docs
+            .map((d) => d.data())
+            .where((user) => user.role == UserRole.client)
+            .toList(),
+      );
+
+  @override
   Future<Result<AppUser>> fetchUser(String uid) => _guard(() async {
         final snap = await Paths.user(uid).get();
         final user = snap.data();
@@ -206,6 +238,7 @@ class FirestoreUserRepository implements UserRepository {
     String? name,
     String? email,
     String? rnc,
+    String? address,
     PaymentMethod? preferredPaymentMethod,
   }) =>
       // A map rather than the model: writing the whole document would touch
@@ -215,10 +248,37 @@ class FirestoreUserRepository implements UserRepository {
             'name': ?name,
             'email': ?email,
             'rnc': ?rnc,
+            'address': ?address,
             if (preferredPaymentMethod != null)
               'preferredPaymentMethod': preferredPaymentMethod.wire,
             'updatedAt': FieldValue.serverTimestamp(),
           }));
+
+  @override
+  Stream<List<ServiceVehicle>> watchVehicles(String uid) => Paths.userVehicles(uid)
+      .orderBy('updatedAt', descending: true)
+      .limit(20)
+      .snapshots()
+      .map(
+        (snap) => snap.docs
+            .map((doc) => ServiceVehicle.fromJson(doc.data()))
+            .toList(),
+      );
+
+  @override
+  Future<Result<void>> saveVehicle(
+    String uid,
+    ServiceVehicle vehicle, {
+    String id = UserRepository.primaryVehicleId,
+  }) =>
+      // set, not update: the document may not exist yet, and the rules let a
+      // customer own this subcollection outright.
+      _guard(
+        () => Paths.userVehicles(uid).doc(id).set({
+          ...vehicle.toJson(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }),
+      );
 
   @override
   Future<Result<void>> registerFcmToken(

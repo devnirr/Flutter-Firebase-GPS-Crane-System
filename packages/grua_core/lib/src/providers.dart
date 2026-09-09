@@ -169,11 +169,38 @@ final isSignedInProvider = Provider<bool>(
   (ref) => ref.watch(currentUserIdProvider) != null,
 );
 
+/// The signed-in account's role, read from the token's custom claim.
+///
+/// `forceRefresh` is deliberate: a claim granted moments ago is not in the
+/// cached token, and a panel that trusted the stale copy would keep refusing
+/// somebody who does now have access.
+final currentRoleProvider = FutureProvider<UserRole>((ref) async {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return UserRole.unknown;
+  return await ref.read(authRepositoryProvider).currentRole(forceRefresh: true);
+});
+
 /// The signed-in customer's profile.
 final currentUserProvider = StreamProvider<AppUser?>((ref) {
   final uid = ref.watch(currentUserIdProvider);
   if (uid == null) return Stream.value(null);
   return ref.watch(userRepositoryProvider).watchUser(uid);
+});
+
+/// Creates the signed-in customer's `users/` document if it is missing.
+///
+/// The security rules forbid a client from creating its own user document,
+/// because `role` and `blocked` are not the client's to decide, so the document
+/// only exists once the server has made one. Until then [currentUserProvider]
+/// streams null and every screen waiting on a profile waits forever.
+///
+/// Watch it once near the root of the app. It re-runs whenever the uid changes,
+/// which covers both a fresh sign-in and a cold start on an existing session,
+/// and the callable is idempotent so the repeat costs one read.
+final ensureProfileProvider = FutureProvider<void>((ref) async {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return;
+  await ref.read(functionsGatewayProvider).ensureProfile();
 });
 
 /// The signed-in chofer's record.
@@ -247,6 +274,11 @@ final StreamProviderFamily<List<ChatMessage>, String> serviceMessagesProvider =
 
 final allDriversProvider = StreamProvider<List<Driver>>(
   (ref) => ref.watch(driverRepositoryProvider).watchAllDrivers(),
+);
+
+/// The customer roster. Staff-only — the rules refuse this query to a client.
+final allClientsProvider = StreamProvider<List<AppUser>>(
+  (ref) => ref.watch(userRepositoryProvider).watchAllClients(),
 );
 
 final liveDriverPositionsProvider = StreamProvider<List<DriverLivePosition>>(

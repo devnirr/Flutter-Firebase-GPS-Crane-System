@@ -137,15 +137,42 @@ it they use the demo backend, and neither the screens nor the tests change.
 
 ### 4. Enable the services
 
-Four steps in the console, one click each. Firestore rules deploy without
+Five steps in the console, one click each. Firestore rules deploy without
 them, but the rest do not:
 
 | Console page | Why |
 |---|---|
 | **Authentication** → Sign-in method → enable **Phone** and **Email/Password** | Customers sign in by phone; choferes and staff by email |
+| **Authentication** → Settings → **SMS region policy** → allow **Dominican Republic** | Every SMS is refused until the region is allowed, test numbers included |
 | **Realtime Database** → Create Database → **us-central1** | Live truck positions |
 | **Storage** → Get Started | Driver documents and service photos |
 | **Upgrade to Blaze** | Cloud Functions, the Routes API, and Storage on projects created after Oct 2024 |
+
+**App Check is not enforced, in two places.** The callables read
+`ENFORCE_APP_CHECK` and leave it off by default, and `ok()` in `firestore.rules`
+checks only `isSignedIn()`. Neither is an oversight: no client calls
+`FirebaseAppCheck.instance.activate()` yet, so requiring a token rejects every
+callable and denies every read and write the apps make. It protects nothing and
+takes the product offline.
+
+Turning it on is one change with four parts, all together or none: provision App
+Check in the console, call `activate()` in the Flutter bootstrap, put
+`hasAppCheck()` back into `ok()`, and set `ENFORCE_APP_CHECK=true` on the
+functions. Do it before real customers, not after — retrofitting it later means
+a forced-update release.
+
+**Granting the first admin.** Staff access is a custom claim, not a field, and
+nothing in the panel can grant it to itself. Put the address on the allowlist
+the `bootstrapFirstAdmin` callable reads — `functions/.env` is gitignored, so
+each machine needs its own:
+
+```
+ADMIN_BOOTSTRAP_EMAILS=you@example.com
+```
+
+Deploy, then sign in on the panel with that account. It will refuse you once and
+offer **"Soy el primer administrador"**; that button claims the role and is
+permanently inert afterwards. Further staff are granted with `setAdminRole`.
 
 The Realtime Database and Storage buckets cannot be created from the CLI —
 `firebase database:instances:create` refuses to make the *default* instance and
@@ -157,9 +184,12 @@ points you at `firebase init database`, which is interactive.
 firebase deploy --only "firestore:rules,firestore:indexes,database,storage"
 ```
 
-**Quote the list in PowerShell.** Without quotes PowerShell splits on the
-commas before the CLI sees them, and you get
-`Cannot understand what targets to deploy`.
+**Quote the target in PowerShell.** Always, even for a single one. Without
+quotes PowerShell eats the commas in a list, and it also treats a bare
+`firestore:rules` as a scope-qualified name rather than an argument. Either way
+the CLI never sees the target and answers
+`Cannot understand what targets to deploy`. So `--only "firestore:rules"`, not
+`--only firestore:rules`.
 
 ### 6. Or skip the cloud and use the emulator
 
