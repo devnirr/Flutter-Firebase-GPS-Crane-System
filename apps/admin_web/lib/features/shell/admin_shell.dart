@@ -204,6 +204,13 @@ class _TopBar extends ConsumerWidget {
             width: 320,
             height: 38,
             child: TextField(
+              // Every one of those identifies a service, so the answer is the
+              // Servicios page with the search already applied.
+              textInputAction: TextInputAction.search,
+              onSubmitted: (value) {
+                final query = value.trim();
+                if (query.isNotEmpty) context.go(Routes.servicesSearch(query));
+              },
               decoration: InputDecoration(
                 hintText: 'Buscar código, teléfono, chofer o placa…',
                 prefixIcon: const Icon(Icons.search, size: 18),

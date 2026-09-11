@@ -1,33 +1,88 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'package:grua_core/grua_core.dart';
 
-/// Chat between the customer and the assigned chofer.
+import '../domain/enums.dart';
+import '../domain/models/dispatch_models.dart';
+import '../providers.dart';
+import '../theme/brand.dart';
+import '../theme/widgets/brand_widgets.dart';
+import '../utils/date_time_do.dart';
+
+/// Chat between the customer and the assigned chofer, used by both apps.
 ///
 /// Messages are written straight to Firestore rather than through a callable,
 /// so they land instantly; the rules restrict who may post and a trigger sends
-/// the push. Quick replies exist because the person on the other end is driving.
-class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({required this.serviceId, super.key});
+/// the push. Quick replies exist because at least one side is driving.
+///
+/// [role] is who is holding the phone: it decides whose name is in the title,
+/// which quick replies are offered, and the role stamped on each message.
+class ServiceChatScreen extends ConsumerStatefulWidget {
+  const ServiceChatScreen({
+    required this.serviceId,
+    required this.role,
+    super.key,
+  });
 
   final String serviceId;
+  final UserRole role;
 
   @override
-  ConsumerState<ChatScreen> createState() => _ChatScreenState();
+  ConsumerState<ServiceChatScreen> createState() => _ServiceChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> {
+class _ServiceChatScreenState extends ConsumerState<ServiceChatScreen> {
   final _controller = TextEditingController();
   final _scroll = ScrollController();
   var _sending = false;
 
-  static const _quickReplies = [
+  static const _clientReplies = [
     'Ya estoy en el lugar',
     '¿Cuánto falta?',
     'Estoy en el carro rojo',
     'Gracias, te espero',
   ];
+
+  static const _driverReplies = [
+    'Voy en camino',
+    'Llego en 5 minutos',
+    'Ya llegué',
+    '¿Dónde está exactamente?',
+  ];
+
+  bool get _isDriver => widget.role == UserRole.driver;
+
+  /// A markRead is in flight; the stream echoes each stamp, and without this
+  /// every echo would start another one.
+  var _markingRead = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Having the thread open is what reading it means, so everything the
+    // other party sends while it is on screen is marked read too. That is
+    // what clears the badges on the Chat tab and the service screen.
+    ref.listenManual(
+      serviceMessagesProvider(widget.serviceId),
+      (_, next) => _markRead(next.value ?? const []),
+      fireImmediately: true,
+    );
+  }
+
+  void _markRead(List<ChatMessage> messages) {
+    final uid = ref.read(currentUserIdProvider);
+    if (uid == null || _markingRead) return;
+    if (!messages.any((m) => !m.isMine(uid) && !m.isRead)) return;
+
+    _markingRead = true;
+    unawaited(
+      ref
+          .read(chatRepositoryProvider)
+          .markRead(widget.serviceId, uid)
+          .whenComplete(() => _markingRead = false),
+    );
+  }
 
   @override
   void dispose() {
@@ -47,11 +102,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final result = await ref.read(chatRepositoryProvider).sendMessage(
           serviceId: widget.serviceId,
           senderId: uid,
-          senderRole: UserRole.client,
+          senderRole: widget.role,
           text: trimmed,
           // Lets an optimistic bubble reconcile with the server echo, and stops
           // a retry on bad signal from duplicating the message.
-          clientMsgId: 'c-${DateTime.now().microsecondsSinceEpoch}',
+          clientMsgId: '${_isDriver ? 'd' : 'c'}-'
+              '${DateTime.now().microsecondsSinceEpoch}',
         );
 
     if (!mounted) return;
@@ -83,16 +139,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final messages =
         ref.watch(serviceMessagesProvider(widget.serviceId)).value ?? const [];
 
+    // The person on the other end of the conversation.
+    final otherName = _isDriver ? service?.clientName : service?.driverName;
+    final replies = _isDriver ? _driverReplies : _clientReplies;
+
     return Scaffold(
       backgroundColor: BrandColors.offWhite,
       appBar: AppBar(
-        leading: BackButton(onPressed: () => context.pop()),
         title: Column(
           children: [
             Text(
-              service?.driverName.isNotEmpty ?? false
-                  ? service!.driverName
-                  : 'Chofer',
+              otherName?.isNotEmpty ?? false
+                  ? otherName!
+                  : (_isDriver ? 'Cliente' : 'Chofer'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             if (service != null)
@@ -110,10 +169,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         children: [
           Expanded(
             child: messages.isEmpty
-                ? const EmptyState(
+                ? EmptyState(
                     title: 'Sin mensajes',
-                    message: 'Escríbele al chofer si necesitas darle alguna '
-                        'indicación.',
+                    message: _isDriver
+                        ? 'Escríbele al cliente si necesitas alguna indicación '
+                            'para encontrarlo.'
+                        : 'Escríbele al chofer si necesitas darle alguna '
+                            'indicación.',
                     icon: Icons.chat_bubble_outline,
                   )
                 : ListView.builder(
@@ -132,11 +194,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
-                itemCount: _quickReplies.length,
+                itemCount: replies.length,
                 separatorBuilder: (_, _) => const SizedBox(width: Insets.sm),
                 itemBuilder: (context, index) => ActionChip(
-                  label: Text(_quickReplies[index]),
-                  onPressed: () => _send(_quickReplies[index]),
+                  label: Text(replies[index]),
+                  onPressed: () => _send(replies[index]),
                 ),
               ),
             ),

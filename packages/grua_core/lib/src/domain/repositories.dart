@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'enums.dart';
 import 'failures.dart';
 import 'models/app_user.dart';
@@ -106,12 +108,50 @@ abstract interface class DriverRepository {
   /// Publishes a position to RTDB. Called at most once every five seconds.
   Future<void> publishLivePosition(DriverLivePosition position);
 
-  /// Sets `isOnline`, and registers the `onDisconnect` handler so a crashed app
-  /// removes itself from dispatch without waiting for the stale-position sweep.
-  Future<Result<void>> setOnline(String uid, {required bool online});
-
   /// Admin view of the fleet's live positions.
   Stream<List<DriverLivePosition>> watchLivePositions();
+
+  /// Says "this chofer has the app open" at `/presence/{uid}` for as long as
+  /// the returned stream is listened to.
+  ///
+  /// Separate from [FunctionsGateway.setOnline]: that is the chofer asking for
+  /// work, this is
+  /// only the app running. The server is told up front to clear the node when
+  /// the connection drops, so a closed tab, a killed app or a lost signal all
+  /// read as disconnected without the app getting a last word in. Cancelling
+  /// the subscription clears it at once.
+  Stream<void> holdAppPresence(String uid);
+
+  /// Clears `/presence/{uid}` now. Call it before signing out: once the
+  /// session is gone the rules refuse the write, and the node would read as
+  /// connected until the connection itself closed.
+  Future<void> clearAppPresence(String uid);
+
+  /// Ids of the choferes with the app open right now. Staff only.
+  Stream<Set<String>> watchConnectedDriverIds();
+
+  /// Uploads one piece of paperwork to Storage and returns the object path.
+  ///
+  /// Bytes rather than a file handle because the panel is a web build, where a
+  /// picked file never has a path on disk. The returned path is not the record:
+  /// `drivers/{uid}/documents/{type}` is server-written, so the caller passes
+  /// this to [FunctionsGateway.attachDriverDocument] to make the upload count.
+  Future<Result<String>> uploadDocument({
+    required String driverId,
+    required DriverDocumentType type,
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  });
+
+  /// Uploads the chofer's profile photo and returns the object path. Like a
+  /// document, it only counts once the caller passes the path to
+  /// [FunctionsGateway.setDriverPhoto]: `photoUrl` is server-written too.
+  Future<Result<String>> uploadDriverPhoto({
+    required String driverId,
+    required Uint8List bytes,
+    required String contentType,
+  });
 }
 
 abstract interface class TruckRepository {
@@ -150,6 +190,25 @@ abstract interface class ServiceRepository {
   Stream<List<ServiceEvent>> watchEvents(String serviceId);
 
   Stream<ServiceTracking?> watchTracking(String serviceId);
+
+  /// Every service, newest first, for the office's Servicios page. Staff only:
+  /// the rules refuse the query to anyone else.
+  ///
+  /// [statuses] narrows to those states (at most 30, Firestore's `in` limit),
+  /// and [from] / [to] to a creation window, `to` exclusive. Both run on the
+  /// server against the `status, createdAt` index, so a filter never means
+  /// paging through everything to find three cancellations.
+  Future<Result<PagedServices>> fetchServices({
+    Set<ServiceStatus>? statuses,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    Object? cursor,
+  });
+
+  /// The service with this human code (`GR-260908-0431`), or null. What the
+  /// office types when a customer reads their code over the phone.
+  Future<Result<Service?>> fetchServiceByCode(String code);
 
   /// Paginated. Never fetch an unbounded history — a two-year customer would
   /// otherwise pull thousands of documents to draw one list.
@@ -234,6 +293,234 @@ class QuoteResult {
   bool isStale(DateTime now) => now.isAfter(expiresAt);
 }
 
+/// What the office fills in to open a chofer account.
+///
+/// [email] is not on the paper form the office works from, but an Auth account
+/// has to have one: it is the credential the chofer signs in with.
+class NewDriver {
+  const NewDriver({
+    required this.name,
+    required this.cedula,
+    required this.phone,
+    required this.email,
+    required this.licenseNumber,
+    required this.licenseExpiry,
+    this.truckId,
+    this.zones = const [],
+    this.companyName = '',
+    this.rnc = '',
+  });
+
+  final String name;
+
+  /// Digits only. The server validates the check digit and refuses a duplicate.
+  final String cedula;
+  final String phone;
+  final String email;
+  final String licenseNumber;
+  final DateTime licenseExpiry;
+
+  /// The grúa this chofer drives, or null when one has not been assigned yet.
+  /// A chofer without a truck can sign in but cannot go online.
+  final String? truckId;
+  final List<String> zones;
+  final String companyName;
+  final String rnc;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'cedula': cedula,
+        'phone': phone,
+        'email': email,
+        'licenseNumber': licenseNumber,
+        'licenseExpiry': licenseExpiry.toUtc().toIso8601String(),
+        'truckId': ?truckId,
+        'zones': zones,
+        'companyName': companyName,
+        'rnc': rnc,
+      };
+}
+
+/// What the office can change on an existing chofer.
+///
+/// [NewDriver] minus the cédula: it is who the chofer is, and the duplicate
+/// check keys on it, so a wrong one means a new account rather than an edit.
+class DriverUpdate {
+  const DriverUpdate({
+    required this.name,
+    required this.phone,
+    required this.email,
+    required this.licenseNumber,
+    required this.licenseExpiry,
+    this.truckId,
+    this.zones = const [],
+    this.companyName = '',
+    this.rnc = '',
+  });
+
+  final String name;
+  final String phone;
+  final String email;
+  final String licenseNumber;
+  final DateTime licenseExpiry;
+
+  /// Null takes the chofer off their grúa, which also takes them offline.
+  final String? truckId;
+  final List<String> zones;
+  final String companyName;
+  final String rnc;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'phone': phone,
+        'email': email,
+        'licenseNumber': licenseNumber,
+        'licenseExpiry': licenseExpiry.toUtc().toIso8601String(),
+        // Sent even when null: here null means "unassign", not "unchanged".
+        'truckId': truckId,
+        'zones': zones,
+        'companyName': companyName,
+        'rnc': rnc,
+      };
+}
+
+/// What a chofer fills in to ask for an account from the driver app.
+///
+/// The same papers as [NewDriver], minus what only the office can decide — the
+/// grúa and the coverage zones — plus the password the chofer picks, since
+/// there is no office reading a temporary one out to them.
+///
+/// The account this opens is `inactive`, exactly like one the office creates:
+/// signing up is asking to work, not being cleared to.
+class DriverSignUp {
+  const DriverSignUp({
+    required this.name,
+    required this.cedula,
+    required this.phone,
+    required this.email,
+    required this.password,
+    required this.licenseNumber,
+    required this.licenseExpiry,
+    this.companyName = '',
+    this.rnc = '',
+  });
+
+  final String name;
+
+  /// Digits only. The server validates the check digit and refuses a duplicate.
+  final String cedula;
+
+  /// E.164, `+1` and ten digits.
+  final String phone;
+  final String email;
+  final String password;
+  final String licenseNumber;
+  final DateTime licenseExpiry;
+  final String companyName;
+  final String rnc;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'cedula': cedula,
+        'phone': phone,
+        'email': email,
+        'password': password,
+        'licenseNumber': licenseNumber,
+        'licenseExpiry': licenseExpiry.toUtc().toIso8601String(),
+        'companyName': companyName,
+        'rnc': rnc,
+      };
+}
+
+/// One truck from "grúas cerca de ti": where it roughly is, and nothing about
+/// who drives it.
+class NearbyTruck {
+  const NearbyTruck({
+    required this.position,
+    required this.truckType,
+    required this.distanceMeters,
+    this.heading = 0,
+    this.ref = '',
+  });
+
+  /// Rounded by the server to ~110 m.
+  final LatLng position;
+  final TruckType truckType;
+  final int distanceMeters;
+  final double heading;
+
+  /// A sealed, short-lived handle on this truck, passed back as
+  /// `preferredTruckRef` by "Pedir esta grúa". Opaque on purpose: it names
+  /// no driver, and it changes on every search.
+  final String ref;
+
+  String get distanceLabel => distanceMeters < 1000
+      ? '$distanceMeters m'
+      : '${(distanceMeters / 1000).toStringAsFixed(1)} km';
+}
+
+/// What the office fills in for a grúa, on creation and on every edit.
+///
+/// The assignment is not here: a chofer is put on a grúa from the chofer's
+/// form, so there is one place that decides who drives what.
+class TruckDetails {
+  const TruckDetails({
+    required this.plate,
+    required this.make,
+    required this.model,
+    required this.type,
+    required this.capacityKg,
+    required this.insuranceExpiry,
+    required this.marbeteExpiry,
+    this.year,
+    this.color = '',
+    this.registrationNumber = '',
+    this.insurancePolicy = '',
+  });
+
+  /// As typed. The server normalises it and enforces uniqueness.
+  final String plate;
+  final String make;
+  final String model;
+  final int? year;
+  final String color;
+
+  /// What dispatch matches jobs on. Never [TruckType.unknown].
+  final TruckType type;
+  final int capacityKg;
+
+  /// The matrícula number.
+  final String registrationNumber;
+  final String insurancePolicy;
+  final DateTime insuranceExpiry;
+  final DateTime marbeteExpiry;
+
+  Map<String, dynamic> toJson() => {
+        'plate': plate,
+        'make': make,
+        'model': model,
+        'year': year,
+        'color': color,
+        'type': type.wire,
+        'capacityKg': capacityKg,
+        'registrationNumber': registrationNumber,
+        'insurancePolicy': insurancePolicy,
+        'insuranceExpiry': insuranceExpiry.toUtc().toIso8601String(),
+        'marbeteExpiry': marbeteExpiry.toUtc().toIso8601String(),
+      };
+}
+
+/// The one moment the temporary password exists in readable form.
+class CreatedDriver {
+  const CreatedDriver({required this.driverId, required this.temporaryPassword});
+
+  final String driverId;
+
+  /// Shown once and never retrievable again — the office reads it to the
+  /// chofer, and the account forces a change on first sign-in.
+  final String temporaryPassword;
+}
+
 /// Everything that changes state lives here, because everything that changes
 /// state is a Cloud Function call.
 abstract interface class FunctionsGateway {
@@ -255,6 +542,14 @@ abstract interface class FunctionsGateway {
   /// later. It is permanently inert after the first admin exists.
   Future<Result<void>> bootstrapFirstAdmin();
 
+  /// The trucks that could take a job within [radiusKm] of [center] right now,
+  /// nearest first: online, free and reporting. Rough positions only — the
+  /// customer app may not read the fleet's live positions itself.
+  Future<Result<List<NearbyTruck>>> nearbyTrucks({
+    required LatLng center,
+    required double radiusKm,
+  });
+
   Future<Result<QuoteResult>> quoteService({
     required ServiceLocation pickup,
     required ServiceLocation dropoff,
@@ -274,12 +569,23 @@ abstract interface class FunctionsGateway {
     required DateTime quoteExpiresAt,
     String? paymentMethodId,
     String? notes,
+    /// [NearbyTruck.ref] of the truck picked on the map, offered the job
+    /// first. A stale or unknown one is ignored, not refused.
+    String? preferredTruckRef,
   });
 
   Future<Result<void>> cancelService({
     required String serviceId,
     required String reason,
   });
+
+  /// The "En línea" switch, for the signed-in chofer.
+  ///
+  /// Online needs an active account and a grúa; offline is refused mid-tow.
+  /// Being online is not yet being dispatchable: the phone still has to land
+  /// a fresh position in `/live`, which the app starts doing as soon as the
+  /// record says online.
+  Future<Result<void>> setOnline({required bool online});
 
   Future<Result<void>> acceptService(String serviceId);
 
@@ -324,6 +630,82 @@ abstract interface class FunctionsGateway {
   /// Minted by a callable rather than read from Storage: the bucket refuses
   /// client reads, so a leaked path is not a leaked document.
   Future<Result<String>> invoiceDownloadUrl(String invoiceId);
+
+  /// Creates a chofer account and returns the uid with the password to read
+  /// out to them.
+  ///
+  /// The account is always created `inactive`, whatever the office asks for:
+  /// it is the document check that clears a grúa to work, and this call is
+  /// upstream of it. The licence expiry is stored on the driver so the expiry
+  /// sweep has something to act on even before the licence photo is reviewed.
+  Future<Result<CreatedDriver>> createDriver(NewDriver driver);
+
+  /// Opens a chofer account from the driver app and returns its uid.
+  ///
+  /// Callable without being signed in — there is nobody to sign in as yet. The
+  /// account is always created `inactive`, the same as [createDriver]: the
+  /// office still has to verify the documents before the chofer can go online.
+  /// The caller signs in with the email and password afterwards.
+  Future<Result<String>> registerDriver(DriverSignUp signUp);
+
+  /// Saves the office's edits to a chofer. Changing the grúa is refused while
+  /// the chofer holds a job.
+  Future<Result<void>> updateDriver(String driverId, DriverUpdate update);
+
+  /// Takes a chofer off the roster: the record is archived, not erased, so
+  /// their services and earnings keep a name, and the account is disabled.
+  /// Refused while the chofer holds a job.
+  Future<Result<void>> archiveDriver(String driverId);
+
+  /// Clears a chofer to work, or stops them.
+  ///
+  /// [DriverStatus.active] is the office's sign-off that the papers are in
+  /// order; it is the only way out of the `inactive` every account starts in.
+  /// Anything else takes the chofer offline and revokes their session, so it is
+  /// refused while they hold a job. [reason] is stored as `statusReason`, and
+  /// for a suspension it is what the chofer reads on their blocked screen.
+  Future<Result<void>> setDriverStatus({
+    required String driverId,
+    required DriverStatus status,
+    String reason = '',
+  });
+
+  /// Adds a grúa to the fleet, unassigned, and returns its id. Refused when
+  /// the plate is malformed or already belongs to another grúa.
+  Future<Result<String>> createTruck(TruckDetails details);
+
+  /// Saves the office's edits to a grúa. The plate and type are refused
+  /// mid-tow, and the type while the chofer on it is online, because the
+  /// type is what dispatch matches jobs on.
+  Future<Result<void>> updateTruck(String truckId, TruckDetails details);
+
+  /// Takes a grúa off the fleet: archived, not erased, and its plate freed.
+  /// The chofer on it is left without a grúa and taken offline. Refused
+  /// mid-tow.
+  Future<Result<void>> archiveTruck(String truckId);
+
+  /// Records an uploaded document at `drivers/{driverId}/documents/{type}`.
+  ///
+  /// Separate from the upload because Storage and Firestore are two writes and
+  /// only the second one is governed: the rules refuse every client write under
+  /// `drivers/`, so a document nobody attached is a file the office never sees.
+  Future<Result<void>> attachDriverDocument({
+    required String driverId,
+    required DriverDocumentType type,
+    required String storagePath,
+    required String fileName,
+    required String contentType,
+    required int sizeBytes,
+    DateTime? expiresAt,
+  });
+
+  /// Points `drivers/{driverId}.photoUrl` at an uploaded profile photo and
+  /// returns the URL. The server mints the URL from the object itself, so it
+  /// can only ever name an image under that chofer's own avatar folder.
+  Future<Result<String>> setDriverPhoto({
+    required String driverId,
+    required String storagePath,
+  });
 
   /// Pushes the chofer's live ETA to `tracking/{serviceId}` for the client.
   Future<Result<void>> publishEta({

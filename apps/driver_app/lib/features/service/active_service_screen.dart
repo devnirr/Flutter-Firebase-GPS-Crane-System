@@ -1,6 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../router.dart';
+import '../notifications/notification_widgets.dart';
 
 /// The job in progress.
 ///
@@ -40,10 +47,12 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
     }
   }
 
-  /// The chofer's own position. Real builds read it from the location stream;
-  /// the demo stands in with the tracked position so the range guards behave
-  /// the same way.
+  /// The chofer's own position: the phone's GPS first, then the last position
+  /// the server mirrored (which is all the demo has), then the pickup itself
+  /// so the range guards still have something to judge.
   LatLng _currentPosition(Service service) {
+    final mine = ref.read(myPositionProvider).value?.position;
+    if (mine != null) return mine;
     final tracking = ref.read(serviceTrackingProvider(service.id)).value;
     return tracking?.position ?? service.pickup.geo;
   }
@@ -161,6 +170,9 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
                     ),
                   ),
                   StatusChip(service.status, compact: true),
+                  // During a job is when the customer writes, so the bell
+                  // comes along onto this screen.
+                  const NotificationBell(onDark: true),
                 ],
               ),
             ),
@@ -180,39 +192,7 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
                     Insets.lg,
                   ),
                   children: [
-                    SizedBox(
-                      height: 190,
-                      child: ClipRRect(
-                        borderRadius: Corners.brLg,
-                        child: GruaMap(
-                          center: tracking?.position ?? service.pickup.geo,
-                          hasApiKey: ref.watch(hasMapsKeyProvider),
-                          zoom: 14,
-                          showAttribution: false,
-                          route: [
-                            service.pickup.geo,
-                            if (service.dropoff != null) service.dropoff!.geo,
-                          ],
-                          markers: [
-                            MapMarker(
-                              position: service.pickup.geo,
-                              kind: MapMarkerKind.pickup,
-                            ),
-                            if (service.dropoff != null)
-                              MapMarker(
-                                position: service.dropoff!.geo,
-                                kind: MapMarkerKind.dropoff,
-                              ),
-                            if (tracking != null)
-                              MapMarker(
-                                position: tracking.position,
-                                kind: MapMarkerKind.truckOnService,
-                                heading: tracking.heading,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    _ServiceMap(service: service, tracking: tracking),
                     const SizedBox(height: Insets.lg),
                     _ClientCard(service: service),
                     const SizedBox(height: Insets.lg),
@@ -240,14 +220,127 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
   }
 }
 
-class _ClientCard extends StatelessWidget {
+/// The job on a map: where the chofer is, and the road to where they are
+/// going next.
+///
+/// Before "Llegué" the next stop is the customer, and the tow is drawn dashed
+/// after it; once the vehicle is loaded the next stop is the destination.
+/// "Abrir en Google Maps" hands the same stop to real turn-by-turn navigation,
+/// which is what a chofer actually drives by.
+class _ServiceMap extends ConsumerWidget {
+  const _ServiceMap({required this.service, required this.tracking});
+
+  final Service service;
+  final ServiceTracking? tracking;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mine = ref.watch(myPositionProvider).value;
+    final me = mine?.position ?? tracking?.position;
+
+    final pickup = service.pickup.geo;
+    final dropoff = service.dropoff?.geo;
+    final goingToPickup = service.status == ServiceStatus.accepted;
+    final next = goingToPickup ? pickup : (dropoff ?? pickup);
+
+    final toNext = me == null
+        ? null
+        : ref.watch(roadRouteProvider((routeGrain(me), next))).value;
+    final tow = goingToPickup && dropoff != null
+        ? ref.watch(roadRouteProvider((pickup, dropoff))).value
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 280,
+          child: ClipRRect(
+            borderRadius: Corners.brLg,
+            child: GruaMap(
+              center: me ?? next,
+              hasApiKey: ref.watch(hasMapsKeyProvider),
+              zoom: 14,
+              showAttribution: false,
+              fitTo: [
+                ?me,
+                next,
+                if (goingToPickup) ?dropoff,
+              ],
+              routes: [
+                if (tow != null)
+                  MapRoute(points: tow.points, color: BrandColors.ink, dashed: true),
+                if (toNext != null)
+                  MapRoute(points: toNext.points, dashed: toNext.isApproximate),
+                // Without a position yet, the plain trip still reads.
+                if (me == null && dropoff != null)
+                  MapRoute(points: [pickup, dropoff], color: BrandColors.ink, dashed: true),
+              ],
+              // Red for you, blue for the customer, black for the destination.
+              markers: [
+                MapMarker(position: pickup, kind: MapMarkerKind.customer, label: 'Cliente'),
+                if (dropoff != null)
+                  MapMarker(position: dropoff, kind: MapMarkerKind.dropoff, label: 'Destino'),
+                if (me != null)
+                  MapMarker(position: me, kind: MapMarkerKind.me, label: 'Tú'),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: Insets.sm),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                toNext == null
+                    ? (goingToPickup ? 'Hacia el cliente' : 'Hacia el destino')
+                    : '${goingToPickup ? 'Al cliente' : 'Al destino'}: '
+                        '${toNext.distanceLabel} · ${toNext.durationLabel}'
+                        '${toNext.isApproximate ? ' (aprox.)' : ''}',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: BrandColors.grey800),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => unawaited(_navigate(context, next)),
+              icon: const Icon(Icons.navigation_outlined, size: 18),
+              label: const Text('Abrir en Google Maps'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Turn-by-turn to [to] in Google Maps: the app on a phone, the site on the
+  /// web. The universal URL works for both.
+  Future<void> _navigate(BuildContext context, LatLng to) async {
+    final url = Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'destination': '${to.latitude},${to.longitude}',
+      'travelmode': 'driving',
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    final opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+    if (!opened) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir Google Maps.')),
+      );
+    }
+  }
+}
+
+class _ClientCard extends ConsumerWidget {
   const _ClientCard({required this.service});
 
   final Service service;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final unread = ref.watch(unreadMessageCountProvider(service.id));
 
     return FloatingCard(
       child: Row(
@@ -273,6 +366,19 @@ class _ClientCard extends StatelessWidget {
               ],
             ),
           ),
+          if (service.canChat)
+            IconButton.filledTonal(
+              key: const Key('client-chat'),
+              tooltip: 'Chat con el cliente',
+              onPressed: () => context.push(Routes.chatFor(service.id)),
+              icon: Badge.count(
+                count: unread,
+                isLabelVisible: unread > 0,
+                backgroundColor: BrandColors.red,
+                textColor: BrandColors.white,
+                child: const Icon(Icons.chat_bubble_outline, size: 20),
+              ),
+            ),
           if (service.canCall)
             IconButton.filledTonal(
               onPressed: () => ScaffoldMessenger.of(context).showSnackBar(

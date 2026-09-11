@@ -9,9 +9,9 @@ part 'driver.g.dart';
 
 /// A chofer at `drivers/{uid}`.
 ///
-/// Choferes never self-register: an admin creates the account, and every field
-/// here is written by a Cloud Function. The driver app reads its own document
-/// and nothing else.
+/// An admin opens the account, or the chofer asks for one from the driver app;
+/// either way it starts `inactive`, and every field here is written by a Cloud
+/// Function. The driver app reads its own document and nothing else.
 @freezed
 abstract class Driver with _$Driver {
   const factory Driver({
@@ -23,10 +23,12 @@ abstract class Driver with _$Driver {
     @Default('') String photoUrl,
     @Default('') String licenseNumber,
     @NullableTimestampConverter() DateTime? licenseExpiry,
+    @JsonKey(unknownEnumValue: DriverStatus.unknown)
     @Default(DriverStatus.inactive) DriverStatus status,
     @Default('') String statusReason,
     String? assignedTruckId,
     @Default('') String assignedTruckPlate,
+    @JsonKey(unknownEnumValue: TruckType.unknown)
     @Default(TruckType.unknown) TruckType truckType,
 
     /// Set while the chofer owns a job. Its presence is what blocks a second
@@ -47,6 +49,12 @@ abstract class Driver with _$Driver {
     /// the configured limit they stop receiving cash jobs.
     @Default(0) int cashOwedCents,
     @Default(<String>[]) List<String> zones,
+
+    /// Set when the chofer works under his own company rather than for the
+    /// office directly. The RNC is what the invoice carries, so it is kept on
+    /// the chofer and not inferred from the truck.
+    @Default('') String companyName,
+    @Default('') String rnc,
     @Default('') String createdBy,
     @NullableTimestampConverter() DateTime? createdAt,
     @NullableTimestampConverter() DateTime? updatedAt,
@@ -64,6 +72,21 @@ abstract class Driver with _$Driver {
   bool get canGoOnline => status.canWork && assignedTruckId != null;
 
   bool get isDispatchable => status.canWork && isOnline && !isBusy;
+
+  /// What the office sees at a glance.
+  ///
+  /// A job outranks the online switch: a chofer holding one is not
+  /// dispatchable, whatever the switch says. The switch outranks [appOpen],
+  /// which only says the chofer is signed in with the app running right now —
+  /// reachable, but not taking offers. It comes from `/presence` in RTDB, not
+  /// from this document, which is why the caller passes it in.
+  DriverPresence presence({bool appOpen = false}) => isBusy
+      ? DriverPresence.busy
+      : isOnline
+          ? DriverPresence.online
+          : appOpen
+              ? DriverPresence.connected
+              : DriverPresence.offline;
 
   /// Share of offers this chofer actually took. Low numbers mean either a
   /// notification problem or a chofer cherry-picking; both need looking at.
@@ -86,15 +109,36 @@ abstract class Driver with _$Driver {
   }
 }
 
+/// A chofer's availability as the roster shows it. Derived, never stored.
+enum DriverPresence {
+  /// Switched on and receiving offers.
+  online('En línea'),
+
+  /// On a job.
+  busy('Ocupado'),
+
+  /// Signed in with the app open, but not receiving offers.
+  connected('Conectado'),
+
+  /// App closed, signed out, or out of signal.
+  offline('Desconectado');
+
+  const DriverPresence(this.label);
+
+  final String label;
+}
+
 /// One uploaded document at `drivers/{uid}/documents/{docType}`.
 @freezed
 abstract class DriverDocument with _$DriverDocument {
   const factory DriverDocument({
+    @JsonKey(unknownEnumValue: DriverDocumentType.unknown)
     required DriverDocumentType type,
     @Default('') String storagePath,
     @Default('') String fileName,
     @Default(0) int sizeBytes,
     @Default('') String contentType,
+    @JsonKey(unknownEnumValue: DocumentReviewState.unknown)
     @Default(DocumentReviewState.pending) DocumentReviewState state,
     @Default('') String rejectionReason,
     @Default('') String uploadedBy,
@@ -148,7 +192,9 @@ abstract class DriverLivePosition with _$DriverLivePosition {
     @Default(0) double speedKmh,
     @Default(0) double accuracy,
     @Default(false) bool isOnline,
+    @JsonKey(unknownEnumValue: DriverLiveState.unknown)
     @Default(DriverLiveState.idle) DriverLiveState state,
+    @JsonKey(unknownEnumValue: TruckType.unknown)
     @Default(TruckType.unknown) TruckType truckType,
     String? serviceId,
 

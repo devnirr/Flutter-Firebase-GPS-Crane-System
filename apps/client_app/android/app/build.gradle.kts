@@ -7,6 +7,13 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// local.properties is machine-specific and git-ignored, so it can hold the
+// Maps key for local builds without committing it.
+val localProperties = java.util.Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.gruasrd.client_app"
     compileSdk = flutter.compileSdkVersion
@@ -18,10 +25,12 @@ android {
     }
 
     defaultConfig {
-        // Supplied by the build environment, never committed. An empty value
-        // is fine: the app falls back to the drawn map.
+        // Supplied by the build environment (CI) or local.properties, never
+        // committed. An empty value is fine: the app falls back to the drawn map.
         manifestPlaceholders["MAPS_API_KEY"] =
-            System.getenv("MAPS_API_KEY") ?: ""
+            System.getenv("MAPS_API_KEY")
+                ?: localProperties.getProperty("MAPS_API_KEY")
+                ?: ""
 
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.gruasrd.client_app"

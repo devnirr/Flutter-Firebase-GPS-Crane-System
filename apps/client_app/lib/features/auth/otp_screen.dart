@@ -121,12 +121,15 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: BackButton(onPressed: () => context.pop()),
-        title: const GruaLogo(size: 74),
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
+          padding: const EdgeInsets.symmetric(
+            horizontal: Insets.gutter,
+            vertical: Insets.xl,
+          ),
           children: [
+            const Center(child: GruaLogo(size: 180)),
             const SizedBox(height: Insets.xl),
             Text('Ingresa el código', style: text.headlineMedium),
             const SizedBox(height: Insets.sm),

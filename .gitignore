@@ -24,6 +24,9 @@ apps/*/pubspec.lock
 # a fresh clone runs with no setup. Real keys only ever live in stg/prod.
 config/stg.json
 config/prod.json
+# Per-machine debug settings, such as APP_CHECK_DEBUG_TOKEN: a registered
+# debug token lets any debug build through App Check on the project.
+config/local.json
 
 # Firebase client config (firebase_options.dart, google-services.json,
 # GoogleService-Info.plist) is deliberately NOT ignored. Those values are not
@@ -73,3 +76,6 @@ Thumbs.db
 .agents/
 .claude/
 skills-lock.json
+
+# TypeScript build output
+dist/

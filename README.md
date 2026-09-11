@@ -22,8 +22,8 @@ Then pick an app:
 
 ```bash
 cd apps/client_app && flutter run -d chrome    # customer
-cd apps/driver_app && flutter run -d chrome    # chofer
-cd apps/admin_web  && flutter run -d chrome    # operations panel
+cd apps/driver_app && flutter run -d chrome --web-port 50166   # chofer
+cd apps/admin_web  && flutter run -d chrome --web-port 5000    # operations panel
 ```
 
 Or from the repo root, via Melos:

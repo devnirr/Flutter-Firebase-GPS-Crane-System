@@ -93,6 +93,20 @@
       ]
     },
     {
+      "collectionGroup": "offers",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "driverId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "drivers",
       "queryScope": "COLLECTION",
       "fields": [

@@ -93,27 +93,38 @@ class LocationPublisher {
 
     _lastWriteAt = now;
     unawaited(
-      _drivers.publishLivePosition(
-        DriverLivePosition(
-          driverId: _driverId,
-          lat: position.latitude,
-          lng: position.longitude,
-          heading: position.heading,
-          speedKmh: position.speed * 3.6,
-          accuracy: position.accuracy,
-          isOnline: true,
-          state: state,
-          truckType: _truckType,
-          serviceId: serviceId,
-          updatedAt: now.millisecondsSinceEpoch,
-        ),
-      ),
+      _drivers
+          .publishLivePosition(
+            DriverLivePosition(
+              driverId: _driverId,
+              lat: position.latitude,
+              lng: position.longitude,
+              // Kept for a future geohash search; today's searches go by
+              // `isOnline`, which every build has written.
+              geohash: encodeGeohash(LatLng(position.latitude, position.longitude)),
+              heading: position.heading,
+              speedKmh: position.speed * 3.6,
+              accuracy: position.accuracy,
+              isOnline: true,
+              state: state,
+              truckType: _truckType,
+              serviceId: serviceId,
+              updatedAt: now.millisecondsSinceEpoch,
+            ),
+          )
+          // A refused write used to vanish, leaving a chofer who believed they
+          // were online and a dispatcher who could not see them. Say so.
+          .catchError((Object error) => debugPrint('Live position not published: $error')),
     );
   }
 
   /// Stops publishing and marks the last position offline, so the chofer
   /// disappears from dispatch immediately rather than aging out.
-  Future<void> stop() async {
+  ///
+  /// [markOffline] is asked at the moment of writing, after the stream has
+  /// been cancelled: by then a successor may have started, and its "online"
+  /// must not be overwritten.
+  Future<void> stop({bool Function()? markOffline}) async {
     // Cancel synchronously before the first await. `ref.onDispose` only runs a
     // callback up to its first suspension, so awaiting the subscription first
     // leaves the heartbeat alive past teardown.
@@ -126,17 +137,25 @@ class LocationPublisher {
 
     final last = _latest;
     if (last == null) return;
+    if (markOffline != null && !markOffline()) return;
 
-    await _drivers.publishLivePosition(
-      DriverLivePosition(
-        driverId: _driverId,
-        lat: last.latitude,
-        lng: last.longitude,
-        isOnline: false,
-        truckType: _truckType,
-        updatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
-      ),
-    );
+    try {
+      await _drivers.publishLivePosition(
+        DriverLivePosition(
+          driverId: _driverId,
+          lat: last.latitude,
+          lng: last.longitude,
+          geohash: encodeGeohash(LatLng(last.latitude, last.longitude)),
+          isOnline: false,
+          truckType: _truckType,
+          updatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+        ),
+      );
+    } on Object catch (error) {
+      // Signed out already, or no signal: the stale-position sweep takes the
+      // chofer off the map instead.
+      debugPrint('Offline position not published: $error');
+    }
   }
 }
 
@@ -146,23 +165,45 @@ class LocationPublisher {
 /// stops when an admin suspends the account or the record says the chofer went
 /// offline on another device — cases a button handler would miss.
 final locationPublisherProvider = Provider<LocationPublisher?>((ref) {
-  final driver = ref.watch(currentDriverProvider).value;
-  if (driver == null || !driver.isOnline || !driver.status.canWork) return null;
+  // Only the fields that change what is published. Watching the whole record
+  // restarted the publisher on every unrelated server write, and each
+  // restart's "offline" landed after the new publisher's "online".
+  final setup = ref.watch(
+    currentDriverProvider.select((async) {
+      final d = async.value;
+      if (d == null || !d.isOnline || !d.status.canWork) return null;
+      return (id: d.id, truckType: d.truckType, serviceId: d.currentServiceId);
+    }),
+  );
+  if (setup == null) return null;
 
+  final generation = ++_publisherGeneration;
   final publisher = LocationPublisher(
     location: ref.watch(locationServiceProvider),
     drivers: ref.watch(driverRepositoryProvider),
-    driverId: driver.id,
-    truckType: driver.truckType,
+    driverId: setup.id,
+    truckType: setup.truckType,
   );
 
   unawaited(
     publisher.start(
-      serviceId: driver.currentServiceId,
-      state: driver.isBusy ? DriverLiveState.onService : DriverLiveState.idle,
+      serviceId: setup.serviceId,
+      state: setup.serviceId == null || setup.serviceId!.isEmpty
+          ? DriverLiveState.idle
+          : DriverLiveState.onService,
     ),
   );
 
-  ref.onDispose(() => unawaited(publisher.stop()));
+  // When a successor replaces this publisher (a new job, a new grúa) the
+  // chofer is still online, and marking them offline would race its first
+  // write. Only the last publisher standing marks them offline.
+  ref.onDispose(
+    () => unawaited(
+      publisher.stop(markOffline: () => generation == _publisherGeneration),
+    ),
+  );
   return publisher;
 });
+
+/// Bumped each time a publisher is created; see [locationPublisherProvider].
+var _publisherGeneration = 0;

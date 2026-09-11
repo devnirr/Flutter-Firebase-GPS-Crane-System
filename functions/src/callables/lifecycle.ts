@@ -13,7 +13,7 @@ import {
 import { Code, invalidArgument, precondition } from '../lib/errors.js';
 import { FieldValue, Paths } from '../lib/firestore.js';
 import { distanceMeters, type LatLng } from '../lib/geo.js';
-import { requireActiveDriver, requireAuth } from '../lib/guards.js';
+import { requireActiveDriver, requireAuth, requireRole } from '../lib/guards.js';
 import { buildQuote, cancellationFeeCents, loadPricing } from '../lib/pricing.js';
 import { notify } from '../lib/push.js';
 import { applyTransition } from '../lib/stateMachine.js';
@@ -64,6 +64,75 @@ function assertAssigned(service: FirebaseFirestore.DocumentData, driverId: strin
 // ---------------------------------------------------------------------------
 // Taking work
 // ---------------------------------------------------------------------------
+
+/**
+ * The "En línea" switch.
+ *
+ * A server call because `drivers/{uid}` is server-written, and `isOnline` there
+ * is what the app shows and what starts the phone publishing its position. The
+ * position itself is still the phone's to write, straight to `/live/{uid}` —
+ * dispatch only considers a chofer once a fresh fix lands there, so this call
+ * can say "online" before the GPS has answered without offering them work.
+ *
+ * Going offline is refused mid-tow: the customer is watching that truck.
+ * Taking a chofer offline who stopped reporting without saying so is
+ * `reapStaleDrivers`' job, not the phone's.
+ */
+export const setOnline = onCall({ region, cors: true }, async (request) => {
+  const parsed = z.object({ online: z.boolean() }).safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Datos inválidos.');
+  const { online } = parsed.data;
+
+  const now = FieldValue.serverTimestamp();
+
+  if (online) {
+    const { uid, driver } = await requireActiveDriver(request);
+    if (driver['archived'] === true) {
+      throw precondition(Code.driverInactive, 'Tu cuenta no está activa.');
+    }
+
+    const truckId = driver['assignedTruckId'] as string | null | undefined;
+    const truck = truckId ? (await Paths.truck(truckId).get()).data() : undefined;
+    if (!truck || truck['archived'] === true) {
+      throw precondition(
+        Code.driverInactive,
+        'No tienes una grúa asignada. Comunícate con la oficina.',
+      );
+    }
+
+    await Paths.driver(uid).update({
+      isOnline: true,
+      lastOnlineAt: now,
+      updatedAt: now,
+    });
+    return { ok: true };
+  }
+
+  // Offline is allowed for any chofer, suspended included: it only ever
+  // takes them further from work.
+  const caller = requireRole(request, UserRole.driver);
+  const driverRef = Paths.driver(caller.uid);
+  const driver = (await driverRef.get()).data();
+  if (!driver) throw precondition(Code.notFound, 'Chofer no encontrado.');
+
+  if (driver['currentServiceId']) {
+    throw precondition(
+      Code.driverBusy,
+      'No puedes ponerte fuera de línea con un servicio en curso.',
+      { serviceId: driver['currentServiceId'] },
+    );
+  }
+
+  await driverRef.update({ isOnline: false, updatedAt: now });
+  // Off the live map at once, not when the stale-position sweep gets to it.
+  // Only an existing node: the admin SDK skips the rules' shape check, and a
+  // node with no position is one the map and dispatch would trip over.
+  const live = Paths.live(caller.uid);
+  if ((await live.get()).exists()) {
+    await live.update({ isOnline: false, updatedAt: Date.now() });
+  }
+  return { ok: true };
+});
 
 export const acceptService = onCall({ region, cors: true }, async (request) => {
   const parsed = serviceOnly.safeParse(request.data);

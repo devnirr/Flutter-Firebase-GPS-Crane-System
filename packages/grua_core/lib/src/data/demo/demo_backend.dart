@@ -10,7 +10,9 @@ import '../../domain/models/driver.dart';
 import '../../domain/models/remote_config_models.dart';
 import '../../domain/models/service.dart';
 import '../../domain/models/truck.dart';
+import '../../domain/repositories.dart';
 import '../../domain/value_objects.dart';
+import '../../utils/do_validators.dart';
 import '../../utils/money.dart';
 import '../pricing.dart';
 
@@ -64,7 +66,10 @@ class DemoBackend {
 
   final _servicesController = StreamController<Map<String, Service>>.broadcast();
   final _driversController = StreamController<Map<String, Driver>>.broadcast();
+  final _trucksController = StreamController<Map<String, Truck>>.broadcast();
   final _liveController = StreamController<Map<String, DriverLivePosition>>.broadcast();
+  final Set<String> _appOpen = {};
+  final _appOpenController = StreamController<Set<String>>.broadcast();
   final _usersController = StreamController<Map<String, AppUser>>.broadcast();
   final _messagesController = StreamController<String>.broadcast();
   final _trackingController = StreamController<String>.broadcast();
@@ -454,9 +459,27 @@ class DemoBackend {
     yield* _driversController.stream;
   }
 
+  Stream<Map<String, Truck>> get truckUpdates async* {
+    yield Map.unmodifiable(_trucks);
+    yield* _trucksController.stream;
+  }
+
   Stream<Map<String, DriverLivePosition>> get liveUpdates async* {
     yield Map.unmodifiable(_live);
     yield* _liveController.stream;
+  }
+
+  /// Stands in for `/presence`: the choferes with the app open right now.
+  Stream<Set<String>> get appOpenUpdates async* {
+    yield Set.unmodifiable(_appOpen);
+    yield* _appOpenController.stream;
+  }
+
+  bool isAppOpen(String driverId) => _appOpen.contains(driverId);
+
+  void setAppOpen(String driverId, {required bool open}) {
+    final changed = open ? _appOpen.add(driverId) : _appOpen.remove(driverId);
+    if (changed) _appOpenController.add(Set.unmodifiable(_appOpen));
   }
 
   Stream<List<ChatMessage>> messagesFor(String serviceId) async* {
@@ -485,6 +508,401 @@ class DemoBackend {
     _emitUsers();
   }
 
+  /// Opens a chofer account the way `createDriver` does server-side, minus the
+  /// Auth user there is no such thing as here.
+  ///
+  /// Returns null when the cédula is already on file: the real callable refuses
+  /// a duplicate rather than creating a second account for the same person, and
+  /// the panel is built against that refusal.
+  ///
+  /// [selfRegistered] is the driver app's sign-up: the same inactive account,
+  /// but opened by the chofer rather than by whoever the demo is acting as.
+  Driver? createDriver({
+    required String name,
+    required String cedula,
+    required String phone,
+    required String email,
+    required String licenseNumber,
+    required DateTime licenseExpiry,
+    String? truckId,
+    List<String> zones = const [],
+    String companyName = '',
+    String rnc = '',
+    bool selfRegistered = false,
+  }) {
+    final digits = cedula.replaceAll(RegExp(r'\D'), '');
+    if (_drivers.values.any((d) => d.cedula == digits)) return null;
+
+    final id = 'driver-${_drivers.length + 1}-${_now().millisecondsSinceEpoch}';
+    final truck = truckId == null ? null : _trucks[truckId];
+
+    final driver = Driver(
+      id: id,
+      name: name,
+      cedula: digits,
+      phone: phone,
+      email: email,
+      licenseNumber: licenseNumber,
+      licenseExpiry: licenseExpiry,
+      // Inactive until the documents are looked at, exactly as the server does.
+      status: DriverStatus.inactive,
+      statusReason: selfRegistered
+          ? 'Registro desde la app: documentos pendientes de verificación'
+          : 'Documentos pendientes de verificación',
+      assignedTruckId: truckId,
+      assignedTruckPlate: truck?.plate ?? '',
+      truckType: truck?.type ?? TruckType.unknown,
+      zones: zones,
+      companyName: companyName,
+      rnc: rnc,
+      ratingCount: 0,
+      completedServices: 0,
+      // A chofer who signed up chose their own password and opened the
+      // account themselves; one the office opened carries a temporary one.
+      mustChangePassword: !selfRegistered,
+      createdBy: selfRegistered ? id : currentUserId,
+      createdAt: _now(),
+      updatedAt: _now(),
+    );
+
+    _drivers[id] = driver;
+    if (truck != null) {
+      _trucks[truckId!] = truck.copyWith(
+        assignedDriverId: id,
+        assignedDriverName: name,
+        updatedAt: _now(),
+      );
+      _emitTrucks();
+    }
+    _emitDrivers();
+    return driver;
+  }
+
+  /// Mirrors the `updateDriver` callable. Returns the refusal, or null.
+  String? updateDriver(
+    String driverId, {
+    required String name,
+    required String phone,
+    required String email,
+    required String licenseNumber,
+    required DateTime licenseExpiry,
+    String? truckId,
+    List<String> zones = const [],
+    String companyName = '',
+    String rnc = '',
+  }) {
+    final driver = _drivers[driverId];
+    if (driver == null || driver.archived) return 'Chofer no encontrado.';
+
+    final truckChanged = driver.assignedTruckId != truckId;
+    if (truckChanged && driver.isBusy) {
+      return 'Este chofer tiene un servicio en curso. '
+          'Cambia la grúa cuando termine.';
+    }
+    final next = truckId == null ? null : _trucks[truckId];
+    if (truckId != null && next == null) return 'Grúa no encontrada.';
+    if (truckChanged &&
+        next?.assignedDriverId != null &&
+        next!.assignedDriverId != driverId) {
+      return 'Esa grúa ya está asignada a otro chofer.';
+    }
+    // Auth refuses a second account on the same email; so does this.
+    if (_drivers.values.any(
+      (d) => d.id != driverId && d.email.toLowerCase() == email.toLowerCase(),
+    )) {
+      return 'Ya existe una cuenta con ese correo.';
+    }
+
+    final previousId = driver.assignedTruckId;
+    if (truckChanged && previousId != null) {
+      final previous = _trucks[previousId];
+      if (previous != null) {
+        _trucks[previousId] = previous.copyWith(
+          assignedDriverId: null,
+          assignedDriverName: '',
+          updatedAt: _now(),
+        );
+      }
+    }
+    if (next != null) {
+      _trucks[truckId!] = next.copyWith(
+        assignedDriverId: driverId,
+        assignedDriverName: name,
+        updatedAt: _now(),
+      );
+    }
+
+    _drivers[driverId] = driver.copyWith(
+      name: name,
+      phone: phone,
+      email: email,
+      licenseNumber: licenseNumber,
+      licenseExpiry: licenseExpiry,
+      zones: zones,
+      companyName: companyName,
+      rnc: rnc,
+      assignedTruckId: truckId,
+      assignedTruckPlate: next?.plate ?? '',
+      truckType: next?.type ?? TruckType.unknown,
+      isOnline: truckId != null && driver.isOnline,
+      updatedAt: _now(),
+    );
+    _emitDrivers();
+    _emitTrucks();
+    return null;
+  }
+
+  /// Mirrors the `archiveDriver` callable. Returns the refusal, or null.
+  String? archiveDriver(String driverId) {
+    final driver = _drivers[driverId];
+    if (driver == null) return 'Chofer no encontrado.';
+    if (driver.archived) return null;
+    if (driver.isBusy) {
+      return 'Este chofer tiene un servicio en curso. Elimínalo cuando termine.';
+    }
+
+    final truckId = driver.assignedTruckId;
+    final truck = truckId == null ? null : _trucks[truckId];
+    if (truck != null) {
+      _trucks[truckId!] = truck.copyWith(
+        assignedDriverId: null,
+        assignedDriverName: '',
+        updatedAt: _now(),
+      );
+    }
+
+    _drivers[driverId] = driver.copyWith(
+      archived: true,
+      status: DriverStatus.inactive,
+      statusReason: 'Eliminado por la oficina',
+      isOnline: false,
+      assignedTruckId: null,
+      assignedTruckPlate: '',
+      truckType: TruckType.unknown,
+      updatedAt: _now(),
+    );
+    _live.remove(driverId);
+    _emitDrivers();
+    _emitTrucks();
+    _emitLive();
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Fleet — mirrors callables/trucks.ts
+  // -------------------------------------------------------------------------
+
+  var _truckCounter = 100;
+
+  /// The live truck the plate [key] belongs to, if any. Archived trucks free
+  /// their plate, exactly as `trucks_by_plate` does.
+  Truck? _truckWithPlate(String key) => _trucks.values
+      .where((t) => !t.archived && DoValidators.plateKey(t.plate) == key)
+      .firstOrNull;
+
+  /// Mirrors the `createTruck` callable. Returns the new truck's id, or the
+  /// refusal as a [Failure].
+  Result<String> createTruck(TruckDetails details) {
+    final refusal = _truckRefusal(details);
+    if (refusal != null) return Result.err(refusal);
+
+    final key = DoValidators.plateKey(details.plate);
+    if (_truckWithPlate(key) != null) {
+      return const Result.err(
+        Failure(
+          FailureCode.invalidInput,
+          message: 'Ya existe una grúa con esa placa.',
+        ),
+      );
+    }
+
+    final id = 'truck-${_truckCounter++}';
+    _trucks[id] = Truck(
+      id: id,
+      plate: key,
+      make: details.make,
+      model: details.model,
+      year: details.year,
+      color: details.color,
+      type: details.type,
+      capacityKg: details.capacityKg,
+      registrationNumber: details.registrationNumber,
+      insurancePolicy: details.insurancePolicy,
+      insuranceExpiry: details.insuranceExpiry,
+      marbeteExpiry: details.marbeteExpiry,
+      createdBy: currentUserId,
+      createdAt: _now(),
+      updatedAt: _now(),
+    );
+    _emitTrucks();
+    return Result.ok(id);
+  }
+
+  /// Mirrors the `updateTruck` callable. Returns the refusal, or null.
+  Failure? updateTruck(String truckId, TruckDetails details) {
+    final truck = _trucks[truckId];
+    if (truck == null || truck.archived) {
+      return const Failure(FailureCode.notFound, message: 'Grúa no encontrada.');
+    }
+    final refusal = _truckRefusal(details);
+    if (refusal != null) return refusal;
+
+    final key = DoValidators.plateKey(details.plate);
+    final plateChanged = DoValidators.plateKey(truck.plate) != key;
+    final typeChanged = truck.type != details.type;
+    final holder = _truckWithPlate(key);
+    if (plateChanged && holder != null && holder.id != truckId) {
+      return const Failure(
+        FailureCode.invalidInput,
+        message: 'Ya existe una grúa con esa placa.',
+      );
+    }
+
+    final driverId = truck.assignedDriverId;
+    final driver = driverId == null ? null : _drivers[driverId];
+    if (driver != null && (plateChanged || typeChanged) && driver.isBusy) {
+      return const Failure(
+        FailureCode.driverBusy,
+        message: 'El chofer de esta grúa tiene un servicio en curso. '
+            'Cambia la placa o el tipo cuando termine.',
+      );
+    }
+    if (driver != null && typeChanged && driver.isOnline) {
+      return const Failure(
+        FailureCode.driverBusy,
+        message: 'El chofer de esta grúa está en línea. '
+            'Cambia el tipo cuando se desconecte.',
+      );
+    }
+
+    _trucks[truckId] = truck.copyWith(
+      plate: key,
+      make: details.make,
+      model: details.model,
+      year: details.year,
+      color: details.color,
+      type: details.type,
+      capacityKg: details.capacityKg,
+      registrationNumber: details.registrationNumber,
+      insurancePolicy: details.insurancePolicy,
+      insuranceExpiry: details.insuranceExpiry,
+      marbeteExpiry: details.marbeteExpiry,
+      updatedAt: _now(),
+    );
+    if (driver != null && (plateChanged || typeChanged)) {
+      _drivers[driverId!] = driver.copyWith(
+        assignedTruckPlate: key,
+        truckType: details.type,
+        updatedAt: _now(),
+      );
+      _emitDrivers();
+    }
+    _emitTrucks();
+    return null;
+  }
+
+  /// Mirrors the `archiveTruck` callable. Returns the refusal, or null.
+  Failure? archiveTruck(String truckId) {
+    final truck = _trucks[truckId];
+    if (truck == null) {
+      return const Failure(FailureCode.notFound, message: 'Grúa no encontrada.');
+    }
+    if (truck.archived) return null;
+
+    final driverId = truck.assignedDriverId;
+    final driver = driverId == null ? null : _drivers[driverId];
+    if (driver != null && driver.isBusy) {
+      return const Failure(
+        FailureCode.driverBusy,
+        message: 'El chofer de esta grúa tiene un servicio en curso. '
+            'Elimínala cuando termine.',
+      );
+    }
+
+    _trucks[truckId] = truck.copyWith(
+      archived: true,
+      active: false,
+      inactiveReason: 'Eliminada por la oficina',
+      assignedDriverId: null,
+      assignedDriverName: '',
+      updatedAt: _now(),
+    );
+    if (driver != null && driver.assignedTruckId == truckId) {
+      _drivers[driverId!] = driver.copyWith(
+        assignedTruckId: null,
+        assignedTruckPlate: '',
+        truckType: TruckType.unknown,
+        isOnline: false,
+        updatedAt: _now(),
+      );
+      final live = _live[driverId];
+      if (live != null) {
+        _live[driverId] = live.copyWith(
+          isOnline: false,
+          updatedAt: _now().millisecondsSinceEpoch,
+        );
+        _emitLive();
+      }
+      _emitDrivers();
+    }
+    _emitTrucks();
+    return null;
+  }
+
+  /// The field checks `truckFields` applies on the server.
+  Failure? _truckRefusal(TruckDetails details) {
+    final plateError = DoValidators.plate(details.plate);
+    if (plateError != null) {
+      return Failure(FailureCode.invalidInput, message: plateError);
+    }
+    if (!details.type.isDispatchable ||
+        details.capacityKg <= 0 ||
+        details.make.trim().isEmpty ||
+        details.model.trim().isEmpty) {
+      return const Failure(
+        FailureCode.invalidInput,
+        message: 'Revisa los datos de la grúa.',
+      );
+    }
+    return null;
+  }
+
+  /// Mirrors the `setDriverStatus` callable. Returns the refusal, or null.
+  String? setDriverStatus(
+    String driverId,
+    DriverStatus status, {
+    String reason = '',
+  }) {
+    final driver = _drivers[driverId];
+    if (driver == null) return 'Chofer no encontrado.';
+    if (driver.archived) return 'Este chofer fue eliminado.';
+    if (status == DriverStatus.unknown) return 'Datos inválidos.';
+
+    final stopping = !status.canWork;
+    if (stopping && driver.isBusy) {
+      return 'Este chofer tiene un servicio en curso. Reasígnalo primero.';
+    }
+
+    _drivers[driverId] = driver.copyWith(
+      status: status,
+      statusReason: reason,
+      isOnline: !stopping && driver.isOnline,
+      updatedAt: _now(),
+    );
+    if (stopping) {
+      final live = _live[driverId];
+      if (live != null) {
+        _live[driverId] = live.copyWith(
+          isOnline: false,
+          updatedAt: _now().millisecondsSinceEpoch,
+        );
+      }
+      _emitLive();
+    }
+    _emitDrivers();
+    return null;
+  }
+
   void setLive(DriverLivePosition position) {
     _live[position.driverId] = position;
     _emitLive();
@@ -505,9 +923,42 @@ class DemoBackend {
     _emitLive();
   }
 
+  /// Demo mode has no bucket, so an uploaded photo is kept here as a data URI
+  /// and handed back as its "download URL".
+  final _uploads = <String, String>{};
+
+  void storeUpload(String path, String dataUri) => _uploads[path] = dataUri;
+
+  /// Mirrors the `setDriverPhoto` callable. Returns the URL, or null when
+  /// nothing was uploaded at [path] or the chofer does not exist.
+  String? setDriverPhoto(String driverId, String path) {
+    final driver = _drivers[driverId];
+    final url = _uploads[path];
+    if (driver == null || url == null) return null;
+    _drivers[driverId] = driver.copyWith(photoUrl: url, updatedAt: _now());
+    _emitDrivers();
+    return url;
+  }
+
   void addMessage(String serviceId, ChatMessage message) {
     (_messages[serviceId] ??= []).add(message);
     _messagesController.add(serviceId);
+  }
+
+  /// Mirrors `ChatRepository.markRead`: stamps every message the other party
+  /// sent that [readerId] had not seen yet. Their own are left alone.
+  void markMessagesRead(String serviceId, String readerId) {
+    final messages = _messages[serviceId];
+    if (messages == null) return;
+
+    var changed = false;
+    for (var i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      if (message.senderId == readerId || message.isRead) continue;
+      messages[i] = message.copyWith(readAt: _now());
+      changed = true;
+    }
+    if (changed) _messagesController.add(serviceId);
   }
 
   /// Creates a service and starts the simulated dispatch cascade.
@@ -520,6 +971,7 @@ class DemoBackend {
     required PaymentMethod paymentMethod,
     required Quote quote,
     required ServiceRoute route,
+    String? preferredDriverId,
   }) {
     final user = _users[clientId];
     final now = _now();
@@ -550,21 +1002,28 @@ class DemoBackend {
     if (user != null) _users[clientId] = user.copyWith(activeServiceId: id);
     _emitServices();
 
-    _scheduleDispatch(id);
+    _scheduleDispatch(id, preferredDriverId: preferredDriverId);
     return service;
   }
 
   /// Walks the service through the real state machine on a compressed clock, so
   /// a reviewer sees the whole flow in about a minute instead of forty.
-  void _scheduleDispatch(String serviceId) {
+  ///
+  /// [preferredDriverId] — the truck picked on the map — goes first when it
+  /// can take the job, exactly as `dispatchNext` does it.
+  void _scheduleDispatch(String serviceId, {String? preferredDriverId}) {
     _after(dispatchDelay, () {
       final service = _services[serviceId];
       if (service == null || service.status != ServiceStatus.pendingDispatch) return;
 
-      final candidate = _nearestIdleDriver(
-        service.pickup.geo,
-        service.truckTypeRequired,
-      );
+      final candidate = _availableDriver(
+            preferredDriverId,
+            service.truckTypeRequired,
+          ) ??
+          _nearestIdleDriver(
+            service.pickup.geo,
+            service.truckTypeRequired,
+          );
       if (candidate == null) {
         _transition(serviceId, ServiceStatus.needsManual,
             ServiceEventName.noDriversFound, 'system', UserRole.unknown);
@@ -673,16 +1132,24 @@ class DemoBackend {
     _timers.add(timer);
   }
 
+  bool _canTake(Driver d, TruckType type) {
+    final live = _live[d.id];
+    return d.status.canWork &&
+        d.isOnline &&
+        !d.isBusy &&
+        d.truckType == type &&
+        live != null &&
+        live.isOnline;
+  }
+
+  /// [driverId], if that chofer can take a job of [type] right now.
+  Driver? _availableDriver(String? driverId, TruckType type) {
+    final driver = driverId == null ? null : _drivers[driverId];
+    return driver != null && _canTake(driver, type) ? driver : null;
+  }
+
   Driver? _nearestIdleDriver(LatLng pickup, TruckType type) {
-    final candidates = _drivers.values.where((d) {
-      final live = _live[d.id];
-      return d.status.canWork &&
-          d.isOnline &&
-          !d.isBusy &&
-          d.truckType == type &&
-          live != null &&
-          live.isOnline;
-    }).toList();
+    final candidates = _drivers.values.where((d) => _canTake(d, type)).toList();
 
     if (candidates.isEmpty) return null;
     candidates.sort((a, b) {
@@ -855,6 +1322,8 @@ class DemoBackend {
 
   void _emitDrivers() => _driversController.add(Map.unmodifiable(_drivers));
 
+  void _emitTrucks() => _trucksController.add(Map.unmodifiable(_trucks));
+
   void _emitLive() => _liveController.add(Map.unmodifiable(_live));
 
   void _emitUsers() => _usersController.add(Map.unmodifiable(_users));
@@ -867,6 +1336,8 @@ class DemoBackend {
     unawaited(_servicesController.close());
     unawaited(_driversController.close());
     unawaited(_liveController.close());
+    unawaited(_trucksController.close());
+    unawaited(_appOpenController.close());
     unawaited(_messagesController.close());
     unawaited(_trackingController.close());
   }

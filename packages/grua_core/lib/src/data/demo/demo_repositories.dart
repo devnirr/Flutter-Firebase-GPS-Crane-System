@@ -4,6 +4,7 @@
 // ignore_for_file: async_return_with_no_await
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
@@ -247,30 +248,48 @@ class DemoDriverRepository implements DriverRepository {
       _backend.setLive(position);
 
   @override
-  Future<Result<void>> setOnline(String uid, {required bool online}) async {
-    final driver = _backend.driver(uid);
-    if (driver == null) {
-      return const Result.err(Failure(FailureCode.notFound));
-    }
-    if (online && !driver.canGoOnline) {
-      return const Result.err(Failure(FailureCode.driverInactive));
-    }
-    if (!online && driver.isBusy) {
-      return const Result.err(
-        Failure(
-          FailureCode.driverBusy,
-          message:
-              'No puedes ponerte fuera de línea con un servicio en curso.',
-        ),
-      );
-    }
-    _backend.setDriverOnline(uid, online: online);
-    return const Result.ok(null);
-  }
-
-  @override
   Stream<List<DriverLivePosition>> watchLivePositions() =>
       _backend.liveUpdates.map((all) => all.values.toList());
+
+  @override
+  Stream<void> holdAppPresence(String uid) => StreamController<void>(
+        onListen: () => _backend.setAppOpen(uid, open: true),
+        onCancel: () => _backend.setAppOpen(uid, open: false),
+      ).stream;
+
+  @override
+  Future<void> clearAppPresence(String uid) async =>
+      _backend.setAppOpen(uid, open: false);
+
+  @override
+  Stream<Set<String>> watchConnectedDriverIds() => _backend.appOpenUpdates;
+
+  @override
+  Future<Result<String>> uploadDocument({
+    required String driverId,
+    required DriverDocumentType type,
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) =>
+      // Nothing is stored: there is no bucket in demo mode. The path is shaped
+      // like the real one so a screen showing it looks the same either way.
+      _delayed(Result.ok('drivers/$driverId/docs/${type.wire}_$fileName'));
+
+  @override
+  Future<Result<String>> uploadDriverPhoto({
+    required String driverId,
+    required Uint8List bytes,
+    required String contentType,
+  }) {
+    final path =
+        'drivers/$driverId/avatar/photo_${DateTime.now().millisecondsSinceEpoch}';
+    _backend.storeUpload(
+      path,
+      UriData.fromBytes(bytes, mimeType: contentType).toString(),
+    );
+    return _delayed(Result.ok(path));
+  }
 }
 
 class DemoTruckRepository implements TruckRepository {
@@ -279,12 +298,17 @@ class DemoTruckRepository implements TruckRepository {
   final DemoBackend _backend;
 
   @override
-  Stream<List<Truck>> watchTrucks({bool activeOnly = false}) => Stream.value(
-        _backend.allTrucks.where((t) => !activeOnly || t.active).toList(),
+  // Live, like the Firestore listener, so a grúa added or edited in the panel
+  // shows up without a reload.
+  Stream<List<Truck>> watchTrucks({bool activeOnly = false}) =>
+      _backend.truckUpdates.map(
+        (all) => all.values.where((t) => !activeOnly || t.active).toList()
+          ..sort((a, b) => a.plate.compareTo(b.plate)),
       );
 
   @override
-  Stream<Truck?> watchTruck(String id) => Stream.value(_backend.truck(id));
+  Stream<Truck?> watchTruck(String id) =>
+      _backend.truckUpdates.map((all) => all[id]);
 
   @override
   Future<Result<Truck>> fetchTruck(String id) async {
@@ -335,6 +359,49 @@ class DemoServiceRepository implements ServiceRepository {
   @override
   Stream<ServiceTracking?> watchTracking(String serviceId) =>
       _backend.trackingFor(serviceId);
+
+  @override
+  Future<Result<PagedServices>> fetchServices({
+    Set<ServiceStatus>? statuses,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    Object? cursor,
+  }) async {
+    final all = _backend.allServices.where((s) {
+      final at = s.createdAt;
+      if (statuses != null && statuses.isNotEmpty && !statuses.contains(s.status)) {
+        return false;
+      }
+      if (from != null && (at == null || at.isBefore(from))) return false;
+      if (to != null && (at == null || !at.isBefore(to))) return false;
+      return true;
+    }).toList()
+      ..sort((a, b) =>
+          (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
+
+    final offset = cursor is int ? cursor : 0;
+    final page = all.skip(offset).take(limit).toList();
+    return _delayed(
+      Result.ok(
+        PagedServices(
+          items: page,
+          cursor: offset + page.length,
+          hasMore: offset + page.length < all.length,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<Service?>> fetchServiceByCode(String code) async {
+    final wanted = code.trim().toUpperCase();
+    return _delayed(
+      Result.ok(
+        _backend.allServices.where((s) => s.code == wanted).firstOrNull,
+      ),
+    );
+  }
 
   @override
   Future<Result<PagedServices>> fetchHistory({
@@ -413,8 +480,10 @@ class DemoChatRepository implements ChatRepository {
   }
 
   @override
-  Future<Result<void>> markRead(String serviceId, String readerId) async =>
-      const Result.ok(null);
+  Future<Result<void>> markRead(String serviceId, String readerId) async {
+    _backend.markMessagesRead(serviceId, readerId);
+    return const Result.ok(null);
+  }
 }
 
 class DemoEarningsRepository implements EarningsRepository {
@@ -490,6 +559,9 @@ class DemoConfigRepository implements ConfigRepository {
   Future<AppSettings> currentAppSettings() async => _backend.settings;
 }
 
+/// How the demo writes a [NearbyTruck.ref]: the driver id, unsealed.
+const _demoRefPrefix = 'demo:';
+
 /// Simulates the callables, including the guards that matter for the UI.
 class DemoFunctionsGateway implements FunctionsGateway {
   DemoFunctionsGateway(this._backend);
@@ -505,6 +577,31 @@ class DemoFunctionsGateway implements FunctionsGateway {
   @override
   // The demo session already presents whichever role the app asked for.
   Future<Result<void>> bootstrapFirstAdmin() async => const Result.ok(null);
+
+  @override
+  // Mirrors the `nearbyTrucks` callable: free, online trucks inside the
+  // circle, nearest first, at the same ~110 m grain.
+  Future<Result<List<NearbyTruck>>> nearbyTrucks({
+    required LatLng center,
+    required double radiusKm,
+  }) async {
+    double coarse(double v) => (v * 1000).roundToDouble() / 1000;
+    final trucks = [
+      for (final p in _backend.allLive)
+        if (p.isOnline &&
+            p.state == DriverLiveState.idle &&
+            p.position.distanceTo(center) <= radiusKm * 1000)
+          NearbyTruck(
+            position: LatLng(coarse(p.lat), coarse(p.lng)),
+            truckType: p.truckType,
+            distanceMeters: p.position.distanceTo(center).round(),
+            heading: p.heading,
+            // Demo mode has no secret to seal with, and nobody to hide from.
+            ref: '$_demoRefPrefix${p.driverId}',
+          ),
+    ]..sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
+    return _delayed(Result.ok(trucks.take(30).toList()));
+  }
 
   @override
   Future<Result<QuoteResult>> quoteService({
@@ -560,6 +657,7 @@ class DemoFunctionsGateway implements FunctionsGateway {
     required DateTime quoteExpiresAt,
     String? paymentMethodId,
     String? notes,
+    String? preferredTruckRef,
   }) async {
     final clientId = _backend.currentUserId;
     final existing = _backend.user(clientId)?.activeServiceId;
@@ -589,6 +687,10 @@ class DemoFunctionsGateway implements FunctionsGateway {
           paymentMethod: paymentMethod,
           quote: quote.quote,
           route: quote.route,
+          preferredDriverId: preferredTruckRef != null &&
+                  preferredTruckRef.startsWith(_demoRefPrefix)
+              ? preferredTruckRef.substring(_demoRefPrefix.length)
+              : null,
         );
         return Result.ok(service.id);
       },
@@ -617,6 +719,30 @@ class DemoFunctionsGateway implements FunctionsGateway {
         UserRole.client,
       ),
     );
+  }
+
+  @override
+  // Mirrors the `setOnline` callable, acting as the signed-in chofer.
+  Future<Result<void>> setOnline({required bool online}) async {
+    final uid = _backend.currentUserId;
+    final driver = _backend.driver(uid);
+    if (driver == null) {
+      return const Result.err(Failure(FailureCode.notFound));
+    }
+    if (online && !driver.canGoOnline) {
+      return const Result.err(Failure(FailureCode.driverInactive));
+    }
+    if (!online && driver.isBusy) {
+      return const Result.err(
+        Failure(
+          FailureCode.driverBusy,
+          message:
+              'No puedes ponerte fuera de línea con un servicio en curso.',
+        ),
+      );
+    }
+    _backend.setDriverOnline(uid, online: online);
+    return const Result.ok(null);
   }
 
   @override
@@ -737,6 +863,152 @@ class DemoFunctionsGateway implements FunctionsGateway {
     String? comment,
   }) async =>
       const Result.ok(null);
+
+  @override
+  Future<Result<CreatedDriver>> createDriver(NewDriver driver) async {
+    final created = _backend.createDriver(
+      name: driver.name,
+      cedula: driver.cedula,
+      phone: driver.phone,
+      email: driver.email,
+      licenseNumber: driver.licenseNumber,
+      licenseExpiry: driver.licenseExpiry,
+      truckId: driver.truckId,
+      zones: driver.zones,
+      companyName: driver.companyName,
+      rnc: driver.rnc,
+    );
+
+    if (created == null) {
+      return _delayed(
+        const Result.err(
+          Failure(
+            FailureCode.invalidInput,
+            message: 'Ya existe un chofer con esa cédula.',
+          ),
+        ),
+      );
+    }
+
+    return _delayed(
+      Result.ok(
+        CreatedDriver(
+          driverId: created.id,
+          // Fixed rather than random so a demo walkthrough is reproducible.
+          temporaryPassword: 'GruaDemo2026!',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<String>> registerDriver(DriverSignUp signUp) async {
+    final created = _backend.createDriver(
+      name: signUp.name,
+      cedula: signUp.cedula,
+      phone: signUp.phone,
+      email: signUp.email,
+      licenseNumber: signUp.licenseNumber,
+      licenseExpiry: signUp.licenseExpiry,
+      companyName: signUp.companyName,
+      rnc: signUp.rnc,
+      selfRegistered: true,
+    );
+
+    if (created == null) {
+      return _delayed(
+        const Result.err(
+          Failure(
+            FailureCode.invalidInput,
+            message: 'Ya existe un chofer con esa cédula.',
+          ),
+        ),
+      );
+    }
+
+    // The next email sign-in is this new account, as it would be against Auth.
+    _backend.currentUserId = created.id;
+    return _delayed(Result.ok(created.id));
+  }
+
+  @override
+  Future<Result<void>> updateDriver(String driverId, DriverUpdate update) {
+    final refusal = _backend.updateDriver(
+      driverId,
+      name: update.name,
+      phone: update.phone,
+      email: update.email,
+      licenseNumber: update.licenseNumber,
+      licenseExpiry: update.licenseExpiry,
+      truckId: update.truckId,
+      zones: update.zones,
+      companyName: update.companyName,
+      rnc: update.rnc,
+    );
+    return _delayed(_refusedOr(refusal));
+  }
+
+  @override
+  Future<Result<void>> archiveDriver(String driverId) =>
+      _delayed(_refusedOr(_backend.archiveDriver(driverId)));
+
+  @override
+  Future<Result<String>> createTruck(TruckDetails details) =>
+      _delayed(_backend.createTruck(details));
+
+  @override
+  Future<Result<void>> updateTruck(String truckId, TruckDetails details) =>
+      _delayed(_failedOr(_backend.updateTruck(truckId, details)));
+
+  @override
+  Future<Result<void>> archiveTruck(String truckId) =>
+      _delayed(_failedOr(_backend.archiveTruck(truckId)));
+
+  Result<void> _failedOr(Failure? failure) => failure == null
+      ? const Result<void>.ok(null)
+      : Result<void>.err(failure);
+
+  @override
+  Future<Result<void>> setDriverStatus({
+    required String driverId,
+    required DriverStatus status,
+    String reason = '',
+  }) =>
+      _delayed(
+        _refusedOr(_backend.setDriverStatus(driverId, status, reason: reason)),
+      );
+
+  /// The backend's refusal as the failure the real callable would return.
+  Result<void> _refusedOr(String? refusal) => refusal == null
+      ? const Result<void>.ok(null)
+      : Result<void>.err(Failure(FailureCode.invalidInput, message: refusal));
+
+  @override
+  Future<Result<void>> attachDriverDocument({
+    required String driverId,
+    required DriverDocumentType type,
+    required String storagePath,
+    required String fileName,
+    required String contentType,
+    required int sizeBytes,
+    DateTime? expiresAt,
+  }) async =>
+      _delayed(const Result.ok(null));
+
+  @override
+  Future<Result<String>> setDriverPhoto({
+    required String driverId,
+    required String storagePath,
+  }) {
+    final url = _backend.setDriverPhoto(driverId, storagePath);
+    return _delayed(
+      url == null
+          ? const Result<String>.err(
+              Failure(FailureCode.invalidInput, message: 'La foto no se encontró.'),
+            )
+          : Result<String>.ok(url),
+    );
+  }
 
   @override
   Future<Result<String>> invoiceDownloadUrl(String invoiceId) async => _delayed(

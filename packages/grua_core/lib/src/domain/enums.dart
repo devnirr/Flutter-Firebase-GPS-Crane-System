@@ -8,6 +8,8 @@
 /// chofer whose app crashes on a new status is a chofer who cannot work.
 library;
 
+import 'package:json_annotation/json_annotation.dart';
+
 /// Resolves [wire] against [values], falling back to [fallback].
 T _resolve<T>(List<T> values, String? wire, String Function(T) key, T fallback) {
   if (wire == null) return fallback;
@@ -22,10 +24,15 @@ T _resolve<T>(List<T> values, String? wire, String Function(T) key, T fallback) 
 // ---------------------------------------------------------------------------
 
 enum UserRole {
+  @JsonValue('client')
   client('client'),
+  @JsonValue('driver')
   driver('driver'),
+  @JsonValue('admin')
   admin('admin'),
+  @JsonValue('ops')
   ops('ops'),
+  @JsonValue('unknown')
   unknown('unknown');
 
   const UserRole(this.wire);
@@ -41,14 +48,18 @@ enum UserRole {
 /// Lifecycle of a chofer's account, controlled entirely from the admin panel.
 enum DriverStatus {
   /// Created but not yet cleared to work — usually missing documents.
+  @JsonValue('inactive')
   inactive('inactive'),
 
   /// Cleared to go online and receive offers.
+  @JsonValue('active')
   active('active'),
 
   /// Blocked by an admin. Cannot log in to work.
+  @JsonValue('suspended')
   suspended('suspended'),
 
+  @JsonValue('unknown')
   unknown('unknown');
 
   const DriverStatus(this.wire);
@@ -64,11 +75,14 @@ enum DriverStatus {
 /// What the chofer is doing right now, as published to `/live/{driverId}`.
 enum DriverLiveState {
   /// Online and dispatchable.
+  @JsonValue('idle')
   idle('idle'),
 
   /// Online but already committed to a service.
+  @JsonValue('on_service')
   onService('on_service'),
 
+  @JsonValue('unknown')
   unknown('unknown');
 
   const DriverLiveState(this.wire);
@@ -88,14 +102,18 @@ enum DriverLiveState {
 enum TruckType {
   /// Flatbed. Required for anything that cannot roll or must not be towed on
   /// its own wheels.
+  @JsonValue('plataforma')
   plataforma('plataforma', 'Plataforma'),
 
   /// Hook and chain / wheel-lift. The everyday tow.
+  @JsonValue('gancho')
   gancho('gancho', 'Gancho'),
 
   /// Heavy recovery for trucks and buses.
+  @JsonValue('pesada')
   pesada('pesada', 'Grúa pesada'),
 
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const TruckType(this.wire, this.label);
@@ -113,11 +131,17 @@ enum TruckType {
 
 /// The customer's vehicle class, used to infer [TruckType].
 enum VehicleType {
+  @JsonValue('sedan')
   sedan('sedan', 'Carro / Sedán'),
+  @JsonValue('suv')
   suv('suv', 'Jeepeta / SUV'),
+  @JsonValue('camioneta')
   camioneta('camioneta', 'Camioneta'),
+  @JsonValue('camion')
   camion('camion', 'Camión / Autobús'),
+  @JsonValue('motor')
   motor('motor', 'Motor'),
+  @JsonValue('unknown')
   unknown('unknown', 'Otro');
 
   const VehicleType(this.wire, this.label);
@@ -131,12 +155,19 @@ enum VehicleType {
 
 /// Why the vehicle needs a grúa. Drives both pricing and truck-type inference.
 enum VehicleCondition {
+  @JsonValue('no_arranca')
   noArranca('no_arranca', 'No arranca'),
+  @JsonValue('accidentado')
   accidentado('accidentado', 'Accidentado'),
+  @JsonValue('ruedas_bloqueadas')
   ruedasBloqueadas('ruedas_bloqueadas', 'Ruedas bloqueadas'),
+  @JsonValue('volcado')
   volcado('volcado', 'Volcado'),
+  @JsonValue('sin_combustible')
   sinCombustible('sin_combustible', 'Sin combustible'),
+  @JsonValue('goma_pinchada')
   gomaPinchada('goma_pinchada', 'Goma pinchada'),
+  @JsonValue('unknown')
   unknown('unknown', 'Otro problema');
 
   const VehicleCondition(this.wire, this.label);
@@ -156,12 +187,19 @@ enum VehicleCondition {
 
 /// Documents a chofer must keep current to stay `active`.
 enum DriverDocumentType {
+  @JsonValue('licencia')
   licencia('licencia', 'Licencia de conducir', required: true),
+  @JsonValue('cedula')
   cedula('cedula', 'Cédula', required: true),
+  @JsonValue('seguro')
   seguro('seguro', 'Seguro del vehículo', required: true),
+  @JsonValue('marbete')
   marbete('marbete', 'Marbete', required: true),
+  @JsonValue('matricula')
   matricula('matricula', 'Matrícula', required: true),
+  @JsonValue('certificado_medico')
   certificadoMedico('certificado_medico', 'Certificado médico', required: false),
+  @JsonValue('unknown')
   unknown('unknown', 'Documento', required: false);
 
   const DriverDocumentType(this.wire, this.label, {required this.required});
@@ -177,10 +215,15 @@ enum DriverDocumentType {
 }
 
 enum DocumentReviewState {
+  @JsonValue('pending')
   pending('pending', 'Pendiente'),
+  @JsonValue('verified')
   verified('verified', 'Verificado'),
+  @JsonValue('rejected')
   rejected('rejected', 'Rechazado'),
+  @JsonValue('expired')
   expired('expired', 'Vencido'),
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const DocumentReviewState(this.wire, this.label);
@@ -200,38 +243,50 @@ enum DocumentReviewState {
 /// exists so the apps can render the right screen, never to decide a change.
 enum ServiceStatus {
   /// Created and looking for a chofer.
+  @JsonValue('pending_dispatch')
   pendingDispatch('pending_dispatch', 'Buscando grúa'),
 
   /// One chofer is holding an exclusive 25-second offer.
+  @JsonValue('offered')
   offered('offered', 'Buscando grúa'),
 
   /// A chofer took it and is on the way.
+  @JsonValue('accepted')
   accepted('accepted', 'Grúa en camino'),
 
   /// The chofer pressed "Llegué".
+  @JsonValue('arrived')
   arrived('arrived', 'Tu grúa llegó'),
 
   /// Vehicle loaded, heading to the destination.
+  @JsonValue('in_progress')
   inProgress('in_progress', 'En camino al destino'),
 
   /// The chofer pressed "Finalizar". Payment may still be settling.
+  @JsonValue('completed')
   completed('completed', 'Servicio completado'),
 
   /// Paid and invoiced. Terminal.
+  @JsonValue('closed')
   closed('closed', 'Servicio cerrado'),
 
   /// The cascade gave up; a dispatcher must assign by hand.
+  @JsonValue('needs_manual')
   needsManual('needs_manual', 'Asignando grúa'),
 
   /// Cancelled by client, chofer, admin or the system. Terminal.
+  @JsonValue('cancelled')
   cancelled('cancelled', 'Servicio cancelado'),
 
   /// Nobody was ever assigned within the dispatch window. Terminal.
+  @JsonValue('expired')
   expired('expired', 'Servicio expirado'),
 
   /// Something went wrong that needs a human. Terminal.
+  @JsonValue('failed')
   failed('failed', 'Servicio con problema'),
 
+  @JsonValue('unknown')
   unknown('unknown', 'Estado desconocido');
 
   const ServiceStatus(this.wire, this.label);
@@ -275,6 +330,24 @@ enum ServiceStatus {
 
   bool get isActive => active.contains(this);
 
+  /// The office's name for the state. [label] is written for the customer —
+  /// "Tu grúa llegó", and `offered` hidden behind "Buscando grúa" — which is
+  /// the wrong voice for a dispatcher reading a list of every job.
+  String get officeLabel => switch (this) {
+        ServiceStatus.pendingDispatch => 'Buscando chofer',
+        ServiceStatus.offered => 'Ofrecido a chofer',
+        ServiceStatus.accepted => 'Chofer en camino',
+        ServiceStatus.arrived => 'Chofer en el punto',
+        ServiceStatus.inProgress => 'Remolcando',
+        ServiceStatus.completed => 'Completado',
+        ServiceStatus.closed => 'Cerrado',
+        ServiceStatus.needsManual => 'Requiere asignación',
+        ServiceStatus.cancelled => 'Cancelado',
+        ServiceStatus.expired => 'Expirado',
+        ServiceStatus.failed => 'Con problema',
+        ServiceStatus.unknown => 'Desconocido',
+      };
+
   /// True once a specific chofer owns the job.
   bool get hasDriver => const {
         ServiceStatus.accepted,
@@ -299,21 +372,37 @@ enum ServiceStatus {
 /// Names of the server callables that move a service between states. Keeping
 /// them here means the apps and the tests cannot drift from the function names.
 enum ServiceEventName {
+  @JsonValue('requestService')
   requestService('requestService'),
+  @JsonValue('dispatchNext')
   dispatchNext('dispatchNext'),
+  @JsonValue('acceptService')
   acceptService('acceptService'),
+  @JsonValue('rejectService')
   rejectService('rejectService'),
+  @JsonValue('expireOffer')
   expireOffer('expireOffer'),
+  @JsonValue('noDriversFound')
   noDriversFound('noDriversFound'),
+  @JsonValue('assignServiceManually')
   assignServiceManually('assignServiceManually'),
+  @JsonValue('markArrived')
   markArrived('markArrived'),
+  @JsonValue('startService')
   startService('startService'),
+  @JsonValue('completeService')
   completeService('completeService'),
+  @JsonValue('confirmCashCollected')
   confirmCashCollected('confirmCashCollected'),
+  @JsonValue('closeService')
   closeService('closeService'),
+  @JsonValue('cancelService')
   cancelService('cancelService'),
+  @JsonValue('cancelByDriver')
   cancelByDriver('cancelByDriver'),
+  @JsonValue('failService')
   failService('failService'),
+  @JsonValue('unknown')
   unknown('unknown');
 
   const ServiceEventName(this.wire);
@@ -326,11 +415,17 @@ enum ServiceEventName {
 
 /// State of a single dispatch offer to one chofer.
 enum OfferState {
+  @JsonValue('sent')
   sent('sent'),
+  @JsonValue('accepted')
   accepted('accepted'),
+  @JsonValue('rejected')
   rejected('rejected'),
+  @JsonValue('expired')
   expired('expired'),
+  @JsonValue('cancelled')
   cancelled('cancelled'),
+  @JsonValue('unknown')
   unknown('unknown');
 
   const OfferState(this.wire);
@@ -344,8 +439,11 @@ enum OfferState {
 }
 
 enum AssignmentMode {
+  @JsonValue('auto')
   auto('auto', 'Automático'),
+  @JsonValue('manual')
   manual('manual', 'Manual'),
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const AssignmentMode(this.wire, this.label);
@@ -358,10 +456,15 @@ enum AssignmentMode {
 }
 
 enum CancelledBy {
+  @JsonValue('client')
   client('client', 'Cliente'),
+  @JsonValue('driver')
   driver('driver', 'Chofer'),
+  @JsonValue('admin')
   admin('admin', 'Administración'),
+  @JsonValue('system')
   system('system', 'Sistema'),
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const CancelledBy(this.wire, this.label);
@@ -376,14 +479,23 @@ enum CancelledBy {
 /// Fixed reasons a chofer may give for dropping a job. Free text is not
 /// accepted because these feed the admin's abuse flags.
 enum DriverCancelReason {
+  @JsonValue('vehicle_breakdown')
   vehicleBreakdown('vehicle_breakdown', 'Avería de la grúa'),
+  @JsonValue('wrong_truck_type')
   wrongTruckType('wrong_truck_type', 'Tipo de grúa incorrecto'),
+  @JsonValue('client_not_present')
   clientNotPresent('client_not_present', 'El cliente no está en el lugar'),
+  @JsonValue('client_refused')
   clientRefused('client_refused', 'El cliente rechazó el servicio'),
+  @JsonValue('inaccessible_location')
   inaccessibleLocation('inaccessible_location', 'No puedo llegar al lugar'),
+  @JsonValue('unsafe_location')
   unsafeLocation('unsafe_location', 'Lugar inseguro'),
+  @JsonValue('emergency')
   emergency('emergency', 'Emergencia personal'),
+  @JsonValue('other')
   other('other', 'Otro motivo'),
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const DriverCancelReason(this.wire, this.label);
@@ -400,8 +512,11 @@ enum DriverCancelReason {
 // ---------------------------------------------------------------------------
 
 enum PaymentMethod {
+  @JsonValue('card')
   card('card', 'Tarjeta'),
+  @JsonValue('cash')
   cash('cash', 'Efectivo'),
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const PaymentMethod(this.wire, this.label);
@@ -415,24 +530,32 @@ enum PaymentMethod {
 
 enum PaymentStatus {
   /// Cash job, or a card job before the hold is placed.
+  @JsonValue('none')
   none('none', 'Sin procesar'),
 
   /// Card hold placed at accept time.
+  @JsonValue('authorized')
   authorized('authorized', 'Autorizado'),
 
   /// Hold captured at completion.
+  @JsonValue('captured')
   captured('captured', 'Cobrado'),
 
   /// Authorization or capture was declined.
+  @JsonValue('failed')
   failed('failed', 'Rechazado'),
 
+  @JsonValue('refunded')
   refunded('refunded', 'Reembolsado'),
 
   /// Completed cash job, chofer has not confirmed collection yet.
+  @JsonValue('cash_pending')
   cashPending('cash_pending', 'Cobro en efectivo pendiente'),
 
+  @JsonValue('cash_collected')
   cashCollected('cash_collected', 'Efectivo recibido'),
 
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const PaymentStatus(this.wire, this.label);
@@ -453,11 +576,14 @@ enum PaymentStatus {
 /// Dominican tax receipt types (Números de Comprobante Fiscal).
 enum NcfType {
   /// Crédito fiscal — for a customer with an RNC who will deduct the ITBIS.
+  @JsonValue('01')
   creditoFiscal('01', 'Crédito fiscal'),
 
   /// Consumo — the default for individuals.
+  @JsonValue('02')
   consumo('02', 'Consumo'),
 
+  @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
   const NcfType(this.wire, this.label);

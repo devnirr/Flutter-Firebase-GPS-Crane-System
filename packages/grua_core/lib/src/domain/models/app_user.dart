@@ -30,6 +30,7 @@ abstract class AppUser with _$AppUser {
     /// and the real pickup is still picked on the map at request time.
     @Default('') String address,
     @Default('') String photoUrl,
+    @JsonKey(unknownEnumValue: UserRole.unknown)
     @Default(UserRole.client) UserRole role,
     @Default('es_DO') String locale,
 
@@ -44,6 +45,7 @@ abstract class AppUser with _$AppUser {
     /// Payment-gateway customer id (Stripe `cus_...`, or the Azul equivalent).
     String? gatewayCustomerId,
     String? defaultPaymentMethodId,
+    @JsonKey(unknownEnumValue: PaymentMethod.unknown)
     @Default(PaymentMethod.cash) PaymentMethod preferredPaymentMethod,
     @Default(0) int completedServices,
     @NullableTimestampConverter() DateTime? createdAt,

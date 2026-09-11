@@ -1,7 +1,6 @@
 import { logger } from 'firebase-functions/v2';
 
 import {
-  DriverLiveState,
   DriverStatus,
   OfferState,
   ServiceEventName,
@@ -9,7 +8,8 @@ import {
   TruckType,
 } from '../lib/enums.js';
 import { FieldValue, Paths, Timestamp, db } from '../lib/firestore.js';
-import { distanceKm, distanceMeters, queryBounds, type LatLng } from '../lib/geo.js';
+import { distanceMeters, type LatLng } from '../lib/geo.js';
+import { isAvailableWithin, positionsWithin } from '../lib/live.js';
 import { commissionCents, loadPricing } from '../lib/pricing.js';
 import { alertAdmins, sendOffer } from '../lib/push.js';
 import { applyTransition } from '../lib/stateMachine.js';
@@ -65,18 +65,6 @@ export async function loadDispatchConfig(): Promise<DispatchConfig> {
   return { ...DEFAULT_DISPATCH, ...(snap.data() as Partial<DispatchConfig> | undefined) };
 }
 
-/** A chofer's live position, as stored in RTDB. */
-interface LivePosition {
-  driverId: string;
-  lat: number;
-  lng: number;
-  geohash?: string;
-  isOnline?: boolean;
-  state?: string;
-  truckType?: string;
-  updatedAt?: number;
-}
-
 export interface Candidate {
   driverId: string;
   position: LatLng;
@@ -87,40 +75,6 @@ export interface Candidate {
   truckId?: string;
   name: string;
   phone: string;
-}
-
-/**
- * Reads live positions inside the geohash ranges covering a radius.
- *
- * Geohash cells are rectangles and a radius is a circle, so this over-selects;
- * the caller filters by true distance. RTDB has no compound query, hence one
- * range query per bound.
- */
-async function positionsWithin(
-  center: LatLng,
-  radiusKm: number,
-): Promise<LivePosition[]> {
-  const bounds = queryBounds(center, radiusKm * 1000);
-  const found = new Map<string, LivePosition>();
-
-  await Promise.all(
-    bounds.map(async ([start, end]) => {
-      const snap = await Paths.liveRoot()
-        .orderByChild('geohash')
-        .startAt(start ?? '')
-        .endAt(end ?? '')
-        .get();
-
-      const value = snap.val() as Record<string, Omit<LivePosition, 'driverId'>> | null;
-      if (!value) return;
-
-      for (const [driverId, position] of Object.entries(value)) {
-        found.set(driverId, { driverId, ...position });
-      }
-    }),
-  );
-
-  return [...found.values()];
 }
 
 /**
@@ -172,16 +126,13 @@ async function findCandidates(options: {
 
   const nearby = positions.filter((position) => {
     if (excluded.has(position.driverId)) return false;
-    if (position.isOnline !== true) return false;
-    if (position.state !== DriverLiveState.idle) return false;
     if (position.truckType !== truckType) return false;
-    // A phone that lost signal is not dispatchable, whatever `isOnline` claims.
-    if (now - (position.updatedAt ?? 0) > config.stalePositionMs) return false;
-    // Geohash boxes over-select; this is the real circle.
-    return (
-      distanceKm({ latitude: position.lat, longitude: position.lng }, pickup) <=
-      radiusKm
-    );
+    // Online, idle, fresh, and inside the real circle — geohash boxes
+    // over-select.
+    return isAvailableWithin(position, pickup, radiusKm, {
+      now,
+      staleMs: config.stalePositionMs,
+    });
   });
 
   if (nearby.length === 0) return [];
@@ -241,8 +192,16 @@ async function findCandidates(options: {
  *
  * Idempotent: safe to call twice, and safe to call on a service that has since
  * been taken or cancelled — it reads the current state and returns.
+ *
+ * [options.preferredDriverId] is the truck the customer picked on the map. It
+ * gets the first offer if it can take the job — online, free, the right type
+ * and within dispatch's widest radius — and otherwise changes nothing. Either
+ * way the cascade after it is the usual one.
  */
-export async function dispatchNext(serviceId: string): Promise<void> {
+export async function dispatchNext(
+  serviceId: string,
+  options: { preferredDriverId?: string } = {},
+): Promise<void> {
   const config = await loadDispatchConfig();
   const snap = await Paths.service(serviceId).get();
   const service = snap.data();
@@ -282,6 +241,24 @@ export async function dispatchNext(serviceId: string): Promise<void> {
   // Expand until somebody is found or the radius runs out: 5 → 10 → 20 → 40.
   let radiusKm = (dispatch['radiusKm'] as number | undefined) ?? config.startRadiusKm;
   let candidates: Candidate[] = [];
+
+  // The truck the customer asked for goes first, if it still can. Looked for
+  // at the widest radius: the customer chose it knowing how far it was.
+  const preferred = options.preferredDriverId;
+  if (preferred && !excluded.has(preferred)) {
+    const wide = await findCandidates({
+      pickup: center,
+      radiusKm: config.maxRadiusKm,
+      truckType,
+      excluded,
+      paymentMethod,
+      config,
+      now,
+    });
+    const match = wide.find((c) => c.driverId === preferred);
+    if (match) candidates = [match];
+    logger.info('dispatch.preferred', { serviceId, available: Boolean(match) });
+  }
 
   while (candidates.length === 0 && radiusKm <= config.maxRadiusKm) {
     candidates = await findCandidates({
@@ -365,6 +342,11 @@ export async function dispatchNext(serviceId: string): Promise<void> {
         ((current['dropoff'] as Record<string, unknown> | undefined)?.['address'] as string) ??
         '',
       pickupGeo: (current['pickup'] as Record<string, unknown>)['geo'],
+      // The chofer cannot read the service until they accept, so the offer
+      // carries both ends: the app draws the whole trip before they decide.
+      dropoffGeo:
+        ((current['dropoff'] as Record<string, unknown> | undefined)?.['geo'] as unknown) ??
+        null,
       vehicleLabel: vehicleLabel(current['vehicle']),
       condition:
         ((current['vehicle'] as Record<string, unknown> | undefined)?.['condition'] as string) ??

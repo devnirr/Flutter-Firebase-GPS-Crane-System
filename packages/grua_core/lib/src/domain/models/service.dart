@@ -17,7 +17,9 @@ abstract class ServiceVehicle with _$ServiceVehicle {
     @Default('') String plate,
     @Default('') String color,
     int? year,
+    @JsonKey(unknownEnumValue: VehicleType.unknown)
     @Default(VehicleType.sedan) VehicleType type,
+    @JsonKey(unknownEnumValue: VehicleCondition.unknown)
     @Default(VehicleCondition.noArranca) VehicleCondition condition,
     @Default(<String>[]) List<String> photoPaths,
     @Default('') String notes,
@@ -169,7 +171,9 @@ abstract class Quote with _$Quote {
 @freezed
 abstract class ServicePayment with _$ServicePayment {
   const factory ServicePayment({
+    @JsonKey(unknownEnumValue: PaymentMethod.unknown)
     @Default(PaymentMethod.cash) PaymentMethod method,
+    @JsonKey(unknownEnumValue: PaymentStatus.unknown)
     @Default(PaymentStatus.none) PaymentStatus status,
     @Default('') String gateway,
 
@@ -282,6 +286,7 @@ abstract class ServiceTimeline with _$ServiceTimeline {
 @freezed
 abstract class ServiceCancellation with _$ServiceCancellation {
   const factory ServiceCancellation({
+    @JsonKey(unknownEnumValue: CancelledBy.unknown)
     @Default(CancelledBy.unknown) CancelledBy by,
     @Default('') String reason,
     @Default('') String reasonCode,
@@ -339,10 +344,12 @@ abstract class Service with _$Service {
 
     /// Human-readable code both parties quote on the phone: `GR-260908-0431`.
     @Default('') String code,
+    @JsonKey(unknownEnumValue: ServiceStatus.unknown)
     @Default(ServiceStatus.pendingDispatch) ServiceStatus status,
     @Default('') String clientName,
     @Default('') String clientPhone,
     @Default(ServiceVehicle()) ServiceVehicle vehicle,
+    @JsonKey(unknownEnumValue: TruckType.unknown)
     @Default(TruckType.gancho) TruckType truckTypeRequired,
     ServiceLocation? dropoff,
     @Default(ServiceRoute()) ServiceRoute route,
@@ -361,6 +368,7 @@ abstract class Service with _$Service {
     @Default('') String truckPlate,
     @Default('') String truckLabel,
     @NullableTimestampConverter() DateTime? assignedAt,
+    @JsonKey(unknownEnumValue: AssignmentMode.unknown)
     @Default(AssignmentMode.auto) AssignmentMode assignmentMode,
     @Default(DispatchState()) DispatchState dispatch,
     @Default(ServiceTimeline()) ServiceTimeline timeline,

@@ -112,6 +112,32 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
       _callVoid('bootstrapFirstAdmin', {});
 
   @override
+  Future<Result<List<NearbyTruck>>> nearbyTrucks({
+    required LatLng center,
+    required double radiusKm,
+  }) =>
+      _call('nearbyTrucks', {
+        'latitude': center.latitude,
+        'longitude': center.longitude,
+        'radiusKm': radiusKm,
+      }, (data) {
+        final trucks = data['trucks'] as List<dynamic>? ?? const [];
+        return [
+          for (final raw in trucks.whereType<Map<Object?, Object?>>())
+            NearbyTruck(
+              position: LatLng(
+                (raw['latitude'] as num? ?? 0).toDouble(),
+                (raw['longitude'] as num? ?? 0).toDouble(),
+              ),
+              truckType: TruckType.fromWire(raw['truckType'] as String?),
+              distanceMeters: (raw['distanceMeters'] as num? ?? 0).round(),
+              heading: (raw['heading'] as num? ?? 0).toDouble(),
+              ref: raw['ref'] as String? ?? '',
+            ),
+        ];
+      });
+
+  @override
   Future<Result<QuoteResult>> quoteService({
     required ServiceLocation pickup,
     required ServiceLocation dropoff,
@@ -153,8 +179,10 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
     required DateTime quoteExpiresAt,
     String? paymentMethodId,
     String? notes,
+    String? preferredTruckRef,
   }) =>
       _call('requestService', {
+        'preferredTruckRef': ?preferredTruckRef,
         'pickup': pickup.toJson(),
         'dropoff': dropoff.toJson(),
         'vehicle': vehicle.toJson(),
@@ -188,6 +216,10 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   // -------------------------------------------------------------------------
   // Driver
   // -------------------------------------------------------------------------
+
+  @override
+  Future<Result<void>> setOnline({required bool online}) =>
+      _callVoid('setOnline', {'online': online});
 
   @override
   Future<Result<void>> acceptService(String serviceId) =>
@@ -272,6 +304,92 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         'etaSeconds': etaSeconds,
         'remainingMeters': remainingMeters,
       });
+
+  // -------------------------------------------------------------------------
+  // Admin
+  // -------------------------------------------------------------------------
+
+  @override
+  Future<Result<CreatedDriver>> createDriver(NewDriver driver) =>
+      _call('createDriver', driver.toJson(), (data) {
+        return CreatedDriver(
+          driverId: data['driverId'] as String? ?? '',
+          temporaryPassword: data['temporaryPassword'] as String? ?? '',
+        );
+      });
+
+  @override
+  Future<Result<String>> registerDriver(DriverSignUp signUp) => _call(
+        'registerDriver',
+        signUp.toJson(),
+        (data) => data['driverId'] as String? ?? '',
+      );
+
+  @override
+  Future<Result<void>> updateDriver(String driverId, DriverUpdate update) =>
+      _callVoid('updateDriver', {'driverId': driverId, ...update.toJson()});
+
+  @override
+  Future<Result<void>> archiveDriver(String driverId) =>
+      _callVoid('archiveDriver', {'driverId': driverId});
+
+  @override
+  Future<Result<String>> createTruck(TruckDetails details) => _call(
+        'createTruck',
+        details.toJson(),
+        (data) => data['truckId'] as String? ?? '',
+      );
+
+  @override
+  Future<Result<void>> updateTruck(String truckId, TruckDetails details) =>
+      _callVoid('updateTruck', {'truckId': truckId, ...details.toJson()});
+
+  @override
+  Future<Result<void>> archiveTruck(String truckId) =>
+      _callVoid('archiveTruck', {'truckId': truckId});
+
+  @override
+  Future<Result<void>> setDriverStatus({
+    required String driverId,
+    required DriverStatus status,
+    String reason = '',
+  }) =>
+      _callVoid('setDriverStatus', {
+        'driverId': driverId,
+        'status': status.wire,
+        'reason': reason,
+      });
+
+  @override
+  Future<Result<void>> attachDriverDocument({
+    required String driverId,
+    required DriverDocumentType type,
+    required String storagePath,
+    required String fileName,
+    required String contentType,
+    required int sizeBytes,
+    DateTime? expiresAt,
+  }) =>
+      _callVoid('attachDriverDocument', {
+        'driverId': driverId,
+        'type': type.wire,
+        'storagePath': storagePath,
+        'fileName': fileName,
+        'contentType': contentType,
+        'sizeBytes': sizeBytes,
+        'expiresAt': ?expiresAt?.toUtc().toIso8601String(),
+      });
+
+  @override
+  Future<Result<String>> setDriverPhoto({
+    required String driverId,
+    required String storagePath,
+  }) =>
+      _call(
+        'setDriverPhoto',
+        {'driverId': driverId, 'storagePath': storagePath},
+        (data) => data['photoUrl'] as String? ?? '',
+      );
 
   @override
   Future<Result<String>> invoiceDownloadUrl(String invoiceId) =>

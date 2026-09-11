@@ -33,9 +33,11 @@ setGlobalOptions({
 // ---------------------------------------------------------------------------
 
 export { quoteService, requestService } from './callables/request.js';
+export { nearbyTrucks } from './callables/nearby.js';
 export { ensureProfile } from './callables/profile.js';
 export { rateService, publishEta } from './callables/feedback.js';
 export {
+  setOnline,
   acceptService,
   rejectService,
   markArrived,
@@ -47,12 +49,18 @@ export {
 } from './callables/lifecycle.js';
 export {
   createDriver,
+  registerDriver,
+  attachDriverDocument,
+  setDriverPhoto,
   setDriverStatus,
+  updateDriver,
+  archiveDriver,
   assignServiceManually,
   bootstrapFirstAdmin,
   setAdminRole,
   whoAmI,
 } from './callables/admin.js';
+export { createTruck, updateTruck, archiveTruck } from './callables/trucks.js';
 
 // ---------------------------------------------------------------------------
 // Triggers and scheduled work

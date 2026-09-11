@@ -254,12 +254,20 @@ abstract final class Paths {
       _db.collection(reportsCollection).doc('today');
 
   // -------------------------------------------------------------------------
-  // Realtime Database — live positions only
+  // Realtime Database — live positions and app presence
   // -------------------------------------------------------------------------
 
   static DatabaseReference liveRoot() => _rtdb.ref('live');
 
   static DatabaseReference live(String driverId) => _rtdb.ref('live/$driverId');
+
+  static DatabaseReference presenceRoot() => _rtdb.ref('presence');
+
+  static DatabaseReference presence(String driverId) =>
+      _rtdb.ref('presence/$driverId');
+
+  /// True while this client holds a connection to RTDB.
+  static DatabaseReference connectionState() => _rtdb.ref('.info/connected');
 
   // -------------------------------------------------------------------------
   // Storage object paths (strings, not references — Storage is addressed by path)
@@ -267,6 +275,10 @@ abstract final class Paths {
 
   static String driverDocPath(String uid, DriverDocumentType type, String ext) =>
       'drivers/$uid/docs/${type.wire}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+
+  /// Timestamped so a replaced photo is a new URL no cache has seen.
+  static String driverPhotoPath(String uid, String ext) =>
+      'drivers/$uid/avatar/photo_${DateTime.now().millisecondsSinceEpoch}.$ext';
 
   static String servicePhotoPath(String serviceId, String name) =>
       'service_photos/$serviceId/$name';

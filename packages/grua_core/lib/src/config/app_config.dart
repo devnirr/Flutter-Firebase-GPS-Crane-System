@@ -40,6 +40,8 @@ class AppConfig {
     required this.useEmulators,
     required this.emulatorHost,
     required this.functionsRegion,
+    this.recaptchaSiteKey = '',
+    this.appCheckDebugToken = '',
     this.disableAppVerification = false,
   });
 
@@ -59,6 +61,10 @@ class AppConfig {
       ),
       googleMapsApiKey: const String.fromEnvironment('GOOGLE_MAPS_API_KEY'),
       stripePublishableKey: const String.fromEnvironment('STRIPE_PUBLISHABLE_KEY'),
+      recaptchaSiteKey: const String.fromEnvironment('RECAPTCHA_SITE_KEY'),
+      // Only a debug build uses a debug provider at all, so a token that leaks
+      // into a release build does nothing.
+      appCheckDebugToken: const String.fromEnvironment('APP_CHECK_DEBUG_TOKEN'),
       useEmulators: const bool.fromEnvironment('USE_EMULATORS'),
       // Deliberately ANDed with kDebugMode rather than just read: a release
       // binary that skips reCAPTCHA and Play Integrity would let anyone mint
@@ -83,6 +89,20 @@ class AppConfig {
   final String firebaseProjectId;
   final String googleMapsApiKey;
   final String stripePublishableKey;
+
+  /// reCAPTCHA Enterprise site key, the one the web app is registered with
+  /// under App Check > Apps in the console.
+  ///
+  /// Web-only and public by design — restricted by domain, like the Maps
+  /// browser key. Without it a release web build cannot mint an App Check
+  /// token, and `firestore.rules` then refuses every read.
+  final String recaptchaSiteKey;
+
+  /// A fixed App Check debug token for debug builds, registered once under
+  /// App Check > Apps > Manage debug tokens. Pass it with
+  /// `--dart-define=APP_CHECK_DEBUG_TOKEN=<uuid>`; never commit it, since it
+  /// lets any debug build through App Check on this project.
+  final String appCheckDebugToken;
   final bool useEmulators;
 
   /// Skips SMS app verification so the phone numbers registered under
@@ -110,6 +130,8 @@ class AppConfig {
     final missing = <String>[
       if (googleMapsApiKey.isEmpty) 'GOOGLE_MAPS_API_KEY',
       if (stripePublishableKey.isEmpty) 'STRIPE_PUBLISHABLE_KEY',
+      // Web is the only platform with no device attestation to fall back on.
+      if (kIsWeb && recaptchaSiteKey.isEmpty) 'RECAPTCHA_SITE_KEY',
       if (firebaseProjectId.endsWith('-dev')) 'FIREBASE_PROJECT_ID (points at dev)',
     ];
     if (missing.isNotEmpty) {

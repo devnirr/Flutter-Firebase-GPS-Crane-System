@@ -19,7 +19,12 @@ class RequestDraft {
     this.quoting = false,
     this.submitting = false,
     this.failure,
+    this.preferredTruck,
   });
+
+  /// The truck picked on the home map with "Pedir esta grúa", offered the job
+  /// first. Null for an ordinary request.
+  final PreferredTruck? preferredTruck;
 
   final ServiceLocation? pickup;
   final ServiceLocation? dropoff;
@@ -64,8 +69,12 @@ class RequestDraft {
     bool? submitting,
     Failure? failure,
     bool clearFailure = false,
+    PreferredTruck? preferredTruck,
+    bool clearPreferredTruck = false,
   }) {
     return RequestDraft(
+      preferredTruck:
+          clearPreferredTruck ? null : (preferredTruck ?? this.preferredTruck),
       pickup: pickup ?? this.pickup,
       dropoff: dropoff ?? this.dropoff,
       vehicle: vehicle ?? this.vehicle,
@@ -80,6 +89,15 @@ class RequestDraft {
       failure: clearFailure ? null : (failure ?? this.failure),
     );
   }
+}
+
+/// A truck chosen on the map: its sealed handle, and what the customer saw.
+class PreferredTruck {
+  const PreferredTruck({required this.ref, required this.truckType});
+
+  /// [NearbyTruck.ref], sent back as `preferredTruckRef`.
+  final String ref;
+  final TruckType truckType;
 }
 
 class RequestController extends Notifier<RequestDraft> {
@@ -114,6 +132,12 @@ class RequestController extends Notifier<RequestDraft> {
   void setTruckType(TruckType? value) => state = value == null
       ? state.copyWith(clearTruckTypeOverride: true, clearQuote: true)
       : state.copyWith(truckTypeOverride: value, clearQuote: true);
+
+  /// Sets or clears the truck to offer first. Opening the form without one
+  /// clears it, so an old choice never rides along on a plain request.
+  void setPreferredTruck(PreferredTruck? value) => state = value == null
+      ? state.copyWith(clearPreferredTruck: true)
+      : state.copyWith(preferredTruck: value);
 
   void setPaymentMethod(PaymentMethod value) =>
       state = state.copyWith(paymentMethod: value);
@@ -175,13 +199,15 @@ class RequestController extends Notifier<RequestDraft> {
           quoteSignature: quote.signature,
           quoteExpiresAt: quote.expiresAt,
           notes: state.notes.isEmpty ? null : state.notes,
+          preferredTruckRef: state.preferredTruck?.ref,
         );
 
     // Awaited above; fold is synchronous here.
     // ignore: async_return_with_no_await
     return result.fold(
       (serviceId) {
-        state = state.copyWith(submitting: false);
+        // Spent: the next request starts from the map again.
+        state = state.copyWith(submitting: false, clearPreferredTruck: true);
         return serviceId;
       },
       (failure) {

@@ -19,7 +19,10 @@ import 'request_controller.dart';
 /// then where — a stranded customer can answer the first three from memory, and
 /// the address is the one that needs them to look around.
 class RequestScreen extends ConsumerStatefulWidget {
-  const RequestScreen({super.key});
+  const RequestScreen({this.preferredTruck, super.key});
+
+  /// Set when the form was opened from "Pedir esta grúa" on the home map.
+  final PreferredTruck? preferredTruck;
 
   @override
   ConsumerState<RequestScreen> createState() => _RequestScreenState();
@@ -41,6 +44,14 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
     final draft = ref.read(requestControllerProvider);
     _pickup.text = draft.pickup?.address ?? '';
     _reference.text = draft.pickup?.reference ?? '';
+    // After the first frame: a provider may not be changed mid-build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref
+            .read(requestControllerProvider.notifier)
+            .setPreferredTruck(widget.preferredTruck);
+      }
+    });
   }
 
   @override
@@ -218,6 +229,16 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                     Insets.xxxl,
                   ),
                   children: [
+                    if (draft.preferredTruck case final chosen?) ...[
+                      _PreferredTruckNotice(
+                        chosen: chosen,
+                        needed: draft.truckType,
+                        onRemove: () => ref
+                            .read(requestControllerProvider.notifier)
+                            .setPreferredTruck(null),
+                      ),
+                      const SizedBox(height: Insets.lg),
+                    ],
                     Text('Detalles del vehículo', style: text.headlineSmall),
                     const SizedBox(height: Insets.lg),
                     _VehicleTypePicker(
@@ -708,6 +729,37 @@ class _LocationField extends StatelessWidget {
 /// Two options, both one tap. Somebody standing next to a broken car in
 /// traffic is not going to work through a menu, and the camera comes first
 /// because photographing the car in front of them is the common case.
+/// Says the chosen truck gets the job first, and when it cannot: a vehicle
+/// that needs a different kind of grúa than the one picked.
+class _PreferredTruckNotice extends StatelessWidget {
+  const _PreferredTruckNotice({
+    required this.chosen,
+    required this.needed,
+    required this.onRemove,
+  });
+
+  final PreferredTruck chosen;
+  final TruckType needed;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final fits = chosen.truckType == needed;
+    return InlineNotice(
+      key: const Key('preferred-truck-notice'),
+      icon: fits ? Icons.local_shipping_outlined : Icons.info_outline,
+      tone: fits ? NoticeTone.success : NoticeTone.warning,
+      message: fits
+          ? 'Le ofreceremos primero tu servicio a la grúa que elegiste en el '
+              'mapa (${chosen.truckType.label}). Si no acepta, buscamos otra.'
+          : 'Elegiste una grúa ${chosen.truckType.label}, pero tu vehículo '
+              'necesita ${needed.label}. Buscaremos la grúa adecuada más cercana.',
+      actionLabel: 'Quitar',
+      onAction: onRemove,
+    );
+  }
+}
+
 class _PhotoSourceSheet extends StatelessWidget {
   const _PhotoSourceSheet();
 

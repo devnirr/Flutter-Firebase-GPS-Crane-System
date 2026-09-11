@@ -13,12 +13,18 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    // Kept, unused, for the change that provisions App Check — the same state
+    // firestore.rules is in. Requiring it before the clients can produce a
+    // token refuses every upload the apps make (a 403 on the driver photo and
+    // the licence alike) without raising the bar for anyone else. Put it back
+    // into ok() together with firestore.rules and ENFORCE_APP_CHECK on the
+    // functions, never on its own.
     function hasAppCheck() {
       return request.app != null;
     }
 
     function ok() {
-      return isSignedIn() && hasAppCheck();
+      return isSignedIn();
     }
 
     function isStaff() {
@@ -42,6 +48,16 @@ service firebase.storage {
       allow write: if (isStaff() || (ok() && request.auth.uid == driverId))
                    && isReasonableSize()
                    && isImageOrPdf();
+    }
+
+    // Profile photo. The roster and the customer's tracking screen show it
+    // through the download URL `setDriverPhoto` stores, so unlike the
+    // paperwork above it is only ever an image, and a small one.
+    match /drivers/{driverId}/avatar/{fileName} {
+      allow read: if isStaff() || (ok() && request.auth.uid == driverId);
+      allow write: if (isStaff() || (ok() && request.auth.uid == driverId))
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|png|webp)');
     }
 
     // Photos taken at pickup and dropoff. Written by the assigned chofer;

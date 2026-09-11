@@ -1,33 +1,39 @@
 import { getAuth } from 'firebase-admin/auth';
+import { getDownloadURL, getStorage } from 'firebase-admin/storage';
 import { onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
 import {
   AssignmentMode,
+  DocumentReviewState,
+  DriverDocumentType,
   DriverLiveState,
   DriverStatus,
   ServiceEventName,
+  TruckType,
   UserRole,
 } from '../lib/enums.js';
 import { Code, invalidArgument, permissionDenied, precondition } from '../lib/errors.js';
 import { FieldValue, Paths, db } from '../lib/firestore.js';
-import { requireAdmin, requireAuth, requireStaff } from '../lib/guards.js';
+import { requireAdmin, requireAppCheck, requireAuth, requireStaff } from '../lib/guards.js';
 import { notify } from '../lib/push.js';
 import { applyTransition } from '../lib/stateMachine.js';
 import { region } from './region.js';
 
 /**
- * Everything the office does.
+ * Everything the office does, plus the one door a chofer opens themselves.
  *
- * Choferes cannot self-register: an account created from a phone is an account
- * that can work without documents on file, insurance the company has not seen,
- * and a truck nobody has inspected. So account creation is here, behind an
- * admin claim, and every mutation writes an audit entry naming who did it.
+ * A chofer can ask for an account from the driver app (`registerDriver`), but
+ * asking is all it does. An account created from a phone must never be able to
+ * work without documents on file, insurance the company has not seen, or a
+ * truck nobody has inspected — so every account, whoever opened it, starts
+ * `inactive`, and only an admin clears it. Every mutation writes an audit entry
+ * naming who did it.
  */
 
-/** Records who changed what. Nothing in this file writes without one. */
-async function audit(
+/** Records who changed what. Nothing the office does writes without one. */
+export async function audit(
   actorId: string,
   action: string,
   target: string,
@@ -59,6 +65,38 @@ function isValidCedula(raw: string): boolean {
   return check === Number(digits[10]);
 }
 
+// RNC is 9 digits for a company, 11 for a persona física trading as one.
+const rncSchema = z
+  .string()
+  .max(20)
+  .default('')
+  .refine((v) => v === '' || /^\d{9}$|^\d{11}$/.test(v.replace(/\D/g, '')), {
+    message: 'RNC inválido',
+  });
+
+/**
+ * The fields every new chofer starts with, however the account was opened.
+ *
+ * Spread last into the record so no call site can open an account that is
+ * already cleared to work.
+ */
+function newDriverDefaults() {
+  return {
+    status: DriverStatus.inactive,
+    isOnline: false,
+    rating: 4.8,
+    ratingCount: 0,
+    completedServices: 0,
+    offersSent: 0,
+    offersAccepted: 0,
+    cancellations: 0,
+    cashOwedCents: 0,
+    archived: false,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+}
+
 const createDriverInput = z.object({
   name: z.string().min(3).max(120),
   cedula: z.string().min(11).max(20),
@@ -67,6 +105,11 @@ const createDriverInput = z.object({
   licenseNumber: z.string().max(40).default(''),
   licenseExpiry: z.string().datetime().nullish(),
   truckId: z.string().max(64).nullish(),
+  // Coverage zones are a dispatch hint, not a restriction: an empty list means
+  // the chofer is offered work anywhere the company covers.
+  zones: z.array(z.string().max(60)).max(20).default([]),
+  companyName: z.string().max(120).default(''),
+  rnc: rncSchema,
   initialPassword: z.string().min(8).max(128).nullish(),
 });
 
@@ -126,24 +169,18 @@ export const createDriver = onCall({ region, cors: true }, async (request) => {
     email: input.email,
     licenseNumber: input.licenseNumber,
     licenseExpiry: input.licenseExpiry ? new Date(input.licenseExpiry) : null,
-    status: DriverStatus.inactive,
     statusReason: 'Documentos pendientes de verificación',
     assignedTruckId: input.truckId ?? null,
     assignedTruckPlate: (truck?.data()?.['plate'] as string | undefined) ?? '',
-    truckType: (truck?.data()?.['type'] as string | undefined) ?? '',
-    isOnline: false,
-    rating: 4.8,
-    ratingCount: 0,
-    completedServices: 0,
-    offersSent: 0,
-    offersAccepted: 0,
-    cancellations: 0,
-    cashOwedCents: 0,
+    // Never '': the apps decode this field as an enum, and a chofer with no
+    // grúa yet is exactly the case that has no type to write.
+    truckType: (truck?.data()?.['type'] as string | undefined) || 'unknown',
+    zones: input.zones,
+    companyName: input.companyName,
+    rnc: input.rnc.replace(/\D/g, ''),
     mustChangePassword: true,
-    archived: false,
     createdBy: caller.uid,
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
+    ...newDriverDefaults(),
   });
 
   if (input.truckId) {
@@ -160,6 +197,249 @@ export const createDriver = onCall({ region, cors: true }, async (request) => {
   // Returned once and never again: the office reads it to the chofer, and the
   // account forces a change on first sign-in.
   return { driverId: user.uid, temporaryPassword: password };
+});
+
+const registerDriverInput = z.object({
+  name: z.string().trim().min(3).max(120),
+  cedula: z.string().min(11).max(20),
+  phone: z.string().regex(/^\+1(809|829|849)\d{7}$/),
+  email: z.string().trim().email().max(200),
+  password: z.string().min(8).max(128),
+  licenseNumber: z.string().trim().min(1).max(40),
+  licenseExpiry: z.string().datetime(),
+  companyName: z.string().trim().max(120).default(''),
+  rnc: rncSchema,
+});
+
+/** What Auth refuses on sign-up, in words a chofer can act on. */
+const signUpRefusals: Record<string, string> = {
+  'auth/email-already-exists': 'Ya existe una cuenta con ese correo.',
+  'auth/phone-number-already-exists': 'Ese teléfono ya tiene una cuenta.',
+  'auth/invalid-password': 'La contraseña debe tener al menos 8 caracteres.',
+  'auth/invalid-email': 'Ese correo no es válido.',
+};
+
+/**
+ * A chofer asks for an account from the driver app.
+ *
+ * Unauthenticated by necessity — the caller has no account yet — so it grants
+ * nothing a stranger should not have: the account lands `inactive`, with no
+ * grúa and no zones, and cannot take a single offer until an admin has
+ * verified the documents and activated it with `setDriverStatus`. It is the
+ * record `createDriver` writes, marked `selfRegistered` so the office can tell
+ * a request from an account it opened itself.
+ */
+export const registerDriver = onCall({ region, cors: true }, async (request) => {
+  requireAppCheck(request);
+
+  const parsed = registerDriverInput.safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Revisa los datos del registro.');
+  const input = parsed.data;
+
+  if (!isValidCedula(input.cedula)) {
+    throw invalidArgument('La cédula no es válida.');
+  }
+
+  const licenseExpiry = new Date(input.licenseExpiry);
+  if (licenseExpiry.getTime() <= Date.now()) {
+    throw invalidArgument('Tu licencia está vencida.');
+  }
+
+  const cedula = input.cedula.replace(/\D/g, '');
+
+  const duplicate = await Paths.drivers().where('cedula', '==', cedula).limit(1).get();
+  if (!duplicate.empty) {
+    // No driverId in the details: unlike the office, a stranger is not owed
+    // the id of somebody else's account.
+    throw precondition(
+      Code.invalidInput,
+      'Ya existe un chofer con esa cédula. Comunícate con la oficina.',
+    );
+  }
+
+  let uid: string;
+  try {
+    const user = await getAuth().createUser({
+      email: input.email,
+      password: input.password,
+      displayName: input.name,
+      phoneNumber: input.phone,
+    });
+    uid = user.uid;
+  } catch (error) {
+    const message = signUpRefusals[(error as { code?: string }).code ?? ''];
+    if (message) throw precondition(Code.invalidInput, message);
+    throw error;
+  }
+
+  try {
+    // Claim before document, as in createDriver: the token must never say
+    // "driver" with nothing behind it to read.
+    await getAuth().setCustomUserClaims(uid, {
+      role: UserRole.driver,
+      driverId: uid,
+    });
+
+    await Paths.driver(uid).set({
+      name: input.name,
+      cedula,
+      phone: input.phone,
+      email: input.email,
+      licenseNumber: input.licenseNumber,
+      licenseExpiry,
+      statusReason: 'Registro desde la app: documentos pendientes de verificación',
+      assignedTruckId: null,
+      assignedTruckPlate: '',
+      truckType: 'unknown',
+      zones: [],
+      companyName: input.companyName,
+      rnc: input.rnc.replace(/\D/g, ''),
+      // The chofer chose this password; there is no temporary one to replace.
+      mustChangePassword: false,
+      selfRegistered: true,
+      createdBy: uid,
+      ...newDriverDefaults(),
+    });
+  } catch (error) {
+    // An Auth user with no driver record can sign in to nothing and holds the
+    // email hostage from a retry, so it does not outlive the failure.
+    await getAuth()
+      .deleteUser(uid)
+      .catch(() => undefined);
+    throw error;
+  }
+
+  await audit(uid, 'registerDriver', uid, { email: input.email });
+  logger.info('driver.selfRegistered', { driverId: uid });
+
+  return { driverId: uid };
+});
+
+const attachDocumentInput = z.object({
+  driverId: z.string().min(1).max(64),
+  type: z.nativeEnum(DriverDocumentType),
+  storagePath: z.string().min(1).max(500),
+  fileName: z.string().max(200).default(''),
+  contentType: z.string().max(100).default(''),
+  sizeBytes: z.number().int().nonnegative().max(10 * 1024 * 1024).default(0),
+  expiresAt: z.string().datetime().nullish(),
+});
+
+/**
+ * Records a document uploaded for a chofer — by the office for anyone, or by a
+ * chofer for their own record, which is how a registration's licence arrives.
+ *
+ * The upload itself goes straight to Storage — a 10 MB scan has no business
+ * travelling through a callable — but the record does not, because everything
+ * under `drivers/` is server-written. Until this runs, the file is an orphan in
+ * the bucket that no review screen will ever list.
+ *
+ * The record always lands `pending`: uploading a licence is not the same as
+ * somebody having looked at it, and only the second one lets a grúa work.
+ */
+export const attachDriverDocument = onCall({ region, cors: true }, async (request) => {
+  const parsed = attachDocumentInput.safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Datos del documento inválidos.');
+
+  const caller = requireAuth(request);
+  const input = parsed.data;
+
+  const isStaff = caller.role === UserRole.admin || caller.role === UserRole.ops;
+  const isOwnRecord =
+    caller.role === UserRole.driver && caller.uid === input.driverId;
+  if (!isStaff && !isOwnRecord) throw permissionDenied();
+
+  // The path is what the security rules key on, so a record pointing somewhere
+  // else would hand a reviewer a file the rules never vetted.
+  const expectedPrefix = `drivers/${input.driverId}/docs/`;
+  if (!input.storagePath.startsWith(expectedPrefix)) {
+    throw invalidArgument('La ruta del archivo no corresponde a este chofer.');
+  }
+
+  const snap = await Paths.driver(input.driverId).get();
+  if (!snap.exists) throw precondition(Code.notFound, 'Chofer no encontrado.');
+
+  await Paths.driverDocuments(input.driverId).doc(input.type).set({
+    type: input.type,
+    storagePath: input.storagePath,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    sizeBytes: input.sizeBytes,
+    state: DocumentReviewState.pending,
+    rejectionReason: '',
+    uploadedBy: caller.uid,
+    reviewedBy: '',
+    uploadedAt: FieldValue.serverTimestamp(),
+    reviewedAt: null,
+    expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+  });
+
+  await audit(caller.uid, 'attachDriverDocument', input.driverId, {
+    type: input.type,
+  });
+
+  return { ok: true };
+});
+
+const setPhotoInput = z.object({
+  driverId: z.string().min(1).max(64),
+  storagePath: z.string().min(1).max(500),
+});
+
+/**
+ * Points a chofer's `photoUrl` at a profile photo already uploaded to their
+ * avatar folder — by the office for anyone, or by a chofer for themselves.
+ *
+ * The URL is minted here from the object rather than taken from the client, so
+ * `photoUrl` can only ever name a file the Storage rules vetted as a small
+ * image in this chofer's own folder. Earlier photos are deleted: nothing links
+ * to them once this lands, and a face is not something to keep unasked.
+ */
+export const setDriverPhoto = onCall({ region, cors: true }, async (request) => {
+  const parsed = setPhotoInput.safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Datos de la foto inválidos.');
+
+  const caller = requireAuth(request);
+  const input = parsed.data;
+
+  const isStaff = caller.role === UserRole.admin || caller.role === UserRole.ops;
+  const isOwnRecord =
+    caller.role === UserRole.driver && caller.uid === input.driverId;
+  if (!isStaff && !isOwnRecord) throw permissionDenied();
+
+  const folder = `drivers/${input.driverId}/avatar/`;
+  if (!input.storagePath.startsWith(folder) || input.storagePath.includes('..')) {
+    throw invalidArgument('La ruta de la foto no corresponde a este chofer.');
+  }
+
+  const driverRef = Paths.driver(input.driverId);
+  const snap = await driverRef.get();
+  if (!snap.exists) throw precondition(Code.notFound, 'Chofer no encontrado.');
+
+  const bucket = getStorage().bucket();
+  const file = bucket.file(input.storagePath);
+  const [exists] = await file.exists();
+  if (!exists) throw precondition(Code.notFound, 'La foto no se encontró.');
+
+  const [metadata] = await file.getMetadata();
+  if (!/^image\/(jpeg|png|webp)$/.test(String(metadata.contentType ?? ''))) {
+    throw invalidArgument('La foto debe ser JPG, PNG o WEBP.');
+  }
+
+  const photoUrl = await getDownloadURL(file);
+  await driverRef.update({ photoUrl, updatedAt: FieldValue.serverTimestamp() });
+
+  const [previous] = await bucket.getFiles({ prefix: folder });
+  await Promise.all(
+    previous
+      .filter((f) => f.name !== input.storagePath)
+      .map((f) => f.delete().catch(() => undefined)),
+  );
+
+  await audit(caller.uid, 'setDriverPhoto', input.driverId);
+  logger.info('driver.photoSet', { driverId: input.driverId });
+
+  return { photoUrl };
 });
 
 /**
@@ -185,6 +465,11 @@ export const setDriverStatus = onCall({ region, cors: true }, async (request) =>
   const snap = await Paths.driver(driverId).get();
   const driver = snap.data();
   if (!driver) throw precondition(Code.notFound, 'Chofer no encontrado.');
+  // An archived chofer's Auth account is disabled; activating the record would
+  // put a name on the roster that can never sign in.
+  if (driver['archived'] === true) {
+    throw precondition(Code.notFound, 'Este chofer fue eliminado.');
+  }
 
   // Deactivating somebody mid-tow would strand a loaded vehicle.
   const busyWith = driver['currentServiceId'] as string | undefined;
@@ -209,6 +494,208 @@ export const setDriverStatus = onCall({ region, cors: true }, async (request) =>
   }
 
   await audit(caller.uid, 'setDriverStatus', driverId, { status, reason });
+  logger.info('driver.statusSet', { driverId, status, by: caller.uid });
+  return { ok: true };
+});
+
+const updateDriverInput = z.object({
+  driverId: z.string().min(1).max(64),
+  name: z.string().trim().min(3).max(120),
+  phone: z.string().min(10).max(20),
+  email: z.string().trim().email().max(200),
+  licenseNumber: z.string().trim().max(40).default(''),
+  licenseExpiry: z.string().datetime().nullish(),
+  truckId: z.string().max(64).nullish(),
+  zones: z.array(z.string().max(60)).max(20).default([]),
+  companyName: z.string().trim().max(120).default(''),
+  rnc: rncSchema,
+});
+
+/**
+ * Saves the office's edits to a chofer.
+ *
+ * The cédula is not editable: it is who the chofer is, and the duplicate check
+ * keys on it. Changing the grúa moves the assignment off the old truck and
+ * onto the new one in the same batch, and is refused mid-tow — the customer's
+ * screen would otherwise show a plate that is not the one arriving.
+ */
+export const updateDriver = onCall({ region, cors: true }, async (request) => {
+  const parsed = updateDriverInput.safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Revisa los datos del chofer.');
+
+  const caller = requireAdmin(request);
+  const input = parsed.data;
+
+  const driverRef = Paths.driver(input.driverId);
+  const driver = (await driverRef.get()).data();
+  if (!driver || driver['archived'] === true) {
+    throw precondition(Code.notFound, 'Chofer no encontrado.');
+  }
+
+  const previousTruckId =
+    (driver['assignedTruckId'] as string | null | undefined) ?? null;
+  const nextTruckId = input.truckId ?? null;
+  const truckChanged = previousTruckId !== nextTruckId;
+
+  const busyWith = driver['currentServiceId'] as string | undefined;
+  if (truckChanged && busyWith) {
+    throw precondition(
+      Code.driverBusy,
+      'Este chofer tiene un servicio en curso. Cambia la grúa cuando termine.',
+      { serviceId: busyWith },
+    );
+  }
+
+  let nextTruck: Record<string, unknown> | undefined;
+  if (nextTruckId) {
+    nextTruck = (await Paths.truck(nextTruckId).get()).data();
+    if (!nextTruck) throw precondition(Code.notFound, 'Grúa no encontrada.');
+    const holder = nextTruck['assignedDriverId'] as string | null | undefined;
+    if (truckChanged && holder && holder !== input.driverId) {
+      throw precondition(Code.invalidInput, 'Esa grúa ya está asignada a otro chofer.');
+    }
+  }
+
+  // Auth first: it is the write that can refuse (an email already taken), and
+  // nothing has been written yet when it does.
+  try {
+    await getAuth().updateUser(input.driverId, {
+      email: input.email,
+      displayName: input.name,
+      ...(input.phone.startsWith('+') ? { phoneNumber: input.phone } : {}),
+    });
+  } catch (error) {
+    const code = (error as { code?: string }).code ?? '';
+    // A record with no Auth user behind it (an import, a seed) still takes
+    // its edits; there is simply no credential to keep in step.
+    if (code !== 'auth/user-not-found') {
+      const message = signUpRefusals[code];
+      if (message) throw precondition(Code.invalidInput, message);
+      throw error;
+    }
+  }
+
+  const now = FieldValue.serverTimestamp();
+  const batch = db.batch();
+  batch.update(driverRef, {
+    name: input.name,
+    phone: input.phone,
+    email: input.email,
+    licenseNumber: input.licenseNumber,
+    licenseExpiry: input.licenseExpiry ? new Date(input.licenseExpiry) : null,
+    zones: input.zones,
+    companyName: input.companyName,
+    rnc: input.rnc.replace(/\D/g, ''),
+    ...(truckChanged
+      ? {
+          assignedTruckId: nextTruckId,
+          assignedTruckPlate: (nextTruck?.['plate'] as string | undefined) ?? '',
+          truckType: (nextTruck?.['type'] as string | undefined) || 'unknown',
+        }
+      : {}),
+    // No grúa, no going online: taken offline rather than left dispatchable
+    // with nothing to drive.
+    ...(truckChanged && !nextTruckId ? { isOnline: false } : {}),
+    updatedAt: now,
+  });
+  if (truckChanged && previousTruckId) {
+    batch.update(Paths.truck(previousTruckId), {
+      assignedDriverId: null,
+      assignedDriverName: '',
+      updatedAt: now,
+    });
+  }
+  if (nextTruckId) {
+    // Also when the grúa did not change, so a renamed chofer is renamed on it.
+    batch.update(Paths.truck(nextTruckId), {
+      assignedDriverId: input.driverId,
+      assignedDriverName: input.name,
+      updatedAt: now,
+    });
+  }
+  await batch.commit();
+
+  if (truckChanged && !nextTruckId) {
+    await Paths.live(input.driverId)
+      .update({ isOnline: false, updatedAt: Date.now() })
+      .catch(() => undefined);
+  }
+
+  await audit(caller.uid, 'updateDriver', input.driverId, {
+    email: input.email,
+    truckChanged,
+  });
+  return { ok: true };
+});
+
+/**
+ * "Deletes" a chofer: archives the record and disables the account.
+ *
+ * Nothing is erased. Services, earnings and the audit trail all name this
+ * chofer, and a history with holes in it answers nobody's questions. The
+ * roster hides archived choferes, dispatch already skips them, and a disabled
+ * Auth user can neither sign in nor refresh a token. Refused mid-tow, like a
+ * deactivation.
+ */
+export const archiveDriver = onCall({ region, cors: true }, async (request) => {
+  const parsed = z
+    .object({ driverId: z.string().min(1).max(64) })
+    .safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Datos inválidos.');
+
+  const caller = requireAdmin(request);
+  const { driverId } = parsed.data;
+
+  const driverRef = Paths.driver(driverId);
+  const driver = (await driverRef.get()).data();
+  if (!driver) throw precondition(Code.notFound, 'Chofer no encontrado.');
+  if (driver['archived'] === true) return { ok: true };
+
+  const busyWith = driver['currentServiceId'] as string | undefined;
+  if (busyWith) {
+    throw precondition(
+      Code.driverBusy,
+      'Este chofer tiene un servicio en curso. Elimínalo cuando termine.',
+      { serviceId: busyWith },
+    );
+  }
+
+  const truckId = driver['assignedTruckId'] as string | null | undefined;
+  const now = FieldValue.serverTimestamp();
+  const batch = db.batch();
+  batch.update(driverRef, {
+    archived: true,
+    archivedAt: now,
+    archivedBy: caller.uid,
+    status: DriverStatus.inactive,
+    statusReason: 'Eliminado por la oficina',
+    isOnline: false,
+    assignedTruckId: null,
+    assignedTruckPlate: '',
+    truckType: 'unknown',
+    updatedAt: now,
+  });
+  if (truckId) {
+    // The grúa goes back to the pool for the next chofer.
+    batch.update(Paths.truck(truckId), {
+      assignedDriverId: null,
+      assignedDriverName: '',
+      updatedAt: now,
+    });
+  }
+  await batch.commit();
+
+  // Off the live map at once rather than after the stale-position sweep.
+  await Paths.live(driverId).remove().catch(() => undefined);
+  await getAuth()
+    .updateUser(driverId, { disabled: true })
+    .catch((error: unknown) => {
+      if ((error as { code?: string }).code !== 'auth/user-not-found') throw error;
+    });
+  await getAuth().revokeRefreshTokens(driverId).catch(() => undefined);
+
+  await audit(caller.uid, 'archiveDriver', driverId);
+  logger.info('driver.archived', { driverId, by: caller.uid });
   return { ok: true };
 });
 

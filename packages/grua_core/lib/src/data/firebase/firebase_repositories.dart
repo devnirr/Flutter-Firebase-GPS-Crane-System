@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
-import 'package:firebase_database/firebase_database.dart';
+// Firestore's `Query` is the one named in this file; RTDB's is only chained.
+import 'package:firebase_database/firebase_database.dart' hide Query;
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../domain/enums.dart';
@@ -84,6 +86,13 @@ Failure _mapError(Object error) {
   if (error is FirebaseException) {
     return switch (error.code) {
       'permission-denied' => const Failure(FailureCode.permissionDenied),
+      // Storage's word for the same refusal. Every storage.rules match needs
+      // an App Check token as well as a sign-in, so in a debug build this is
+      // almost always an unregistered debug token.
+      'unauthorized' => const Failure(
+          FailureCode.permissionDenied,
+          message: 'El almacenamiento rechazó el archivo (permiso denegado).',
+        ),
       'unauthenticated' => const Failure(FailureCode.unauthenticated),
       'not-found' => const Failure(FailureCode.notFound),
       'unavailable' || 'deadline-exceeded' => const Failure(FailureCode.network),
@@ -102,6 +111,21 @@ Future<Result<T>> _guard<T>(Future<T> Function() action) async {
   } on Object catch (error) {
     return Result.err(_mapError(error));
   }
+}
+
+extension _GuardedStream<T> on Stream<T> {
+  /// Re-raises snapshot errors as [Failure]s.
+  ///
+  /// A listener that gets refused emits a raw `FirebaseException`, which no
+  /// screen knows how to render — so a denied read arrived at the UI as an
+  /// opaque object and every screen treated it as "no data yet". Mapping it
+  /// here means a stream fails in the same vocabulary as a one-shot call.
+  Stream<T> guarded() => handleError(
+        (Object error) => throw _mapError(error),
+        // Already a Failure: a second pass would bury the original code under
+        // FailureCode.unknown.
+        test: (error) => error is! Failure,
+      );
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +227,7 @@ class FirestoreUserRepository implements UserRepository {
 
   @override
   Stream<AppUser?> watchUser(String uid) =>
-      Paths.user(uid).snapshots().map((snap) => snap.data());
+      Paths.user(uid).snapshots().map((snap) => snap.data()).guarded();
 
   @override
   Stream<List<AppUser>> watchAllClients({int limit = 500}) => Paths.users()
@@ -222,7 +246,8 @@ class FirestoreUserRepository implements UserRepository {
             .map((d) => d.data())
             .where((user) => user.role == UserRole.client)
             .toList(),
-      );
+      )
+      .guarded();
 
   @override
   Future<Result<AppUser>> fetchUser(String uid) => _guard(() async {
@@ -310,7 +335,7 @@ class FirebaseDriverRepository implements DriverRepository {
 
   @override
   Stream<Driver?> watchDriver(String uid) =>
-      Paths.driver(uid).snapshots().map((snap) => snap.data());
+      Paths.driver(uid).snapshots().map((snap) => snap.data()).guarded();
 
   @override
   Stream<List<Driver>> watchAllDrivers({DriverStatus? status}) {
@@ -338,30 +363,24 @@ class FirebaseDriverRepository implements DriverRepository {
           );
 
   @override
-  Future<void> publishLivePosition(DriverLivePosition position) =>
-      Paths.live(position.driverId).set(position.toJson()..remove('driverId'));
+  Future<void> publishLivePosition(DriverLivePosition position) {
+    final json = position.toJson()..remove('driverId');
 
-  @override
-  Future<Result<void>> setOnline(String uid, {required bool online}) =>
-      _guard(() async {
-        final ref = Paths.live(uid);
+    // A stationary phone may report heading and speed as NaN, and the SDK
+    // refuses the whole write over one non-finite number.
+    for (final key in const ['heading', 'speedKmh', 'accuracy']) {
+      final value = json[key];
+      if (value is double && !value.isFinite) json[key] = 0;
+    }
 
-        if (online) {
-          // Registered before the write, so a crashed app removes itself from
-          // dispatch without waiting for the stale-position sweep.
-          await ref.onDisconnect().update({
-            'isOnline': false,
-            'updatedAt': ServerValue.timestamp,
-          });
-        }
+    // The server's clock, not the phone's. Every staleness rule — dispatch,
+    // the customer's nearby search, the sweep — compares this with server
+    // time, and a phone two minutes slow would otherwise read as a truck that
+    // stopped reporting.
+    json['updatedAt'] = ServerValue.timestamp;
 
-        await ref.update({
-          'isOnline': online,
-          'updatedAt': ServerValue.timestamp,
-        });
-
-        if (!online) await ref.onDisconnect().cancel();
-      });
+    return Paths.live(position.driverId).set(json);
+  }
 
   @override
   Stream<List<DriverLivePosition>> watchLivePositions() =>
@@ -387,6 +406,127 @@ class FirebaseDriverRepository implements DriverRepository {
             })
             .whereType<DriverLivePosition>()
             .toList();
+      });
+
+  /// How long a presence write may wait for the server. RTDB queues writes
+  /// while offline and only completes them on reconnect, so an unbounded await
+  /// here would hold a sign-out hostage to the signal.
+  static const _presenceTimeout = Duration(seconds: 3);
+
+  static Map<String, Object> _presenceValue({required bool connected}) => {
+        'connected': connected,
+        'lastChanged': ServerValue.timestamp,
+      };
+
+  @override
+  Stream<void> holdAppPresence(String uid) {
+    final ref = Paths.presence(uid);
+    StreamSubscription<DatabaseEvent>? connection;
+    late final StreamController<void> controller;
+
+    controller = StreamController<void>(
+      onListen: () {
+        // `.info/connected` turns true again on every reconnect, and the
+        // server forgets an onDisconnect once it has fired, so both writes are
+        // redone each time rather than once at start-up.
+        connection = Paths.connectionState().onValue.listen(
+          (event) async {
+            if (event.snapshot.value != true) return;
+            try {
+              // Queued before the write: if the connection dies between the
+              // two, the node is never left saying connected.
+              await ref.onDisconnect().set(_presenceValue(connected: false));
+              await ref.set(_presenceValue(connected: true));
+            } on Object catch (error, stack) {
+              if (!controller.isClosed) controller.addError(error, stack);
+            }
+          },
+          onError: controller.addError,
+        );
+      },
+      onCancel: () async {
+        await connection?.cancel();
+        await clearAppPresence(uid);
+      },
+    );
+    return controller.stream;
+  }
+
+  @override
+  Future<void> clearAppPresence(String uid) async {
+    try {
+      // The queued onDisconnect is left in place: it writes the same value,
+      // and it still fires if this write never reaches the server.
+      await Paths.presence(uid)
+          .set(_presenceValue(connected: false))
+          .timeout(_presenceTimeout);
+    } on Object catch (error) {
+      // Already signed out, or no signal. Either way the onDisconnect queued
+      // by [holdAppPresence] clears the node when the connection closes.
+      debugPrint('Presence not cleared: $error');
+    }
+  }
+
+  @override
+  Stream<Set<String>> watchConnectedDriverIds() => Paths.presenceRoot()
+          .orderByChild('connected')
+          .equalTo(true)
+          .onValue
+          .map((event) {
+        final raw = event.snapshot.value;
+        if (raw is! Map) return const <String>{};
+        return raw.keys.map((key) => key.toString()).toSet();
+      });
+
+  @override
+  Future<Result<String>> uploadDocument({
+    required String driverId,
+    required DriverDocumentType type,
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) =>
+      _guard(() async {
+        final dot = fileName.lastIndexOf('.');
+        final ext = dot == -1 ? 'jpg' : fileName.substring(dot + 1).toLowerCase();
+        final path = Paths.driverDocPath(driverId, type, ext);
+
+        await FirebaseStorage.instance.ref(path).putData(
+              bytes,
+              SettableMetadata(
+                contentType: contentType,
+                // Kept so a reviewer downloading the file gets the name the
+                // office uploaded rather than the timestamped object key.
+                customMetadata: {'originalName': fileName},
+              ),
+            );
+        return path;
+      });
+
+  @override
+  Future<Result<String>> uploadDriverPhoto({
+    required String driverId,
+    required Uint8List bytes,
+    required String contentType,
+  }) =>
+      _guard(() async {
+        final ext = switch (contentType) {
+          'image/png' => 'png',
+          'image/webp' => 'webp',
+          _ => 'jpg',
+        };
+        final path = Paths.driverPhotoPath(driverId, ext);
+
+        await FirebaseStorage.instance.ref(path).putData(
+              bytes,
+              SettableMetadata(
+                contentType: contentType,
+                // Every upload is a new timestamped object, so a long cache
+                // can never serve a replaced face.
+                cacheControl: 'private, max-age=604800',
+              ),
+            );
+        return path;
       });
 }
 
@@ -470,6 +610,53 @@ class FirestoreServiceRepository implements ServiceRepository {
   @override
   Stream<ServiceTracking?> watchTracking(String serviceId) =>
       Paths.trackingFor(serviceId).snapshots().map((snap) => snap.data());
+
+  @override
+  Future<Result<PagedServices>> fetchServices({
+    Set<ServiceStatus>? statuses,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    Object? cursor,
+  }) =>
+      _guard(() async {
+        Query<Service> query = Paths.services();
+        if (statuses != null && statuses.isNotEmpty) {
+          query = query.where(
+            'status',
+            whereIn: statuses.map((s) => s.wire).toList(),
+          );
+        }
+        if (from != null) {
+          query = query.where(
+            'createdAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(from),
+          );
+        }
+        if (to != null) {
+          query = query.where('createdAt', isLessThan: Timestamp.fromDate(to));
+        }
+        query = query.orderBy('createdAt', descending: true).limit(limit);
+        if (cursor is DocumentSnapshot) {
+          query = query.startAfterDocument(cursor);
+        }
+
+        final snap = await query.get();
+        return PagedServices(
+          items: snap.docs.map((d) => d.data()).toList(),
+          cursor: snap.docs.isEmpty ? null : snap.docs.last,
+          hasMore: snap.docs.length == limit,
+        );
+      });
+
+  @override
+  Future<Result<Service?>> fetchServiceByCode(String code) => _guard(() async {
+        final snap = await Paths.services()
+            .where('code', isEqualTo: code.trim().toUpperCase())
+            .limit(1)
+            .get();
+        return snap.docs.isEmpty ? null : snap.docs.first.data();
+      });
 
   @override
   Future<Result<PagedServices>> fetchHistory({

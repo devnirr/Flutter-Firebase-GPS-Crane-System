@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import 'app_presence.dart';
+
 /// Shown when a chofer can sign in but cannot work.
 ///
 /// It names the actual reason rather than a generic denial, because the fix
@@ -15,7 +17,16 @@ class BlockedScreen extends ConsumerWidget {
     final driver = ref.watch(currentDriverProvider).value;
     final support = ref.watch(appSettingsProvider).value?.supportPhone ?? '';
 
+    // An account the chofer opened from the app is waiting on its first
+    // review, which is news rather than a problem to fix.
+    final selfRegistered = driver != null && driver.createdBy == driver.id;
+
     final (title, message) = switch (driver?.status) {
+      DriverStatus.inactive when selfRegistered => (
+          'Solicitud en revisión',
+          'Recibimos tu registro. La oficina verificará tus documentos y '
+              'activará tu cuenta. Si tienes dudas, llama a la oficina.',
+        ),
       DriverStatus.suspended => (
           'Cuenta suspendida',
           driver!.statusReason.isNotEmpty
@@ -56,7 +67,7 @@ class BlockedScreen extends ConsumerWidget {
                     ),
                   const SizedBox(height: Insets.md),
                   OutlinedButton(
-                    onPressed: () => ref.read(authRepositoryProvider).signOut(),
+                    onPressed: () => signOutDriver(ref),
                     child: const Text('Cerrar sesión'),
                   ),
                 ],

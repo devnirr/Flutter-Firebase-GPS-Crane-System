@@ -13,8 +13,10 @@ import 'package:intl/date_symbol_data_local.dart';
 Future<void> main() async {
   setUpAll(() => initializeDateFormatting('es_DO'));
 
-  Widget harness(DemoBackend backend) => ProviderScope(
+  Widget harness(DemoBackend backend, {MyFix? position}) => ProviderScope(
         overrides: [
+          if (position != null)
+            myPositionProvider.overrideWith((ref) => Stream.value(position)),
           appConfigProvider.overrideWithValue(
             const AppConfig(
               flavor: Flavor.dev,
@@ -59,6 +61,32 @@ Future<void> main() async {
     await tester.pumpAndSettle(const Duration(seconds: 1));
 
     expect(find.text('PEDIR GRÚA 24/7'), findsOneWidget);
+  });
+
+  testWidgets('the home map puts the customer where their phone says, as the '
+      'red drop', (tester) async {
+    const here = LatLng(18.4712, -69.9061);
+    await tester.pumpWidget(
+      harness(DemoBackend()..seed(), position: (position: here, heading: 0)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Entrar con Teléfono'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, '8095551234');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Enviar código'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    await tester.enterText(find.byType(TextField).first, '123456');
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    final map = tester.widget<GruaMap>(find.byType(GruaMap));
+    final mine = map.markers.where((m) => m.kind == MapMarkerKind.me);
+    expect(mine, hasLength(1));
+    expect(mine.single.position, here);
+    // The camera is on them, not on the default centre.
+    expect(map.center, here);
+    expect(find.byTooltip('Centrar en mi ubicación'), findsOneWidget);
   });
 
   testWidgets('registering carries the form answers onto the new profile',

@@ -105,10 +105,14 @@ class FieldLabel extends StatelessWidget {
 /// Status pill. Colour encodes urgency so a dispatcher can scan a list without
 /// reading it: red needs a human, amber is in flight, green is done.
 class StatusChip extends StatelessWidget {
-  const StatusChip(this.status, {this.compact = false, super.key});
+  const StatusChip(this.status, {this.compact = false, this.label, super.key});
 
   final ServiceStatus status;
   final bool compact;
+
+  /// Overrides the customer-facing [ServiceStatus.label], as the panel does
+  /// with [ServiceStatus.officeLabel]. The colour still follows [status].
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -120,7 +124,7 @@ class StatusChip extends StatelessWidget {
       ),
       decoration: BoxDecoration(color: bg, borderRadius: Corners.brSm),
       child: Text(
-        status.label,
+        label ?? status.label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(color: fg),
       ),
     );

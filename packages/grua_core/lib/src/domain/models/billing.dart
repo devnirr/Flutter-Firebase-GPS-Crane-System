@@ -39,6 +39,7 @@ abstract class Invoice with _$Invoice {
 
     /// Número de Comprobante Fiscal, e.g. `B0200000123`.
     @Default('') String ncf,
+    @JsonKey(unknownEnumValue: NcfType.unknown)
     @Default(NcfType.consumo) NcfType ncfType,
     @Default('') String clientName,
     @Default('') String clientRnc,
@@ -48,6 +49,7 @@ abstract class Invoice with _$Invoice {
     @CentsConverter() @Default(0) int itbisCents,
     @CentsConverter() @Default(0) int totalCents,
     @Default('DOP') String currency,
+    @JsonKey(unknownEnumValue: PaymentMethod.unknown)
     @Default(PaymentMethod.cash) PaymentMethod paymentMethod,
     @Default('') String pdfPath,
     @NullableTimestampConverter() DateTime? issuedAt,
@@ -84,6 +86,7 @@ abstract class EarningEntry with _$EarningEntry {
     @CentsConverter() @Default(0) int grossCents,
     @CentsConverter() @Default(0) int commissionCents,
     @CentsConverter() @Default(0) int netCents,
+    @JsonKey(unknownEnumValue: PaymentMethod.unknown)
     @Default(PaymentMethod.cash) PaymentMethod method,
     @Default('') String pickupAddress,
     @Default('') String dropoffAddress,

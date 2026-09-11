@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import 'truck_search.dart';
+import 'truck_search_widgets.dart';
 
 /// The customer's home.
 ///
@@ -11,41 +15,73 @@ import '../../router.dart';
 /// four things anyone comes here to do sits over it, and the request button
 /// owns the bottom. One decision per screen: somebody opening this app has just
 /// broken down, and the fastest path to a grúa is the only thing that matters.
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final user = ref.watch(currentUserProvider).value;
-    final live = ref.watch(liveDriverPositionsProvider).value ?? const [];
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
 
-    // Nearby trucks are shown as reassurance, not as something to pick from:
-    // dispatch chooses the chofer, and letting a customer aim at one would be
-    // a promise the cascade cannot keep.
-    final nearby = live
-        .where((p) => p.isOnline && p.state == DriverLiveState.idle)
-        .take(6)
-        .toList();
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  /// Bumped by the locate button to rebuild the map on a fresh camera after
+  /// the customer has panned away.
+  var _epoch = 0;
+
+  Future<void> _resolveLocation(LocationBlocker blocker) async {
+    final location = ref.read(locationServiceProvider);
+    switch (blocker) {
+      case LocationBlocker.serviceDisabled:
+        await location.openLocationSettings();
+      case LocationBlocker.deniedForever || LocationBlocker.needsAlways:
+        await location.openAppSettings();
+      case _:
+        await location.request();
+    }
+    ref.invalidate(locationBlockerProvider);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).value;
+
+    // The customer where their phone says they are — the red drop, as on the
+    // chofer's map. Until the first fix the map shows the default centre with
+    // nobody on it, rather than a pin pretending to be them.
+    final me = ref.watch(myPositionProvider).value;
+    final blocker = ref.watch(locationBlockerProvider).value;
+
+    // "Grúas cerca de ti". The trucks are reassurance, not something to pick
+    // from: dispatch chooses the chofer, and letting a customer aim at one
+    // would be a promise the cascade cannot keep.
+    final search = ref.watch(truckSearchProvider);
+    final radiusKm = ref.watch(truckSearchSettingsProvider).radiusKm;
+    final area = search.center == null
+        ? null
+        : MapCircle(center: search.center!, radiusMeters: radiusKm * 1000);
 
     return Scaffold(
       body: Stack(
         children: [
           Positioned.fill(
             child: GruaMap(
-              center: DoLocations.defaultCenter,
+              key: ValueKey(_epoch),
+              center: me?.position ?? DoLocations.defaultCenter,
               hasApiKey: ref.watch(hasMapsKeyProvider),
-              zoom: 13.4,
+              zoom: me == null ? 13.4 : 15,
+              // The camera frames the area searched, so every truck found is
+              // on screen however wide the radius.
+              circles: [?area],
+              fitTo: area?.extremes ?? const [],
               markers: [
-                const MapMarker(
-                  position: DoLocations.defaultCenter,
-                  kind: MapMarkerKind.user,
-                ),
-                for (final position in nearby)
+                for (final truck in search.results)
                   MapMarker(
-                    position: position.position,
+                    position: truck.position,
                     kind: MapMarkerKind.truckIdle,
-                    heading: position.heading,
+                    heading: truck.heading,
+                    onTap: () => unawaited(showNearbyTruckSheet(context, truck)),
                   ),
+                if (me != null)
+                  MapMarker(position: me.position, kind: MapMarkerKind.me, label: 'Tú'),
               ],
             ),
           ),
@@ -62,11 +98,45 @@ class HomeScreen extends ConsumerWidget {
                 const GruaLogo(size: 120),
                 const Spacer(),
                 Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    Insets.gutter,
+                    0,
+                    Insets.gutter,
+                    Insets.md,
+                  ),
+                  child: blocker != null && blocker.isBlocking
+                      ? InlineNotice(
+                          message: switch (blocker) {
+                            LocationBlocker.notRequested ||
+                            LocationBlocker.denied =>
+                              'Permite tu ubicación para verte en el mapa.',
+                            _ => blocker.message,
+                          },
+                          icon: Icons.location_off_outlined,
+                          actionLabel: blocker.actionLabel,
+                          onAction: () => _resolveLocation(blocker),
+                        )
+                      : Align(
+                          alignment: Alignment.centerRight,
+                          child: Material(
+                            color: BrandColors.white,
+                            shape: const CircleBorder(),
+                            elevation: 2,
+                            child: IconButton(
+                              tooltip: 'Centrar en mi ubicación',
+                              onPressed: me == null
+                                  ? null
+                                  : () => setState(() => _epoch++),
+                              icon: const Icon(Icons.my_location, size: 20),
+                            ),
+                          ),
+                        ),
+                ),
+                Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: Insets.gutter,
                   ),
                   child: _QuickMenu(
-                    availableTrucks: nearby.length,
                     onHistory: () => context.push(Routes.history),
                     onProfile: () => context.push(Routes.profile),
                   ),
@@ -138,37 +208,20 @@ class _TopBar extends StatelessWidget {
 /// The four-item list from the mockup, over the map.
 class _QuickMenu extends StatelessWidget {
   const _QuickMenu({
-    required this.availableTrucks,
     required this.onHistory,
     required this.onProfile,
   });
 
-  final int availableTrucks;
   final VoidCallback onHistory;
   final VoidCallback onProfile;
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-
     return FloatingCard(
       padding: const EdgeInsets.symmetric(vertical: Insets.sm),
       child: Column(
         children: [
-          _MenuRow(
-            icon: Icons.local_shipping_outlined,
-            label: 'Grúas cerca de ti',
-            trailing: Text(
-              availableTrucks == 0
-                  ? 'Buscando…'
-                  : '$availableTrucks disponible${availableTrucks == 1 ? '' : 's'}',
-              style: text.labelMedium?.copyWith(
-                color: availableTrucks == 0
-                    ? BrandColors.grey600
-                    : BrandColors.success,
-              ),
-            ),
-          ),
+          const NearbyTrucksRow(),
           const Divider(indent: Insets.huge, endIndent: Insets.lg),
           _MenuRow(
             icon: Icons.receipt_long_outlined,
@@ -197,13 +250,11 @@ class _MenuRow extends StatelessWidget {
   const _MenuRow({
     required this.icon,
     required this.label,
-    this.trailing,
     this.onTap,
   });
 
   final IconData icon;
   final String label;
-  final Widget? trailing;
   final VoidCallback? onTap;
 
   @override
@@ -212,10 +263,9 @@ class _MenuRow extends StatelessWidget {
       onTap: onTap,
       leading: Icon(icon, color: BrandColors.grey800),
       title: Text(label, style: Theme.of(context).textTheme.titleSmall),
-      trailing: trailing ??
-          (onTap == null
-              ? null
-              : const Icon(Icons.chevron_right, color: BrandColors.grey400)),
+      trailing: onTap == null
+          ? null
+          : const Icon(Icons.chevron_right, color: BrandColors.grey400),
       dense: true,
     );
   }

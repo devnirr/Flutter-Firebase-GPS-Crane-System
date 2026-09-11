@@ -13,17 +13,133 @@ class MapMarker {
     required this.kind,
     this.heading = 0,
     this.label,
+    this.id,
+    this.onTap,
   });
+
+  /// Makes the marker tappable. A marker with one shows no info window of its
+  /// own: the tap is the caller's to answer.
+  final VoidCallback? onTap;
 
   final LatLng position;
   final MapMarkerKind kind;
+
+  /// Keeps a marker the same marker as the list around it changes. Without
+  /// it the map matches markers by position in the list, and a truck that
+  /// takes the slot "Tú" had is shown with "Tú"'s info window.
+  final String? id;
 
   /// Degrees clockwise from north. Rotates the truck glyph.
   final double heading;
   final String? label;
 }
 
-enum MapMarkerKind { pickup, dropoff, truckIdle, truckOnService, truckStale, user }
+enum MapMarkerKind {
+  pickup,
+  dropoff,
+  truckIdle,
+  truckOnService,
+  truckStale,
+  user,
+
+  /// The person holding the phone, as a red drop: "you are here".
+  me,
+
+  /// The customer as the chofer sees them: a blue pin, so it cannot be
+  /// mistaken for the chofer's own red one.
+  customer;
+
+  /// Pins stand on their point; everything else is centred on it.
+  bool get isPin => switch (this) {
+        pickup || dropoff || me || customer => true,
+        _ => false,
+      };
+}
+
+/// One line to draw on a map: a leg of a trip.
+@immutable
+class MapRoute {
+  const MapRoute({
+    required this.points,
+    this.color = BrandColors.red,
+    this.dashed = false,
+  });
+
+  final List<LatLng> points;
+  final Color color;
+
+  /// Dashed reads as "not yet" or "approximate": the leg after the pickup, or
+  /// a straight line standing in for a road route.
+  final bool dashed;
+}
+
+/// A shaded circle on the ground, e.g. the area a search covers.
+@immutable
+class MapCircle {
+  const MapCircle({
+    required this.center,
+    required this.radiusMeters,
+    this.color = BrandColors.red,
+  });
+
+  final LatLng center;
+  final double radiusMeters;
+  final Color color;
+
+  /// North, south, east and west edges: what a camera must show to frame it.
+  List<LatLng> get extremes {
+    final dLat = radiusMeters / 111320;
+    final dLng = radiusMeters / (111320 * math.cos(center.latitude * math.pi / 180));
+    return [
+      LatLng(center.latitude + dLat, center.longitude),
+      LatLng(center.latitude - dLat, center.longitude),
+      LatLng(center.latitude, center.longitude + dLng),
+      LatLng(center.latitude, center.longitude - dLng),
+    ];
+  }
+}
+
+/// The centre and zoom that fit [points] into [size] with [padding] around
+/// them, in the same Web Mercator terms both maps use. Null when there is
+/// nothing to fit.
+({LatLng center, double zoom})? cameraFitting(
+  List<LatLng> points,
+  Size size, {
+  double padding = 48,
+  double maxZoom = 16,
+}) {
+  if (points.isEmpty || size.isEmpty) return null;
+  if (points.length == 1) return (center: points.first, zoom: maxZoom);
+
+  double x(double lng) => (lng + 180) / 360;
+  double y(double lat) {
+    final s = math.sin(lat * math.pi / 180).clamp(-0.9999, 0.9999);
+    return 0.5 - math.log((1 + s) / (1 - s)) / (4 * math.pi);
+  }
+
+  final xs = points.map((p) => x(p.longitude)).toList();
+  final ys = points.map((p) => y(p.latitude)).toList();
+  final minX = xs.reduce(math.min);
+  final maxX = xs.reduce(math.max);
+  final minY = ys.reduce(math.min);
+  final maxY = ys.reduce(math.max);
+
+  final lats = points.map((p) => p.latitude);
+  final lngs = points.map((p) => p.longitude);
+  final center = LatLng(
+    (lats.reduce(math.min) + lats.reduce(math.max)) / 2,
+    (lngs.reduce(math.min) + lngs.reduce(math.max)) / 2,
+  );
+
+  // World widths (at zoom 0 the world is 256 px) that still fit the box.
+  final width = math.max(size.width - padding * 2, 1);
+  final height = math.max(size.height - padding * 2, 1);
+  final spanX = math.max(maxX - minX, 1e-9);
+  final spanY = math.max(maxY - minY, 1e-9);
+  final zoom = math.log(math.min(width / spanX, height / spanY) / 256) / math.ln2;
+
+  return (center: center, zoom: zoom.clamp(3, maxZoom).toDouble());
+}
 
 /// A drawn stand-in for a real map.
 ///
@@ -43,9 +159,13 @@ class SchematicMap extends StatelessWidget {
     this.zoom = 14,
     this.markers = const [],
     this.route = const [],
+    this.routes = const [],
+    this.circles = const [],
     this.showAttribution = true,
     super.key,
   });
+
+  final List<MapCircle> circles;
 
   final LatLng center;
   final double zoom;
@@ -53,7 +173,34 @@ class SchematicMap extends StatelessWidget {
 
   /// Polyline drawn beneath the markers, e.g. pickup → dropoff.
   final List<LatLng> route;
+
+  /// Further legs, each in its own colour, drawn under [route].
+  final List<MapRoute> routes;
   final bool showAttribution;
+
+  /// The tappable marker nearest [local], if one is close enough to mean it.
+  MapMarker? _markerAt(Offset local, Size size) {
+    final painter = _SchematicMapPainter(
+      center: center,
+      zoom: zoom,
+      markers: markers,
+      routes: const [],
+      circles: const [],
+      textDirection: TextDirection.ltr,
+    );
+    MapMarker? best;
+    var bestDistance = 28.0; // a fingertip, in logical pixels
+    for (final marker in markers) {
+      if (marker.onTap == null) continue;
+      final at = painter._project(marker.position, size);
+      final distance = (at - local).distance;
+      if (distance < bestDistance) {
+        best = marker;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -66,12 +213,26 @@ class SchematicMap extends StatelessWidget {
               center: center,
               zoom: zoom,
               markers: markers,
-              route: route,
+              routes: [
+                ...routes,
+                if (route.length >= 2) MapRoute(points: route),
+              ],
+              circles: circles,
               textDirection: Directionality.of(context),
             ),
             isComplex: true,
             willChange: true,
           ),
+          // Over the painting, so taps reach it; translucent, so a tap that
+          // misses every marker still reaches whatever is underneath.
+          if (markers.any((m) => m.onTap != null))
+            LayoutBuilder(
+              builder: (context, constraints) => GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTapUp: (details) =>
+                    _markerAt(details.localPosition, constraints.biggest)?.onTap?.call(),
+              ),
+            ),
           if (showAttribution)
             Positioned(
               left: Insets.sm,
@@ -107,14 +268,16 @@ class _SchematicMapPainter extends CustomPainter {
     required this.center,
     required this.zoom,
     required this.markers,
-    required this.route,
+    required this.routes,
+    required this.circles,
     required this.textDirection,
   });
 
   final LatLng center;
   final double zoom;
   final List<MapMarker> markers;
-  final List<LatLng> route;
+  final List<MapRoute> routes;
+  final List<MapCircle> circles;
   final TextDirection textDirection;
 
   /// Web Mercator world size in pixels at this zoom, matching Google's 256-px
@@ -147,8 +310,32 @@ class _SchematicMapPainter extends CustomPainter {
     _paintBlocks(canvas, size, rng);
     _paintWater(canvas, size, rng);
     _paintStreets(canvas, size, rng);
+    _paintCircles(canvas, size);
     _paintRoute(canvas, size);
     _paintMarkers(canvas, size);
+  }
+
+  void _paintCircles(Canvas canvas, Size size) {
+    for (final circle in circles) {
+      // Web Mercator: a metre covers more pixels the further from the equator.
+      final metersPerPixel = math.cos(circle.center.latitude * math.pi / 180) *
+          2 *
+          math.pi *
+          6378137 /
+          _worldPx;
+      final radius = circle.radiusMeters / metersPerPixel;
+      final at = _project(circle.center, size);
+      canvas
+        ..drawCircle(at, radius, Paint()..color = circle.color.withValues(alpha: 0.08))
+        ..drawCircle(
+          at,
+          radius,
+          Paint()
+            ..color = circle.color.withValues(alpha: 0.45)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5,
+        );
+    }
   }
 
   void _paintBlocks(Canvas canvas, Size size, math.Random rng) {
@@ -250,36 +437,55 @@ class _SchematicMapPainter extends CustomPainter {
   }
 
   void _paintRoute(Canvas canvas, Size size) {
-    if (route.length < 2) return;
-    final path = Path();
-    for (var i = 0; i < route.length; i++) {
-      final point = _project(route[i], size);
-      if (i == 0) {
-        path.moveTo(point.dx, point.dy);
-      } else {
-        path.lineTo(point.dx, point.dy);
+    for (final route in routes) {
+      if (route.points.length < 2) continue;
+      var path = Path();
+      for (var i = 0; i < route.points.length; i++) {
+        final point = _project(route.points[i], size);
+        if (i == 0) {
+          path.moveTo(point.dx, point.dy);
+        } else {
+          path.lineTo(point.dx, point.dy);
+        }
+      }
+      if (route.dashed) path = _dashed(path);
+
+      // Casing first, so the line reads over both road and block fills.
+      canvas
+        ..drawPath(
+          path,
+          Paint()
+            ..color = BrandColors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 9
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        )
+        ..drawPath(
+          path,
+          Paint()
+            ..color = route.color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 5
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        );
+    }
+  }
+
+  static Path _dashed(Path source, {double dash = 14, double gap = 10}) {
+    final out = Path();
+    for (final metric in source.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        out.addPath(
+          metric.extractPath(distance, math.min(distance + dash, metric.length)),
+          Offset.zero,
+        );
+        distance += dash + gap;
       }
     }
-    // Casing first, so the line reads over both road and block fills.
-    canvas
-      ..drawPath(
-        path,
-        Paint()
-          ..color = BrandColors.white
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 9
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      )
-      ..drawPath(
-        path,
-        Paint()
-          ..color = BrandColors.red
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 5
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      );
+    return out;
   }
 
   void _paintMarkers(Canvas canvas, Size size) {
@@ -290,6 +496,14 @@ class _SchematicMapPainter extends CustomPainter {
           _pin(canvas, point, BrandColors.red);
         case MapMarkerKind.dropoff:
           _pin(canvas, point, BrandColors.ink);
+        case MapMarkerKind.customer:
+          _pin(canvas, point, BrandColors.info);
+        case MapMarkerKind.me:
+          canvas.drawOval(
+            Rect.fromCenter(center: point, width: 20, height: 7),
+            Paint()..color = BrandColors.red.withValues(alpha: 0.25),
+          );
+          _pin(canvas, point, BrandColors.red, radius: 12);
         case MapMarkerKind.user:
           _userDot(canvas, point);
         case MapMarkerKind.truckIdle:
@@ -307,17 +521,16 @@ class _SchematicMapPainter extends CustomPainter {
     }
   }
 
-  void _pin(Canvas canvas, Offset at, Color color) {
-    const r = 9.0;
+  void _pin(Canvas canvas, Offset at, Color color, {double radius = 9}) {
+    final r = radius;
     final tip = at;
-    final centre = Offset(at.dx, at.dy - 20);
+    final centre = Offset(at.dx, at.dy - r * 2.2);
 
     final path = Path()
       ..moveTo(tip.dx, tip.dy)
-      ..quadraticBezierTo(centre.dx - r, centre.dy + 9, centre.dx - r, centre.dy)
-      ..arcToPoint(Offset(centre.dx + r, centre.dy),
-          radius: const Radius.circular(r))
-      ..quadraticBezierTo(centre.dx + r, centre.dy + 9, tip.dx, tip.dy)
+      ..quadraticBezierTo(centre.dx - r, centre.dy + r, centre.dx - r, centre.dy)
+      ..arcToPoint(Offset(centre.dx + r, centre.dy), radius: Radius.circular(r))
+      ..quadraticBezierTo(centre.dx + r, centre.dy + r, tip.dx, tip.dy)
       ..close();
 
     canvas
@@ -414,6 +627,6 @@ class _SchematicMapPainter extends CustomPainter {
   bool shouldRepaint(_SchematicMapPainter old) =>
       old.center != center ||
       old.zoom != zoom ||
-      old.route != route ||
+      old.routes != routes ||
       old.markers != markers;
 }

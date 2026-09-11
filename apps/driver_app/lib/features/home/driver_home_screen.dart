@@ -1,90 +1,137 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
-import 'location_publisher.dart';
+import '../auth/app_presence.dart';
+import '../notifications/notification_widgets.dart';
+import 'driver_map.dart';
+import 'offer_card.dart';
 
-/// The chofer's home: online switch, today's earnings, and the open work.
+/// The Inicio tab: the map, edge to edge, with the chofer's controls over it.
+///
+/// Everything else a chofer looks at — the open orders, the conversation, the
+/// account — has its own tab, so this screen stays one decision deep: am I
+/// taking work, and is there a request for me right now. An offer takes the
+/// place of the online card, because for its 25 seconds nothing else matters.
 ///
 /// Going online is a checklist, not a boolean. A chofer who flips the switch
 /// and then silently misses every offer because notifications are off is worse
 /// than one who was told up front what is missing.
-class DriverHomeScreen extends ConsumerWidget {
+class DriverHomeScreen extends ConsumerStatefulWidget {
   const DriverHomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final driver = ref.watch(currentDriverProvider).value;
-    final earnings = ref.watch(driverEarningsProvider).value;
-    final pending = ref.watch(activeServicesProvider).value ?? const [];
+  ConsumerState<DriverHomeScreen> createState() => _DriverHomeScreenState();
+}
 
-    // Watched, not read: this is what starts and stops position publishing,
-    // and it must follow the chofer's online state rather than a button press.
-    ref.watch(locationPublisherProvider);
+class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
+  /// How much of the map's bottom the card over it covers. Measured after
+  /// layout, so the camera frames the job in the part the chofer can see
+  /// whether the card is the short online switch or a full offer.
+  var _coveredBottom = 0.0;
 
-    if (driver == null) return const Scaffold(body: BrandLoader());
+  void _onCardHeight(double height) {
+    if (!mounted || height == _coveredBottom) return;
+    setState(() => _coveredBottom = height);
+  }
 
-    // Only unassigned work in this chofer's truck class is worth showing;
-    // anything else is either somebody else's job or one they cannot take.
-    final available = pending
-        .where((s) => !s.hasDriver && s.truckTypeRequired == driver.truckType)
-        .toList();
+  @override
+  Widget build(BuildContext context) {
+    final driverAsync = ref.watch(currentDriverProvider);
+    final driver = driverAsync.value;
+
+    // Three different situations used to collapse into one spinner that never
+    // stopped: the record still loading, the read being refused, and no chofer
+    // record existing for this account at all. Only the first is temporary, so
+    // only the first gets a spinner — the other two now say what is wrong and
+    // leave a way out, because a chofer stuck on a spinner has no way to tell
+    // whether to wait, call the office, or sign in with the other account.
+    if (driver == null) {
+      if (driverAsync.isLoading) return const Scaffold(body: BrandLoader());
+      return _UnavailableScreen(error: driverAsync.error);
+    }
+
+    // The job the server is offering this chofer right now, if any. The map
+    // frames it and its card replaces the online switch.
+    final offer = ref.watch(openOfferProvider);
+    final coveredTop =
+        MediaQuery.paddingOf(context).top + Insets.md + _Header.height;
 
     return Scaffold(
       backgroundColor: BrandColors.offWhite,
-      body: SafeArea(
-        child: Column(
+      body: LayoutBuilder(
+        builder: (context, constraints) => Stack(
           children: [
-            _Header(driver: driver, onEarnings: () => context.push(Routes.earnings)),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(
-                  Insets.lg,
-                  0,
-                  Insets.lg,
-                  Insets.xxl,
+            Positioned.fill(
+              child: DriverMap(
+                offer: offer,
+                padding: EdgeInsets.only(
+                  top: coveredTop,
+                  bottom: _coveredBottom,
                 ),
-                children: [
-                  _OnlineCard(driver: driver),
-                  const SizedBox(height: Insets.lg),
-                  _TodayCard(
-                    earnings: earnings,
-                    onTap: () => context.push(Routes.earnings),
+              ),
+            ),
+            // Positioned, like everything else here: a Stack sizes itself to
+            // its unpositioned children, and the header alone would shrink
+            // the whole screen — map included — to the header's height.
+            // Positioned, like everything else here: a Stack sizes itself to
+            // its unpositioned children, and the header alone would shrink
+            // the whole screen — map included — to the header's height.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                bottom: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Header(driver: driver),
+                    const SizedBox(height: Insets.sm),
+                    // The mark over the map, as on the customer's home. It
+                    // lets touches through, so the map still pans under it.
+                    const IgnorePointer(child: GruaLogo(size: 120)),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _MeasureHeight(
+                onHeight: _onCardHeight,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    Insets.lg,
+                    0,
+                    Insets.lg,
+                    Insets.lg,
                   ),
-                  const SizedBox(height: Insets.xl),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'PEDIDOS DISPONIBLES',
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
+                  // A tall offer on a short phone scrolls rather than sliding
+                  // its buttons under the header.
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: math.max(
+                        0,
+                        constraints.maxHeight - coveredTop - Insets.huge,
                       ),
-                      Text(
-                        '${available.length}',
-                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                              color: BrandColors.grey600,
+                    ),
+                    child: SingleChildScrollView(
+                      child: offer == null
+                          ? _OnlineCard(driver: driver)
+                          : OfferCard(
+                              key: ValueKey(offer.serviceId),
+                              offer: offer,
                             ),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: Insets.md),
-                  if (!driver.isOnline)
-                    const InlineNotice(
-                      message: 'Ponte en línea para recibir pedidos.',
-                      icon: Icons.wifi_off,
-                    )
-                  else if (available.isEmpty)
-                    const _NoWorkCard()
-                  else
-                    for (final service in available)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: Insets.md),
-                        child: _OrderCard(service: service),
-                      ),
-                ],
+                ),
               ),
             ),
           ],
@@ -94,47 +141,120 @@ class DriverHomeScreen extends ConsumerWidget {
   }
 }
 
+/// The chofer's photo, name, truck and today's take, floating over the map.
+/// The photo carries the online dot, so the header says at a glance whether
+/// dispatch can see them.
 class _Header extends ConsumerWidget {
-  const _Header({required this.driver, required this.onEarnings});
+  const _Header({required this.driver});
 
   final Driver driver;
-  final VoidCallback onEarnings;
+
+  /// Fixed, so the map knows how much of its top the header covers.
+  static const double height = 72;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final today = ref.watch(driverEarningsProvider).value?.todayNetCents ?? 0;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Insets.lg, Insets.md, Insets.lg, Insets.lg),
+      padding: const EdgeInsets.fromLTRB(Insets.lg, Insets.md, Insets.lg, 0),
       child: Row(
         children: [
-          const GruaLogo(size: 62),
+          Expanded(child: _headerCard(context, text, today)),
           const SizedBox(width: Insets.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(driver.shortName, style: text.titleMedium),
-                Text(
-                  [
-                    if (driver.assignedTruckPlate.isNotEmpty)
-                      driver.assignedTruckPlate,
-                    driver.truckType.label,
-                  ].join(' · '),
-                  style: text.bodySmall?.copyWith(color: BrandColors.grey600),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: onEarnings,
-            icon: const Icon(Icons.account_balance_wallet_outlined),
-          ),
-          IconButton(
-            onPressed: () => ref.read(authRepositoryProvider).signOut(),
-            icon: const Icon(Icons.logout),
-          ),
+          const NotificationBell(),
         ],
+      ),
+    );
+  }
+
+  Widget _headerCard(BuildContext context, TextTheme text, int today) {
+    return SizedBox(
+      height: height,
+      child: FloatingCard(
+        padding: const EdgeInsets.fromLTRB(Insets.md, 0, Insets.xs, 0),
+        borderRadius: Corners.brMd,
+        child: Row(
+          children: [
+            DriverAvatar.of(driver, size: 48),
+            const SizedBox(width: Insets.md),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    driver.shortName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.titleMedium,
+                  ),
+                  Text(
+                    // Without a grúa the type is "Desconocido", which reads
+                    // as something wrong with the chofer, not the truck.
+                    driver.assignedTruckId == null
+                        ? 'Sin grúa asignada'
+                        : [
+                            if (driver.assignedTruckPlate.isNotEmpty)
+                              driver.assignedTruckPlate,
+                            driver.truckType.label,
+                          ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                  ),
+                ],
+              ),
+            ),
+            _TodayPill(
+              cents: today,
+              onTap: () => context.push(Routes.earnings),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Today's net, one tap from the full breakdown.
+class _TodayPill extends StatelessWidget {
+  const _TodayPill({required this.cents, required this.onTap});
+
+  final int cents;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Tooltip(
+      message: 'Mis ganancias',
+      child: InkWell(
+        key: const Key('today-earnings'),
+        onTap: onTap,
+        borderRadius: Corners.brSm,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Insets.sm,
+            vertical: Insets.xs,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'HOY',
+                style: text.labelSmall?.copyWith(color: BrandColors.grey600),
+              ),
+              Text(
+                cents.formatDOP,
+                style: text.titleSmall?.copyWith(color: BrandColors.red),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -158,15 +278,14 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
     setState(() => _busy = true);
 
     final result = await ref
-        .read(driverRepositoryProvider)
-        .setOnline(widget.driver.id, online: value);
+        .read(functionsGatewayProvider)
+        .setOnline(online: value);
     if (!mounted) return;
     setState(() => _busy = false);
 
     if (result case Err(:final failure)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(failure.userMessage)),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(failure.userMessage)));
     }
   }
 
@@ -208,8 +327,9 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
                       online
                           ? 'Estás recibiendo pedidos.'
                           : 'No recibirás pedidos.',
-                      style: text.bodySmall
-                          ?.copyWith(color: BrandColors.grey600),
+                      style: text.bodySmall?.copyWith(
+                        color: BrandColors.grey600,
+                      ),
                     ),
                   ],
                 ),
@@ -229,15 +349,13 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
           ),
           if (blockers.isNotEmpty) ...[
             const SizedBox(height: Insets.md),
-            InlineNotice(
-              message: blockers.join(' · '),
-              tone: NoticeTone.error,
-            ),
+            InlineNotice(message: blockers.join(' · '), tone: NoticeTone.error),
           ],
           if (driver.cashOwedCents > 0) ...[
             const SizedBox(height: Insets.md),
             InlineNotice(
-              message: 'Efectivo por entregar: '
+              message:
+                  'Efectivo por entregar: '
                   '${driver.cashOwedCents.formatDOP}',
               icon: Icons.payments_outlined,
             ),
@@ -248,252 +366,104 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
   }
 }
 
-class _TodayCard extends StatelessWidget {
-  const _TodayCard({required this.earnings, required this.onTap});
+/// Reports its child's height after each layout that changes it.
+class _MeasureHeight extends SingleChildRenderObjectWidget {
+  const _MeasureHeight({required this.onHeight, required super.child});
 
-  final EarningsSummary? earnings;
-  final VoidCallback onTap;
+  final ValueChanged<double> onHeight;
 
   @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderMeasureHeight(onHeight);
 
-    return FloatingCard(
-      onTap: onTap,
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const FieldLabel('Hoy'),
-                const SizedBox(height: Insets.xs),
-                Text(
-                  (earnings?.todayNetCents ?? 0).formatDOP,
-                  style: text.headlineMedium?.copyWith(color: BrandColors.red),
-                ),
-                Text(
-                  '${earnings?.todayServices ?? 0} servicios',
-                  style: text.bodySmall?.copyWith(color: BrandColors.grey600),
-                ),
-              ],
-            ),
-          ),
-          const Icon(Icons.chevron_right, color: BrandColors.grey400),
-        ],
-      ),
-    );
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderMeasureHeight renderObject,
+  ) => renderObject.onHeight = onHeight;
+}
+
+class _RenderMeasureHeight extends RenderProxyBox {
+  _RenderMeasureHeight(this.onHeight);
+
+  ValueChanged<double> onHeight;
+  double? _reported;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    final height = size.height;
+    if (height == _reported) return;
+    _reported = height;
+    // After the frame: layout is no place to rebuild the map above it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => onHeight(height));
   }
 }
 
-class _NoWorkCard extends StatelessWidget {
-  const _NoWorkCard();
+/// Shown when the chofer record cannot be read, or is not there at all.
+///
+/// The two cases look identical from inside the app — an empty stream either
+/// way — but need opposite reactions from the person holding the phone, so they
+/// are named separately. Both offer a way out: a chofer who signed in with the
+/// wrong account, or whose account the office has not finished creating, would
+/// otherwise be stranded on this screen with no gesture available.
+class _UnavailableScreen extends ConsumerWidget {
+  const _UnavailableScreen({required this.error});
+
+  final Object? error;
 
   @override
-  Widget build(BuildContext context) {
-    return FloatingCard(
-      padding: const EdgeInsets.symmetric(
-        horizontal: Insets.lg,
-        vertical: Insets.xxl,
+  Widget build(BuildContext context, WidgetRef ref) {
+    // `permission-denied` here is almost never the chofer's fault: the rules
+    // require an App Check token alongside the sign-in, so a device that could
+    // not attest is refused exactly like an impostor would be.
+    final failure = error;
+    final denied =
+        failure is Failure && failure.code == FailureCode.permissionDenied;
+
+    final (title, message) = switch ((error, denied)) {
+      (null, _) => (
+        'No encontramos tu perfil de chofer',
+        'Iniciaste sesión, pero esta cuenta todavía no tiene un chofer '
+            'asignado. La oficina tiene que crearla antes de que puedas '
+            'trabajar. Si tienes otra cuenta, cierra sesión y entra con esa.',
       ),
-      child: Column(
-        children: [
-          const Icon(Icons.hourglass_empty, size: 30, color: BrandColors.grey400),
-          const SizedBox(height: Insets.md),
-          Text(
-            'No hay pedidos ahora mismo',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: Insets.xs),
-          Text(
-            'Te avisamos apenas entre uno para tu tipo de grúa.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: BrandColors.grey600),
-          ),
-        ],
+      (_, true) => (
+        'Sin permiso para leer tu perfil',
+        'El servidor rechazó la lectura. Suele ser la verificación de la app '
+            'en este dispositivo. Comunícate con la oficina.',
       ),
-    );
-  }
-}
+      _ => (
+        'No pudimos cargar tu perfil',
+        'Revisa tus datos móviles o el WiFi e intenta de nuevo.',
+      ),
+    };
 
-/// One open job, with Aceptar / Rechazar as in the mockup.
-class _OrderCard extends ConsumerStatefulWidget {
-  const _OrderCard({required this.service});
-
-  final Service service;
-
-  @override
-  ConsumerState<_OrderCard> createState() => _OrderCardState();
-}
-
-class _OrderCardState extends ConsumerState<_OrderCard> {
-  var _busy = false;
-
-  Future<void> _accept() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-
-    final result = await ref
-        .read(functionsGatewayProvider)
-        .acceptService(widget.service.id);
-    if (!mounted) return;
-    setState(() => _busy = false);
-
-    // Each failure code gets its own message: "otro chofer lo tomó" and "la
-    // oferta expiró" are the same HTTP status and completely different news.
-    if (result case Err(:final failure)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(failure.userMessage)),
-      );
-    }
-  }
-
-  Future<void> _reject() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    await ref
-        .read(functionsGatewayProvider)
-        .rejectService(widget.service.id, reason: DriverCancelReason.other);
-    if (mounted) setState(() => _busy = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final service = widget.service;
-    final text = Theme.of(context).textTheme;
-    final pricing = ref.watch(pricingConfigProvider).value;
-
-    // Show take-home, not gross. A chofer who has to work out the commission
-    // in their head at the roadside declines.
-    final net = pricing == null
-        ? service.totalCents
-        : service.totalCents -
-            Pricing.commissionCents(
-              config: pricing,
-              grossCents: service.totalCents,
-            );
-
-    return FloatingCard(
-      padding: EdgeInsets.zero,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(Insets.lg),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: const BoxDecoration(
-                        color: BrandColors.redTint,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.directions_car,
-                        size: 20,
-                        color: BrandColors.red,
-                      ),
-                    ),
-                    const SizedBox(width: Insets.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(service.vehicle.displayName, style: text.titleSmall),
-                          Text(
-                            service.vehicle.condition.label,
-                            style: text.bodySmall
-                                ?.copyWith(color: BrandColors.grey600),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(net.formatDOP, style: text.titleMedium),
-                        Text(
-                          'para ti',
-                          style: text.bodySmall
-                              ?.copyWith(color: BrandColors.grey600),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: Insets.lg),
-                RouteSummary(
-                  pickup: service.pickup.displayAddress,
-                  pickupReference: service.pickup.reference,
-                  dropoff: service.dropoff?.displayAddress,
-                ),
-                const SizedBox(height: Insets.md),
-                Row(
-                  children: [
-                    Icon(
-                      service.payment.isCash
-                          ? Icons.payments_outlined
-                          : Icons.credit_card,
-                      size: 16,
-                      color: BrandColors.grey600,
-                    ),
-                    const SizedBox(width: Insets.xs),
-                    Text(
-                      service.payment.method.label,
-                      style: text.bodySmall
-                          ?.copyWith(color: BrandColors.grey600),
-                    ),
-                    const Spacer(),
-                    Text(
-                      service.route.distanceLabel,
-                      style: text.bodySmall
-                          ?.copyWith(color: BrandColors.grey600),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Row(
-            children: [
-              Expanded(
-                child: TextButton(
-                  onPressed: _busy ? null : _reject,
-                  style: TextButton.styleFrom(
-                    foregroundColor: BrandColors.grey600,
-                    padding: const EdgeInsets.symmetric(vertical: Insets.lg),
-                    shape: const RoundedRectangleBorder(),
-                  ),
-                  child: const Text('Rechazar'),
-                ),
+    return Scaffold(
+      backgroundColor: BrandColors.offWhite,
+      body: SafeArea(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Expanded(
+              child: EmptyState(
+                title: title,
+                message: message,
+                icon: Icons.person_off_outlined,
+                tone: EmptyStateTone.error,
+                actionLabel: 'Reintentar',
+                onAction: () => ref.invalidate(currentDriverProvider),
               ),
-              Container(width: 1, height: 40, color: BrandColors.grey100),
-              Expanded(
-                child: TextButton(
-                  onPressed: _busy ? null : _accept,
-                  style: TextButton.styleFrom(
-                    foregroundColor: BrandColors.red,
-                    padding: const EdgeInsets.symmetric(vertical: Insets.lg),
-                    shape: const RoundedRectangleBorder(),
-                  ),
-                  child: _busy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2.2),
-                        )
-                      : const Text('ACEPTAR'),
-                ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(Insets.xl),
+              child: TextButton(
+                onPressed: () => signOutDriver(ref),
+                child: const Text('Cerrar sesión'),
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }

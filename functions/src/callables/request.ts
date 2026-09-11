@@ -29,6 +29,7 @@ import { requireClient, requireNotInMaintenance } from '../lib/guards.js';
 import { buildQuote, loadPricing, signQuote, verifyQuote } from '../lib/pricing.js';
 import { quoteSigningSecret } from '../lib/secrets.js';
 import { serviceCode } from '../lib/time.js';
+import { openTruckRef } from '../lib/truckRef.js';
 import { dispatchNext } from '../dispatch/dispatchNext.js';
 import { region } from './region.js';
 
@@ -82,6 +83,9 @@ const requestInput = quoteInput.extend({
   quoteExpiresAtMs: z.number().int().positive(),
   paymentMethodId: z.string().max(200).nullish(),
   notes: z.string().max(500).nullish(),
+  // From "Pedir esta grúa" on the map: a sealed handle on the truck the
+  // customer tapped, which dispatch offers the job to first.
+  preferredTruckRef: z.string().max(400).nullish(),
 });
 
 const QUOTE_TTL_MS = 10 * 60 * 1000;
@@ -222,7 +226,15 @@ export const requestService = onCall(
     quoteSignature,
     quoteExpiresAtMs,
     notes,
+    preferredTruckRef,
   } = parsed.data;
+
+  // A stale or altered handle is not an error worth failing a tow over: the
+  // request simply goes to whoever dispatch finds, as any other would.
+  const preferredDriverId = preferredTruckRef ? openTruckRef(preferredTruckRef) : null;
+  if (preferredTruckRef && !preferredDriverId) {
+    logger.info('request.preferredTruckRefIgnored', { clientId: caller.uid });
+  }
 
   const from = toLatLng(pickup.geo);
   const to = toLatLng(dropoff.geo);
@@ -369,8 +381,10 @@ export const requestService = onCall(
   });
 
   // Started immediately rather than by a trigger: the customer is watching a
-  // "buscando grúa" screen and every second of latency is visible.
-  await dispatchNext(serviceRef.id);
+  // "buscando grúa" screen and every second of latency is visible. The chosen
+  // truck is passed here, never stored: the service document is readable by
+  // the customer, and it would name the driver.
+  await dispatchNext(serviceRef.id, { preferredDriverId: preferredDriverId ?? undefined });
 
   return { serviceId: serviceRef.id, code };
 });

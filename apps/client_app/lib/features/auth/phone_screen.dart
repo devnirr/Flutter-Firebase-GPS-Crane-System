@@ -66,67 +66,98 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: BackButton(onPressed: () => context.pop()),
-        title: const GruaLogo(size: 74),
       ),
       body: SafeArea(
         child: Form(
           key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
-            children: [
-              const SizedBox(height: Insets.xl),
-              Text('¿Cuál es tu número?', style: text.headlineMedium),
-              const SizedBox(height: Insets.sm),
-              Text(
-                'Te enviaremos un código por SMS para confirmar que eres tú.',
-                style: text.bodyLarge?.copyWith(color: BrandColors.grey600),
-              ),
-              const SizedBox(height: Insets.xxxl),
-              const FieldLabel('Número de teléfono'),
-              const SizedBox(height: Insets.sm),
-              TextFormField(
-                controller: _controller,
-                autofocus: true,
-                keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.done,
-                onChanged: (_) => setState(() => _error = null),
-                onFieldSubmitted: (_) => _submit(),
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(10),
-                  _DoPhoneFormatter(),
-                ],
-                style: text.headlineSmall,
-                decoration: const InputDecoration(
-                  prefixText: '+1  ',
-                  hintText: '809-555-1234',
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Scrolls when the keyboard leaves no room; otherwise the Spacer
+              // pushes the call to action down to the bottom edge, where the
+              // thumb already is.
+              return SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: Insets.gutter,
+                  vertical: Insets.xl,
                 ),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: Insets.lg),
-                InlineNotice(message: _error!, tone: NoticeTone.error),
-              ],
-              const SizedBox(height: Insets.xl),
-              ElevatedButton(
-                onPressed: _isValid && !_sending ? _submit : null,
-                child: _sending
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.4,
-                          color: BrandColors.white,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight - Insets.xl * 2,
+                  ),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Center(child: GruaLogo(size: 180)),
+                        const SizedBox(height: Insets.xl),
+                        Text('¿Cuál es tu número?', style: text.headlineMedium),
+                        const SizedBox(height: Insets.sm),
+                        Text(
+                          'Te enviaremos un código por SMS para confirmar que '
+                          'eres tú.',
+                          style: text.bodyLarge
+                              ?.copyWith(color: BrandColors.grey600),
                         ),
-                      )
-                    : const Text('Enviar código'),
-              ),
-              const SizedBox(height: Insets.lg),
-              Text(
-                'Solo aceptamos números dominicanos (809, 829 y 849).',
-                textAlign: TextAlign.center,
-                style: text.bodySmall?.copyWith(color: BrandColors.grey600),
-              ),
-            ],
+                        const SizedBox(height: Insets.xxxl),
+                        const FieldLabel('Número de teléfono'),
+                        const SizedBox(height: Insets.sm),
+                        TextFormField(
+                          controller: _controller,
+                          autofocus: true,
+                          keyboardType: TextInputType.phone,
+                          textInputAction: TextInputAction.done,
+                          onChanged: (_) => setState(() => _error = null),
+                          onFieldSubmitted: (_) => _submit(),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(10),
+                            _DoPhoneFormatter(),
+                          ],
+                          style: text.headlineSmall,
+                          decoration: const InputDecoration(
+                            prefixText: '+1  ',
+                            hintText: '809-555-1234',
+                          ),
+                        ),
+                        const SizedBox(height: Insets.sm),
+                        Text(
+                          'Solo aceptamos números dominicanos (809, 829 y 849).',
+                          style: text.bodySmall
+                              ?.copyWith(color: BrandColors.grey600),
+                        ),
+
+                        if (_error != null) ...[
+                          const SizedBox(height: Insets.lg),
+                          InlineNotice(
+                            message: _error!,
+                            tone: NoticeTone.error,
+                          ),
+                        ],
+
+                        // The form stays at the top, the button group sits on
+                        // the bottom edge.
+                        const Spacer(),
+                        const SizedBox(height: Insets.xl),
+
+                        ElevatedButton(
+                          onPressed: _isValid && !_sending ? _submit : null,
+                          child: _sending
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.4,
+                                    color: BrandColors.white,
+                                  ),
+                                )
+                              : const Text('Enviar código'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),

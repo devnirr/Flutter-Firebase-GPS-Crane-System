@@ -29,6 +29,9 @@ dependencies:
   # Payments
   flutter_stripe: ^14.0.0
 
+  # The nearby-truck search reads time through this so tests can move it.
+  clock: ^1.1.1
+
   # UI + platform
   cupertino_icons: ^1.0.9
   flutter_local_notifications: ^22.3.0

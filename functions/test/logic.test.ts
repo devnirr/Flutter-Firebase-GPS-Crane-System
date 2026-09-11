@@ -20,6 +20,10 @@ import {
   signQuote,
   verifyQuote,
 } from '../src/lib/pricing.js';
+import { isValidPlate, maxTruckYear, normalizePlate } from '../src/lib/trucks.js';
+import { isAvailableWithin } from '../src/lib/live.js';
+import { TRUCK_REF_TTL_MS, openTruckRef, sealTruckRef } from '../src/lib/truckRef.js';
+import { coarse } from '../src/callables/nearby.js';
 import {
   distanceMeters,
   isInsidePolygon,
@@ -303,6 +307,85 @@ describe('Dominican time', () => {
     expect(code).toMatch(/^GR-\d{6}-[0-9A-Z]{4}$/);
     // I, L, O and U are excluded so nothing is misread over a bad phone line.
     expect(code.slice(-4)).not.toMatch(/[ILOU]/);
+  });
+});
+
+describe('truck refs', () => {
+  const now = 1_800_000_000_000;
+
+  it('opens back to the driver it was sealed for', () => {
+    expect(openTruckRef(sealTruckRef('driver-abc', now), now + 1000)).toBe('driver-abc');
+  });
+
+  it('never names the driver, and differs on every search', () => {
+    const a = sealTruckRef('driver-abc', now);
+    const b = sealTruckRef('driver-abc', now);
+    expect(a).not.toBe(b);
+    expect(Buffer.from(a, 'base64url').toString('latin1')).not.toContain('driver-abc');
+  });
+
+  it('refuses a token that was altered or has lapsed', () => {
+    const token = sealTruckRef('driver-abc', now);
+    const flipped = token.slice(0, -2) + (token.endsWith('A') ? 'B' : 'A') + token.slice(-1);
+    expect(openTruckRef(flipped, now)).toBeNull();
+    expect(openTruckRef('not-a-token', now)).toBeNull();
+    expect(openTruckRef(token, now + TRUCK_REF_TTL_MS + 1)).toBeNull();
+  });
+});
+
+describe('nearby trucks', () => {
+  const center = { latitude: 18.4861, longitude: -69.9312 };
+  const now = 1_800_000_000_000;
+  const fresh = {
+    driverId: 'd1',
+    lat: 18.49,
+    lng: -69.93,
+    isOnline: true,
+    state: 'idle',
+    updatedAt: now - 10_000,
+  };
+  const options = { now, staleMs: 90_000 };
+
+  it('counts an online, free, recently reporting truck inside the circle', () => {
+    expect(isAvailableWithin(fresh, center, 5, options)).toBe(true);
+  });
+
+  it('leaves out the offline, the busy, the silent and the far', () => {
+    expect(isAvailableWithin({ ...fresh, isOnline: false }, center, 5, options)).toBe(false);
+    expect(isAvailableWithin({ ...fresh, state: 'on_service' }, center, 5, options)).toBe(false);
+    expect(
+      isAvailableWithin({ ...fresh, updatedAt: now - 120_000 }, center, 5, options),
+    ).toBe(false);
+    // Boca Chica is ~34 km out: inside a 40 km search, outside a 5 km one.
+    const boca = { ...fresh, lat: 18.452, lng: -69.609 };
+    expect(isAvailableWithin(boca, center, 5, options)).toBe(false);
+    expect(isAvailableWithin(boca, center, 40, options)).toBe(true);
+  });
+
+  it('never hands a customer a position finer than ~110 m', () => {
+    expect(coarse(18.486123)).toBe(18.486);
+    expect(coarse(-69.931789)).toBe(-69.932);
+  });
+});
+
+describe('truck plates', () => {
+  it('keys a plate the same way however the office typed it', () => {
+    for (const typed of ['L123456', 'l123456', 'L-123456', ' l 123 456 ']) {
+      expect(normalizePlate(typed)).toBe('L123456');
+    }
+  });
+
+  it('accepts the Dominican series and refuses typos', () => {
+    expect(isValidPlate('L123456')).toBe(true);
+    expect(isValidPlate('EX12345')).toBe(true);
+    expect(isValidPlate('123456')).toBe(false); // no series letter
+    expect(isValidPlate('L12345678')).toBe(false); // a digit too many
+    expect(isValidPlate('ABC1234')).toBe(false); // three letters
+    expect(isValidPlate('')).toBe(false);
+  });
+
+  it('allows next year\'s model but not the one after', () => {
+    expect(maxTruckYear(new Date('2026-09-11T12:00:00Z'))).toBe(2027);
   });
 });
 

@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:driver_app/app.dart';
+import 'package:driver_app/features/auth/register_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,7 +27,7 @@ Future<void> main() async {
     functionsRegion: 'us-east1',
   );
 
-  Widget harness(DemoBackend backend) => ProviderScope(
+  Widget harness(DemoBackend backend, {PhotoPicker? picker}) => ProviderScope(
         overrides: [
           appConfigProvider.overrideWithValue(config),
           ...demoOverrides(
@@ -32,20 +35,127 @@ Future<void> main() async {
             role: UserRole.driver,
             actingAs: 'driver-1',
           ),
+          if (picker != null) photoPickerProvider.overrideWithValue(picker),
         ],
         child: const DriverApp(),
       );
 
-  testWidgets('a signed-out chofer sees login and no way to register',
+  testWidgets('a signed-out chofer can open the registration form',
       (tester) async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();
 
     expect(find.text('ACCESO CHOFER'), findsOneWidget);
     expect(find.text('ENTRAR'), findsOneWidget);
-    // Self-registration must not exist anywhere in this product.
-    expect(find.textContaining('Registr'), findsNothing);
-    expect(find.textContaining('Crear cuenta'), findsNothing);
+
+    await tester.tap(find.text('REGISTRARSE'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Registro de chofer'), findsOneWidget);
+    // The grúa is the office's to assign; nothing here lets a chofer pick one.
+    expect(find.textContaining('Grúa'), findsNothing);
+  });
+
+  testWidgets('registering opens an inactive account that waits for review',
+      (tester) async {
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(
+      harness(
+        backend,
+        picker: (_) async => PickedPhoto(
+          name: 'licencia.jpg',
+          bytes: Uint8List.fromList(List.filled(64, 7)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('REGISTRARSE'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Agregar foto'));
+    await tester.tap(find.text('Agregar foto'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Elegir de la galería'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cambiar foto'), findsOneWidget);
+
+    Future<void> type(String hint, String value) =>
+        tester.enterText(find.widgetWithText(TextFormField, hint), value);
+
+    await type('Juan Alberto Pérez Núñez', 'Wilfredo Antonio Reyes');
+    await type('001-1234567-8', '40200123459');
+    await type('(809) 555-1234', '8295557788');
+    await type('tucorreo@ejemplo.com', 'wilfredo@gruasrd.do');
+    await type('Mínimo 8 caracteres', 'clave-segura-1');
+    await type('Repite la contraseña', 'clave-segura-1');
+    await type('Como aparece en la licencia', 'L-884213');
+    await tester.pumpAndSettle();
+
+    // The expiry is a date picker: open it and take the default, a year out.
+    await tester.ensureVisible(find.text('dd/mm/aaaa'));
+    await tester.tap(find.text('dd/mm/aaaa'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ACEPTAR'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Subir foto'));
+    await tester.tap(find.text('Subir foto'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Elegir de la galería'));
+    await tester.pumpAndSettle();
+    expect(find.text('licencia.jpg'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('ENVIAR REGISTRO'));
+    await tester.tap(find.text('ENVIAR REGISTRO'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    final created =
+        backend.allDrivers.firstWhere((d) => d.cedula == '40200123459');
+    expect(created.status, DriverStatus.inactive);
+    expect(created.createdBy, created.id);
+    expect(created.mustChangePassword, isFalse);
+
+    // Signed straight in, and parked on the review screen rather than home.
+    expect(find.text('Solicitud en revisión'), findsOneWidget);
+    expect(find.text('PEDIDOS DISPONIBLES'), findsNothing);
+
+    // Let the uploads that run after sign-in finish.
+    await tester.pump(const Duration(seconds: 3));
+
+    // The profile photo landed on the record the office's roster draws from.
+    expect(backend.driver(created.id)?.photoUrl, startsWith('data:image/jpeg'));
+  });
+
+  testWidgets('the registration form refuses a bad cédula and a mismatch',
+      (tester) async {
+    final backend = DemoBackend()..seed();
+    final before = backend.allDrivers.length;
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('REGISTRARSE'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, '001-1234567-8'),
+      '40200123450',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Mínimo 8 caracteres'),
+      'clave-segura-1',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Repite la contraseña'),
+      'otra-clave-22',
+    );
+    await tester.ensureVisible(find.text('ENVIAR REGISTRO'));
+    await tester.tap(find.text('ENVIAR REGISTRO'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Esa cédula no es válida.'), findsOneWidget);
+    expect(find.text('Las contraseñas no coinciden.'), findsOneWidget);
+    expect(find.text('Sube la foto de la licencia.'), findsOneWidget);
+    expect(find.text('Agrega tu foto de perfil.'), findsOneWidget);
+    expect(backend.allDrivers.length, before);
   });
 
   testWidgets('signing in reaches the home screen with the online switch',
@@ -64,7 +174,57 @@ Future<void> main() async {
     await tester.pumpAndSettle(const Duration(seconds: 1));
 
     expect(find.textContaining('línea'), findsWidgets);
+
+    // The open work has its own tab now.
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Pedidos'),
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('PEDIDOS DISPONIBLES'), findsOneWidget);
+  });
+
+  testWidgets('signing in shows the office the chofer is connected, and '
+      'signing out takes it back', (tester) async {
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    expect(backend.isAppOpen('driver-1'), isFalse);
+
+    await tester.enterText(
+      find.byType(TextFormField).first,
+      'driver1@gruasrd.do',
+    );
+    await tester.enterText(find.byType(TextFormField).last, 'secret123');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ENTRAR'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(backend.isAppOpen('driver-1'), isTrue);
+
+    // Signing out lives on the Perfil tab.
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Perfil'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('sign-out')),
+      200,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('profile-list')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('sign-out')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(find.text('ENTRAR'), findsOneWidget);
+    expect(backend.isAppOpen('driver-1'), isFalse);
   });
 
   test('a chofer cannot go offline while holding a job', () async {
@@ -79,14 +239,14 @@ Future<void> main() async {
     );
     addTearDown(container.dispose);
 
-    final drivers = container.read(driverRepositoryProvider);
-    expect((await drivers.setOnline('driver-1', online: true)).isOk, isTrue);
+    final gateway = container.read(functionsGatewayProvider);
+    expect((await gateway.setOnline(online: true)).isOk, isTrue);
 
-    // Put a chofer on a job the way dispatch would.
+    // Put a chofer on a job the way dispatch would, then act as them.
     final assigned = await _dispatchedService(backend);
-    final busyDriverId = assigned.driverId!;
+    backend.currentUserId = assigned.driverId!;
 
-    final refused = await drivers.setOnline(busyDriverId, online: false);
+    final refused = await gateway.setOnline(online: false);
     expect(refused.isErr, isTrue);
     expect(refused.failureOrNull?.code, FailureCode.driverBusy);
     expect(refused.failureOrNull?.userMessage, contains('servicio en curso'));

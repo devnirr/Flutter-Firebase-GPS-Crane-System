@@ -162,6 +162,20 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // offers, across every service
+    // ---------------------------------------------------------------------
+
+    // The chofer app finds its open offer with a collection-group query — it
+    // does not know which service it is for until it arrives — and Firestore
+    // judges those only against a recursive match like this one, never the
+    // nested one under /services. The query is required to filter on the
+    // caller's own driverId, so nobody can list anyone else's offers.
+    match /{path=**}/offers/{offerId} {
+      allow read: if isStaff() ||
+        (ok() && resource.data.get('driverId', '') == uid());
+    }
+
+    // ---------------------------------------------------------------------
     // services — the order
     // ---------------------------------------------------------------------
 

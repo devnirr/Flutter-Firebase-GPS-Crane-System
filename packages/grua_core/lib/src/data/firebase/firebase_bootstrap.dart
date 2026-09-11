@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -45,6 +46,8 @@ abstract final class FirebaseBootstrap {
       );
       return false;
     }
+
+    await _activateAppCheck(config);
 
     if (config.useEmulators) await _useEmulators(config);
 
@@ -94,6 +97,83 @@ abstract final class FirebaseBootstrap {
 
     _ready = true;
     return true;
+  }
+
+  /// Mints the App Check token that every security rule requires.
+  ///
+  /// `firestore.rules` gates every read and write behind `ok()`, which is
+  /// `isSignedIn() && request.app != null`. That second half is an App Check
+  /// token, and a client that never calls `activate` does not have one — so
+  /// being correctly signed in was never enough and every read came back
+  /// permission-denied. It fails that way whether or not enforcement is
+  /// switched on in the console, because it is the rules asking, not the
+  /// enforcement setting.
+  ///
+  /// Debug builds use the debug providers, which print a token on first launch
+  /// that has to be registered once per machine under App Check > Apps > Manage
+  /// debug tokens. Until that is done the rules keep refusing, so the log line
+  /// below says so rather than leaving somebody to infer it from a blank
+  /// screen.
+  static Future<void> _activateAppCheck(AppConfig config) async {
+    // The emulator suite does not verify App Check tokens, and asking a debug
+    // provider for one it cannot mint only adds a failing round trip.
+    if (config.useEmulators) return;
+
+    const debug = kDebugMode;
+    final siteKey = config.recaptchaSiteKey;
+
+    // `flutter run -d chrome` starts a fresh browser profile every launch, so
+    // the debug token the JS SDK would generate and remember is a new one each
+    // run: registered once, refused the next time. A fixed token passed as
+    // APP_CHECK_DEBUG_TOKEN is registered once and keeps working.
+    final debugToken =
+        config.appCheckDebugToken.isEmpty ? null : config.appCheckDebugToken;
+
+    if (kIsWeb && !debug && siteKey.isEmpty) {
+      debugPrint(
+        '[grua] App Check: no RECAPTCHA_SITE_KEY, so no token can be minted '
+        'and Firestore will refuse every read. Pass '
+        '--dart-define-from-file=config/prod.json.',
+      );
+      return;
+    }
+
+    try {
+      await FirebaseAppCheck.instance.activate(
+        // Enterprise, not v3: the console has deprecated plain reCAPTCHA for
+        // App Check, and the web apps are registered with Enterprise keys.
+        // A v3 provider against an Enterprise registration is refused.
+        providerWeb: debug
+            ? WebDebugProvider(debugToken: debugToken)
+            : ReCaptchaEnterpriseProvider(siteKey),
+        providerAndroid: debug
+            ? AndroidDebugProvider(debugToken: debugToken)
+            : const AndroidPlayIntegrityProvider(),
+        // App Attest where the device supports it, DeviceCheck on the older
+        // iPhones still in service around here.
+        providerApple: debug
+            ? AppleDebugProvider(debugToken: debugToken)
+            : const AppleAppAttestWithDeviceCheckFallbackProvider(),
+      );
+
+      if (debug) {
+        debugPrint(
+          debugToken != null
+              ? '[grua] App Check: debug provider active with the fixed '
+                  'APP_CHECK_DEBUG_TOKEN. It must be registered under App Check '
+                  '> Apps > Manage debug tokens, or Firestore refuses every read.'
+              : '[grua] App Check: debug provider active with a generated token. '
+                  'Register the token logged just above under App Check > Apps '
+                  '> Manage debug tokens, or Firestore will refuse every read. '
+                  'On web it changes every `flutter run`; pass '
+                  '--dart-define=APP_CHECK_DEBUG_TOKEN=<uuid> to fix it.',
+        );
+      }
+    } on Object catch (error) {
+      // Never fatal. A failure here means reads get denied, which the screens
+      // now report on their own; crashing at launch would say less, not more.
+      debugPrint('[grua] App Check activation failed ($error).');
+    }
   }
 
   static Future<void> _useEmulators(AppConfig config) async {

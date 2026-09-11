@@ -8,11 +8,11 @@ import 'features/auth/phone_screen.dart';
 import 'features/auth/profile_setup_screen.dart';
 import 'features/auth/register_screen.dart';
 import 'features/auth/welcome_screen.dart';
-import 'features/chat/chat_screen.dart';
 import 'features/history/history_screen.dart';
 import 'features/history/service_detail_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/profile/profile_screen.dart';
+import 'features/request/request_controller.dart';
 import 'features/request/request_screen.dart';
 import 'features/tracking/tracking_screen.dart';
 
@@ -33,6 +33,12 @@ abstract final class Routes {
   static String trackingFor(String id) => '/servicio?id=$id';
 
   static String chatFor(String id) => '/servicio/$id/chat';
+
+  /// The request form, with a truck from the home map to offer the job first.
+  static String requestTruck(NearbyTruck truck) => Uri(
+        path: request,
+        queryParameters: {'grua': truck.ref, 'tipo': truck.truckType.wire},
+      ).toString();
 
   static String detailFor(String id) => '/historial/$id';
 }
@@ -117,7 +123,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: Routes.request,
-        builder: (_, _) => const RequestScreen(),
+        builder: (_, state) {
+          final ref = state.uri.queryParameters['grua'];
+          return RequestScreen(
+            preferredTruck: ref == null || ref.isEmpty
+                ? null
+                : PreferredTruck(
+                    ref: ref,
+                    truckType: TruckType.fromWire(state.uri.queryParameters['tipo']),
+                  ),
+          );
+        },
       ),
       GoRoute(
         path: Routes.tracking,
@@ -126,8 +142,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: Routes.chat,
-        builder: (_, state) =>
-            ChatScreen(serviceId: state.pathParameters['id'] ?? ''),
+        builder: (_, state) => ServiceChatScreen(
+          serviceId: state.pathParameters['id'] ?? '',
+          role: UserRole.client,
+        ),
       ),
       GoRoute(
         path: Routes.history,

@@ -28,6 +28,7 @@
       "source": "functions",
       "codebase": "default",
       "runtime": "nodejs20",
+      "predeploy": ["npm --prefix functions run build"],
       "ignore": [
         "node_modules",
         ".git",

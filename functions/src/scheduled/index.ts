@@ -82,8 +82,23 @@ export const reapStaleDrivers = onSchedule(
     const cutoff = Date.now() - Math.max(config.stalePositionMs * 3, 300000);
 
     const snap = await Paths.liveRoot().orderByChild('isOnline').equalTo(true).get();
-    const all = snap.val() as Record<string, Record<string, unknown>> | null;
-    if (!all) return;
+    const all = (snap.val() as Record<string, Record<string, unknown>> | null) ?? {};
+
+    // The other way to be stale: switched on, but no position ever arrived —
+    // location permission refused, or no GPS on the device. Nothing under
+    // `/live` says online for them, so the pass below would never see them,
+    // and the panel would show them "En línea" indefinitely. Judged on
+    // `lastOnlineAt`, so a chofer who just switched on has the same grace to
+    // get a first fix as a moving one has between fixes.
+    const switchedOn = await Paths.drivers().where('isOnline', '==', true).get();
+    for (const doc of switchedOn.docs) {
+      if (all[doc.id]) continue;
+      const since = (doc.get('lastOnlineAt') as FirebaseFirestore.Timestamp | undefined)
+        ?.toMillis() ?? 0;
+      if (since >= cutoff) continue;
+      logger.warn('reap.silentDriver', { driverId: doc.id });
+      await doc.ref.update({ isOnline: false, updatedAt: FieldValue.serverTimestamp() });
+    }
 
     const stale = Object.entries(all).filter(
       ([, position]) => ((position['updatedAt'] as number | undefined) ?? 0) < cutoff,

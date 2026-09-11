@@ -18,6 +18,7 @@ abstract class Offer with _$Offer {
   const factory Offer({
     required String serviceId,
     required String driverId,
+    @JsonKey(unknownEnumValue: OfferState.unknown)
     @Default(OfferState.sent) OfferState state,
     @Default(0) int round,
     @Default(0) int distanceMeters,
@@ -27,9 +28,16 @@ abstract class Offer with _$Offer {
     @Default('') String pickupReference,
     @Default('') String dropoffAddress,
     @GeoPointConverter() @Default(LatLng(0, 0)) LatLng pickupGeo,
+
+    /// Null on a job with no destination yet, and on offers sent before the
+    /// field existed.
+    @NullableGeoPointConverter() LatLng? dropoffGeo,
     @Default('') String vehicleLabel,
+    @JsonKey(unknownEnumValue: VehicleCondition.unknown)
     @Default(VehicleCondition.unknown) VehicleCondition condition,
+    @JsonKey(unknownEnumValue: TruckType.unknown)
     @Default(TruckType.gancho) TruckType truckType,
+    @JsonKey(unknownEnumValue: PaymentMethod.unknown)
     @Default(PaymentMethod.cash) PaymentMethod paymentMethod,
 
     /// What the chofer takes home for this job, after commission. Showing gross
@@ -117,6 +125,7 @@ abstract class ChatMessage with _$ChatMessage {
   const factory ChatMessage({
     required String id,
     required String senderId,
+    @JsonKey(unknownEnumValue: UserRole.unknown)
     @Default(UserRole.unknown) UserRole senderRole,
     @Default('') String text,
 
@@ -150,9 +159,12 @@ abstract class ServiceEvent with _$ServiceEvent {
   const factory ServiceEvent({
     required String id,
     @Default(ServiceEventName.unknown) ServiceEventName event,
+    @JsonKey(unknownEnumValue: ServiceStatus.unknown)
     @Default(ServiceStatus.unknown) ServiceStatus from,
+    @JsonKey(unknownEnumValue: ServiceStatus.unknown)
     @Default(ServiceStatus.unknown) ServiceStatus to,
     @Default('') String actorId,
+    @JsonKey(unknownEnumValue: UserRole.unknown)
     @Default(UserRole.unknown) UserRole actorRole,
     @Default('') String note,
     @Default(<String, dynamic>{}) Map<String, dynamic> meta,

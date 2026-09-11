@@ -62,14 +62,19 @@ scripts:
     packageFilters:
       scope: client_app
 
+  # Fixed for the same reason as the panel below, and one more: the browser
+  # remembers the location permission per origin, so a new random port would
+  # ask the chofer for it again on every launch.
   run:driver:
     description: Run the chofer app in Chrome.
-    run: flutter run -d chrome --dart-define-from-file=../../config/dev.json
+    run: flutter run -d chrome --web-port 50166 --dart-define-from-file=../../config/dev.json
     packageFilters:
       scope: driver_app
 
+  # A fixed port, because the browser Maps key only accepts listed referrers
+  # and `flutter run` otherwise picks a random one every launch.
   run:admin:
     description: Run the operations panel in Chrome.
-    run: flutter run -d chrome --dart-define-from-file=../../config/dev.json
+    run: flutter run -d chrome --web-port 5000 --dart-define-from-file=../../config/dev.json
     packageFilters:
       scope: admin_web

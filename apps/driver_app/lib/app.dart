@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import 'features/auth/app_presence.dart';
 import 'router.dart';
 
 class DriverApp extends ConsumerWidget {
@@ -10,6 +11,7 @@ class DriverApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final config = ref.watch(appConfigProvider);
+    ref.watch(appPresenceProvider);
 
     return MaterialApp.router(
       title: '${config.flavor.appName} · Chofer',

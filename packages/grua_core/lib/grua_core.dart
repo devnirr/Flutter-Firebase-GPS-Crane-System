@@ -8,6 +8,8 @@ library;
 
 // Configuration and startup
 export 'src/bootstrap.dart';
+// Chat — the one screen both the customer and the chofer app show as-is
+export 'src/chat/service_chat_screen.dart';
 export 'src/config/app_config.dart';
 
 // Data layer
@@ -34,7 +36,10 @@ export 'src/domain/repositories.dart';
 export 'src/domain/value_objects.dart';
 
 // Location
+export 'src/location/geohash.dart';
 export 'src/location/location_service.dart';
+export 'src/location/my_position.dart';
+export 'src/location/route_service.dart';
 
 // Dependency wiring
 export 'src/providers.dart';
@@ -43,10 +48,12 @@ export 'src/providers.dart';
 export 'src/theme/app_theme.dart';
 export 'src/theme/brand.dart';
 export 'src/theme/widgets/brand_widgets.dart';
+export 'src/theme/widgets/driver_avatar.dart';
 export 'src/theme/widgets/grua_logo.dart';
 export 'src/theme/widgets/grua_map.dart';
 export 'src/theme/widgets/schematic_map.dart';
 
 // Utilities
 export 'src/utils/date_time_do.dart';
+export 'src/utils/do_validators.dart';
 export 'src/utils/money.dart';

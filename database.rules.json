@@ -2,6 +2,7 @@
   "rules": {
     "live": {
       ".read": "auth != null && (auth.token.role === 'admin' || auth.token.role === 'ops')",
+      ".indexOn": ["isOnline", "geohash"],
       "$driverId": {
         ".read": "auth != null && auth.uid === $driverId",
         ".write": "auth != null && auth.uid === $driverId",
@@ -17,6 +18,18 @@
         "truckType": { ".validate": "newData.isString()" },
         "serviceId": { ".validate": "newData.isString() || newData.val() === null" },
         "updatedAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+    "presence": {
+      ".read": "auth != null && (auth.token.role === 'admin' || auth.token.role === 'ops')",
+      ".indexOn": ["connected"],
+      "$driverId": {
+        ".read": "auth != null && auth.uid === $driverId",
+        ".write": "auth != null && auth.uid === $driverId",
+        ".validate": "newData.hasChildren(['connected', 'lastChanged'])",
+        "connected": { ".validate": "newData.isBoolean()" },
+        "lastChanged": { ".validate": "newData.isNumber()" },
         "$other": { ".validate": false }
       }
     },

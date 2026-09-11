@@ -20,6 +20,7 @@ abstract class Truck with _$Truck {
     @Default('') String model,
     int? year,
     @Default('') String color,
+    @JsonKey(unknownEnumValue: TruckType.unknown)
     @Default(TruckType.gancho) TruckType type,
     @Default(0) int capacityKg,
     @Default(true) bool active,

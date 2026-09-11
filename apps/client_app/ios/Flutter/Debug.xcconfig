@@ -1,1 +1,3 @@
 #include "Generated.xcconfig"
+// Optional, git-ignored: defines MAPS_API_KEY. Missing means the drawn map.
+#include? "Secrets.xcconfig"

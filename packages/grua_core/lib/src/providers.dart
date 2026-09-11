@@ -1,8 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3 keeps `Override` out of the default export surface.
-import 'package:flutter_riverpod/misc.dart' show Override, StreamProviderFamily;
+import 'package:flutter_riverpod/misc.dart'
+    show FutureProviderFamily, Override, ProviderFamily, StreamProviderFamily;
 
 import 'config/app_config.dart';
+import 'config/maps_script.dart';
 import 'data/demo/demo_backend.dart';
 import 'data/demo/demo_repositories.dart';
 import 'domain/enums.dart';
@@ -14,7 +16,9 @@ import 'domain/models/remote_config_models.dart';
 import 'domain/models/service.dart';
 import 'domain/models/truck.dart';
 import 'domain/repositories.dart';
+import 'domain/value_objects.dart';
 import 'location/location_service.dart';
+import 'location/route_service.dart';
 
 /// Dependency wiring for all three apps.
 ///
@@ -130,13 +134,27 @@ final locationServiceProvider = Provider<LocationService>(
   (ref) => LocationService(),
 );
 
-/// Whether a Maps API key was supplied at build time.
+/// Whether Google Maps is available: a key supplied at build time, or — on the
+/// web — the Maps script already loaded by `index.html`.
 ///
 /// Screens pass this to `GruaMap`, which renders a real Google map when it is
 /// true and the drawn fallback when it is false. Keeping the decision in one
 /// provider means no screen has to know how the map is sourced.
 final hasMapsKeyProvider = Provider<bool>(
-  (ref) => ref.watch(appConfigProvider).googleMapsApiKey.isNotEmpty,
+  (ref) =>
+      ref.watch(appConfigProvider).googleMapsApiKey.isNotEmpty ||
+      googleMapsScriptLoaded,
+);
+
+final routeServiceProvider = Provider<RouteService>(
+  (ref) => RouteService(apiKey: ref.watch(appConfigProvider).googleMapsApiKey),
+);
+
+/// The road route between two points. Cached by the service, so a screen that
+/// rebuilds with the same ends does not pay for a second call.
+final FutureProviderFamily<RoadRoute, (LatLng, LatLng)> roadRouteProvider =
+    FutureProvider.family<RoadRoute, (LatLng, LatLng)>(
+  (ref, ends) => ref.watch(routeServiceProvider).route(ends.$1, ends.$2),
 );
 
 /// The customer's current position, resolved once per screen entry.
@@ -268,6 +286,16 @@ final StreamProviderFamily<List<ChatMessage>, String> serviceMessagesProvider =
   (ref, id) => ref.watch(chatRepositoryProvider).watchMessages(id),
 );
 
+/// Messages on one service the signed-in user has not read yet — only the
+/// other party's, never their own. Drives the chat badges.
+final ProviderFamily<int, String> unreadMessageCountProvider =
+    Provider.family<int, String>((ref, id) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return 0;
+  final messages = ref.watch(serviceMessagesProvider(id)).value ?? const [];
+  return messages.where((m) => !m.isMine(uid) && !m.isRead).length;
+});
+
 // ---------------------------------------------------------------------------
 // Fleet — admin panel
 // ---------------------------------------------------------------------------
@@ -283,6 +311,11 @@ final allClientsProvider = StreamProvider<List<AppUser>>(
 
 final liveDriverPositionsProvider = StreamProvider<List<DriverLivePosition>>(
   (ref) => ref.watch(driverRepositoryProvider).watchLivePositions(),
+);
+
+/// Ids of the choferes with the app open right now, for the roster's dot.
+final connectedDriverIdsProvider = StreamProvider<Set<String>>(
+  (ref) => ref.watch(driverRepositoryProvider).watchConnectedDriverIds(),
 );
 
 final activeServicesProvider = StreamProvider<List<Service>>(

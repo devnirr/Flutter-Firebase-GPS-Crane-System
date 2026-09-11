@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
+
+import '../../router.dart';
 
 /// Chofer sign-in.
 ///
 /// Red ground, the mark, two fields and a black button, as in the mockup.
-/// There is no "create account" link and no route behind one: accounts come
-/// from the admin panel, with documents verified before the chofer can work.
+/// A new chofer can register from here, but registering only opens an
+/// `inactive` account: the office verifies the documents before the chofer
+/// can work.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -86,89 +90,139 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         child: SafeArea(
           child: Form(
             key: _formKey,
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: Insets.xxl),
-              children: [
-                const SizedBox(height: Insets.huge),
-                const Center(
-                  child: GruaLogo(size: 150),
-                ),
-                const SizedBox(height: Insets.xxl),
-                Text(
-                  'ACCESO CHOFER',
-                  textAlign: TextAlign.center,
-                  style: text.headlineMedium?.copyWith(
-                    color: BrandColors.white,
-                    letterSpacing: 1.4,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // The scroll view keeps the form reachable when the keyboard is
+                // up; the min-height box lets the Spacer push the button group
+                // to the bottom of the screen when it is not.
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Insets.xxl,
+                    vertical: Insets.xxl,
                   ),
-                ),
-                const SizedBox(height: Insets.huge),
-
-                _WhiteField(
-                  controller: _email,
-                  hint: 'Usuario',
-                  icon: Icons.person_outline,
-                  keyboardType: TextInputType.emailAddress,
-                  textInputAction: TextInputAction.next,
-                  validator: (v) => (v?.trim().isEmpty ?? true)
-                      ? 'Escribe tu usuario.'
-                      : null,
-                ),
-                const SizedBox(height: Insets.lg),
-                _WhiteField(
-                  controller: _password,
-                  hint: 'Contraseña',
-                  icon: Icons.lock_outline,
-                  obscure: _obscure,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => _signIn(),
-                  suffix: IconButton(
-                    onPressed: () => setState(() => _obscure = !_obscure),
-                    icon: Icon(
-                      _obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                      color: BrandColors.grey400,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - Insets.xxl * 2,
                     ),
-                  ),
-                  validator: (v) => (v?.isEmpty ?? true)
-                      ? 'Escribe tu contraseña.'
-                      : null,
-                ),
-
-                if (_error != null) ...[
-                  const SizedBox(height: Insets.lg),
-                  InlineNotice(message: _error!, tone: NoticeTone.error),
-                ],
-
-                const SizedBox(height: Insets.xxl),
-                ElevatedButton(
-                  onPressed: _signingIn ? null : _signIn,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: BrandColors.ink,
-                    foregroundColor: BrandColors.white,
-                    minimumSize: const Size.fromHeight(58),
-                    shape: const RoundedRectangleBorder(
-                      borderRadius: Corners.brLg,
-                    ),
-                  ),
-                  child: _signingIn
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.4,
-                            color: BrandColors.white,
+                    child: IntrinsicHeight(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: Insets.xxl),
+                          const Center(
+                            child: GruaLogo(size: 150),
                           ),
-                        )
-                      : const Text('ENTRAR'),
-                ),
-                const SizedBox(height: Insets.md),
-                TextButton(
-                  onPressed: _signingIn ? null : _forgotPassword,
-                  style: TextButton.styleFrom(foregroundColor: BrandColors.white),
-                  child: const Text('Olvidé mi contraseña'),
-                ),
-                const SizedBox(height: Insets.xxl),
-              ],
+                          const SizedBox(height: Insets.xxl),
+                          Text(
+                            'ACCESO CHOFER',
+                            textAlign: TextAlign.center,
+                            style: text.headlineMedium?.copyWith(
+                              color: BrandColors.white,
+                              letterSpacing: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: Insets.huge),
+
+                          _WhiteField(
+                            controller: _email,
+                            hint: 'Usuario',
+                            icon: Icons.person_outline,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            validator: (v) => (v?.trim().isEmpty ?? true)
+                                ? 'Escribe tu usuario.'
+                                : null,
+                          ),
+                          const SizedBox(height: Insets.lg),
+                          _WhiteField(
+                            controller: _password,
+                            hint: 'Contraseña',
+                            icon: Icons.lock_outline,
+                            obscure: _obscure,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _signIn(),
+                            suffix: IconButton(
+                              onPressed: () =>
+                                  setState(() => _obscure = !_obscure),
+                              icon: Icon(
+                                _obscure
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                color: BrandColors.grey400,
+                              ),
+                            ),
+                            validator: (v) => (v?.isEmpty ?? true)
+                                ? 'Escribe tu contraseña.'
+                                : null,
+                          ),
+
+                          if (_error != null) ...[
+                            const SizedBox(height: Insets.lg),
+                            InlineNotice(
+                              message: _error!,
+                              tone: NoticeTone.error,
+                            ),
+                          ],
+
+                          // Everything above stays at the top, the button group
+                          // below sits on the bottom edge.
+                          const Spacer(),
+                          const SizedBox(height: Insets.xxl),
+
+                          ElevatedButton(
+                            onPressed: _signingIn ? null : _signIn,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: BrandColors.ink,
+                              foregroundColor: BrandColors.white,
+                              minimumSize: const Size.fromHeight(58),
+                              shape: const RoundedRectangleBorder(
+                                borderRadius: Corners.brLg,
+                              ),
+                            ),
+                            child: _signingIn
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.4,
+                                      color: BrandColors.white,
+                                    ),
+                                  )
+                                : const Text('ENTRAR'),
+                          ),
+                          const SizedBox(height: Insets.md),
+                          OutlinedButton(
+                            onPressed: _signingIn
+                                ? null
+                                : () => context.push(Routes.register),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: BrandColors.white,
+                              backgroundColor: Colors.transparent,
+                              minimumSize: const Size.fromHeight(58),
+                              side: const BorderSide(
+                                color: BrandColors.white,
+                                width: 1.6,
+                              ),
+                              shape: const RoundedRectangleBorder(
+                                borderRadius: Corners.brLg,
+                              ),
+                            ),
+                            child: const Text('REGISTRARSE'),
+                          ),
+                          const SizedBox(height: Insets.sm),
+                          TextButton(
+                            onPressed: _signingIn ? null : _forgotPassword,
+                            style: TextButton.styleFrom(
+                              foregroundColor: BrandColors.white,
+                            ),
+                            child: const Text('Olvidé mi contraseña'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ),

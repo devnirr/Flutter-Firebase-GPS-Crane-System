@@ -8,6 +8,7 @@ import 'features/clients/clients_screen.dart';
 import 'features/drivers/drivers_screen.dart';
 import 'features/operations/operations_screen.dart';
 import 'features/reports/reports_screen.dart';
+import 'features/services/services_screen.dart';
 import 'features/shell/admin_shell.dart';
 import 'features/trucks/trucks_screen.dart';
 
@@ -20,7 +21,15 @@ abstract final class Routes {
   static const trucks = '/gruas';
   static const reports = '/reportes';
 
+  /// The Servicios page with one service's record open.
   static String serviceDetail(String id) => '/servicios?id=$id';
+
+  /// The map with one live service selected.
+  static String operationsFor(String id) => '/?id=$id';
+
+  /// The Servicios page with a search already typed in.
+  static String servicesSearch(String query) =>
+      Uri(path: services, queryParameters: {'q': query}).toString();
 }
 
 /// Router for the operations panel.
@@ -71,12 +80,15 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(
             path: Routes.operations,
-            builder: (_, _) => const OperationsScreen(),
+            builder: (_, state) => OperationsScreen(
+              selectedServiceId: state.uri.queryParameters['id'],
+            ),
           ),
           GoRoute(
             path: Routes.services,
-            builder: (_, state) => OperationsScreen(
-              selectedServiceId: state.uri.queryParameters['id'],
+            builder: (_, state) => ServicesScreen(
+              initialQuery: state.uri.queryParameters['q'],
+              openServiceId: state.uri.queryParameters['id'],
             ),
           ),
           GoRoute(path: Routes.clients, builder: (_, _) => const ClientsScreen()),
