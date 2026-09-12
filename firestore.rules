@@ -79,6 +79,18 @@ service cloud.firestore {
         .affectedKeys().hasOnly(allowed);
     }
 
+    // Deleting for everyone: the sender blanks what they wrote and stamps
+    // `deletedAt`, leaving a tombstone both sides render as "se eliminó este
+    // mensaje". Only the sender, and only ever their own words — a customer
+    // must not be able to erase what the chofer promised, or the reverse.
+    function isRetraction() {
+      return resource.data.senderId == uid()
+        && onlyChanges(['deletedAt', 'text', 'imageUrl'])
+        && request.resource.data.text == ''
+        && request.resource.data.get('imageUrl', '') == ''
+        && request.resource.data.deletedAt == request.time;
+    }
+
     // A chat message the apps may write, in a job's chat or a chat request's.
     // Either words or a photo, never an empty bubble, and no other field —
     // `sentAt` is the server's stamp and `readAt` is set by the reader.
@@ -227,10 +239,11 @@ service cloud.firestore {
           && request.resource.data.senderId == uid()
           && isSendableMessage(request.resource.data);
 
-        // Marking read is the only edit; the text itself is immutable.
+        // Two edits only: the reader stamps `readAt`, and the sender
+        // retracts what they wrote. Nothing else about a message changes.
         allow update: if ok()
           && isPartyTo(serviceDoc(serviceId))
-          && onlyChanges(['readAt']);
+          && (onlyChanges(['readAt']) || isRetraction());
 
         allow delete: if false;
       }
@@ -267,7 +280,8 @@ service cloud.firestore {
           && request.resource.data.senderId == uid()
           && isSendableMessage(request.resource.data);
 
-        allow update: if isChatParty(chatRequestDoc()) && onlyChanges(['readAt']);
+        allow update: if isChatParty(chatRequestDoc())
+          && (onlyChanges(['readAt']) || isRetraction());
 
         allow delete: if false;
       }

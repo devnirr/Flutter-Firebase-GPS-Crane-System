@@ -139,6 +139,11 @@ abstract class ChatMessage with _$ChatMessage {
     @Default('') String clientMsgId,
     @NullableTimestampConverter() DateTime? sentAt,
     @NullableTimestampConverter() DateTime? readAt,
+
+    /// Set when the sender deletes the message for both sides. The words and
+    /// the photo are cleared in the same write — this is all that is left,
+    /// and it is what the bubble says instead.
+    @NullableTimestampConverter() DateTime? deletedAt,
   }) = _ChatMessage;
 
   const ChatMessage._();
@@ -148,7 +153,9 @@ abstract class ChatMessage with _$ChatMessage {
 
   bool get isRead => readAt != null;
 
-  bool get hasImage => imageUrl.isNotEmpty;
+  bool get hasImage => imageUrl.isNotEmpty && !isDeleted;
+
+  bool get isDeleted => deletedAt != null;
 
   /// True while the server has not yet stamped [sentAt] — the message is on
   /// screen but not confirmed.

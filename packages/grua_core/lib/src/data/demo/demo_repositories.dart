@@ -483,6 +483,16 @@ class DemoChatRepository implements ChatRepository {
   }
 
   @override
+  Future<Result<void>> deleteMessages({
+    required String serviceId,
+    required String senderId,
+    required List<String> messageIds,
+  }) async {
+    _backend.retractMessages(serviceId, senderId, messageIds);
+    return const Result.ok(null);
+  }
+
+  @override
   // No bucket in demo mode, so the photo travels as a data URI — the same
   // trick the chofer's profile photo uses.
   Future<Result<String>> uploadImage({
@@ -565,6 +575,16 @@ class DemoChatRequestRepository implements ChatRequestRepository {
         sentAt: DateTime.now().toUtc(),
       ),
     );
+    return const Result.ok(null);
+  }
+
+  @override
+  Future<Result<void>> deleteMessages({
+    required String requestId,
+    required String senderId,
+    required List<String> messageIds,
+  }) async {
+    _backend.retractChatRequestMessages(requestId, senderId, messageIds);
     return const Result.ok(null);
   }
 

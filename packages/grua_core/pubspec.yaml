@@ -51,6 +51,9 @@ dependencies:
   # Here rather than in each app because the chat screen is shared.
   image_picker: ^1.2.3
 
+  # Opens a chat photo in the platform's viewer, where saving it is one tap.
+  url_launcher: ^6.3.2
+
   # Utilities
   intl: ^0.20.3
   collection: ^1.19.1

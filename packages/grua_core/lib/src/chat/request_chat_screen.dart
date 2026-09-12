@@ -199,6 +199,14 @@ class _RequestChatScreenState extends ConsumerState<RequestChatScreen> {
               clientMsgId: clientMsgId,
             );
       },
+      onDeleteMessages: uid == null
+          ? null
+          : (ids) => ref.read(chatRequestRepositoryProvider).deleteMessages(
+              requestId: widget.requestId,
+              senderId: uid,
+              messageIds: ids,
+            ),
+      onDownloadImages: openChatImages,
       onMarkRead: uid == null
           ? null
           : () => ref

@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../domain/enums.dart';
 import '../domain/failures.dart';
@@ -54,20 +56,23 @@ class ServiceChatScreen extends ConsumerWidget {
       closedNotice: 'El chat se cierra cuando termina el servicio.',
       emptyMessage: isDriver
           ? 'Escríbele al cliente si necesitas alguna indicación para '
-              'encontrarlo.'
+                'encontrarlo.'
           : 'Escríbele al chofer si necesitas darle alguna indicación.',
       photoPicker: ref.watch(photoPickerProvider),
       otherTyping:
-          ref.watch(otherTypingProvider(jobThreadKey(serviceId))).value ?? false,
+          ref.watch(otherTypingProvider(jobThreadKey(serviceId))).value ??
+          false,
       onTyping: uid == null
           ? null
           : (typing) => unawaited(
-                ref.read(typingRepositoryProvider).setTyping(
-                      threadKey: jobThreadKey(serviceId),
-                      uid: uid,
-                      typing: typing,
-                    ),
-              ),
+              ref
+                  .read(typingRepositoryProvider)
+                  .setTyping(
+                    threadKey: jobThreadKey(serviceId),
+                    uid: uid,
+                    typing: typing,
+                  ),
+            ),
       onSendImage: uid == null
           ? null
           : (photo, clientMsgId) async {
@@ -99,7 +104,9 @@ class ServiceChatScreen extends ConsumerWidget {
             const Result.err(Failure(FailureCode.unauthenticated)),
           );
         }
-        return ref.read(chatRepositoryProvider).sendMessage(
+        return ref
+            .read(chatRepositoryProvider)
+            .sendMessage(
               serviceId: serviceId,
               senderId: uid,
               senderRole: role,
@@ -107,6 +114,16 @@ class ServiceChatScreen extends ConsumerWidget {
               clientMsgId: clientMsgId,
             );
       },
+      onDeleteMessages: uid == null
+          ? null
+          : (ids) => ref
+                .read(chatRepositoryProvider)
+                .deleteMessages(
+                  serviceId: serviceId,
+                  senderId: uid,
+                  messageIds: ids,
+                ),
+      onDownloadImages: openChatImages,
       onMarkRead: uid == null
           ? null
           : () => ref.read(chatRepositoryProvider).markRead(serviceId, uid),
@@ -137,6 +154,8 @@ class ChatThreadView extends StatefulWidget {
     this.onSendImage,
     this.otherTyping = false,
     this.onTyping,
+    this.onDeleteMessages,
+    this.onDownloadImages,
     super.key,
   });
 
@@ -160,7 +179,7 @@ class ChatThreadView extends StatefulWidget {
   /// composer; without either, the conversation is words only.
   final PhotoPicker? photoPicker;
   final Future<Result<void>> Function(PickedPhoto photo, String clientMsgId)?
-      onSendImage;
+  onSendImage;
 
   /// The other side is typing right now: says so in place of the subtitle.
   final bool otherTyping;
@@ -168,6 +187,14 @@ class ChatThreadView extends StatefulWidget {
   /// Called as this side starts and stops typing. Throttled here, so it is
   /// safe to write straight to the backend from it.
   final ValueChanged<bool>? onTyping;
+
+  /// Retracts messages for both sides. Offered only for this side's own
+  /// messages: nobody deletes what the other person said.
+  final Future<Result<void>> Function(List<String> messageIds)?
+  onDeleteMessages;
+
+  /// Hands the selected photos to the platform to save or open.
+  final Future<void> Function(List<String> imageUrls)? onDownloadImages;
 
   @override
   State<ChatThreadView> createState() => _ChatThreadViewState();
@@ -181,6 +208,11 @@ class _ChatThreadViewState extends State<ChatThreadView> {
   /// A markRead is in flight; the stream echoes each stamp, and without this
   /// every echo would start another one.
   var _markingRead = false;
+
+  /// The messages picked out by a long press. Empty means ordinary reading.
+  final _selected = <String>{};
+
+  bool get _selecting => _selected.isNotEmpty;
 
   /// When this side last said it was typing, and the timer that takes it back.
   ///
@@ -252,6 +284,98 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     });
   }
 
+  void _toggleSelected(ChatMessage message) {
+    setState(() {
+      if (!_selected.remove(message.id)) _selected.add(message.id);
+    });
+  }
+
+  void _clearSelection() => setState(_selected.clear);
+
+  List<ChatMessage> get _selectedMessages => [
+    for (final message in widget.messages)
+      if (_selected.contains(message.id)) message,
+  ];
+
+  /// Only your own words can be taken back, and only once.
+  bool get _canDelete {
+    final uid = widget.myUid;
+    final chosen = _selectedMessages;
+    if (uid == null || widget.onDeleteMessages == null || chosen.isEmpty) {
+      return false;
+    }
+    return chosen.every((m) => m.isMine(uid) && !m.isDeleted);
+  }
+
+  List<String> get _selectedImages => [
+    for (final message in _selectedMessages)
+      if (message.hasImage) message.imageUrl,
+  ];
+
+  Future<void> _copySelected() async {
+    final text = [
+      for (final message in _selectedMessages)
+        if (message.text.isNotEmpty) message.text,
+    ].join('\n');
+
+    _clearSelection();
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Copiado')));
+  }
+
+  /// Asks first: this takes the message off the other person's screen too.
+  Future<void> _deleteSelected() async {
+    final delete = widget.onDeleteMessages;
+    final ids = _selectedMessages.map((m) => m.id).toList();
+    if (delete == null || ids.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          ids.length == 1
+              ? '¿Eliminar el mensaje?'
+              : '¿Eliminar ${ids.length} mensajes?',
+        ),
+        content: const Text(
+          'Se eliminan para los dos. La otra persona verá que eliminaste un '
+          'mensaje.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            key: const Key('confirm-delete'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    _clearSelection();
+    final result = await delete(ids);
+    if (!mounted) return;
+    if (result case Err(:final failure)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(failure.userMessage)));
+    }
+  }
+
+  Future<void> _downloadSelected() async {
+    final download = widget.onDownloadImages;
+    final urls = _selectedImages;
+    if (download == null || urls.isEmpty) return;
+    _clearSelection();
+    await download(urls);
+  }
+
   Future<void> _send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || _sending) return;
@@ -272,9 +396,9 @@ class _ChatThreadViewState extends State<ChatThreadView> {
 
     result.fold(
       (_) => _scrollToBottom(),
-      (failure) => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(failure.userMessage)),
-      ),
+      (failure) =>
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(failure.userMessage))),
     );
   }
 
@@ -311,17 +435,21 @@ class _ChatThreadViewState extends State<ChatThreadView> {
 
     result.fold(
       (_) => _scrollToBottom(),
-      (failure) => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(failure.userMessage)),
-      ),
+      (failure) =>
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(failure.userMessage))),
     );
   }
 
+  /// Back to the newest message after sending one.
+  ///
+  /// The list is reversed, so the newest end is offset zero — not the maximum
+  /// extent, which is now the oldest message in the history.
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
       _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
+        _scroll.position.minScrollExtent,
         duration: Motion.normal,
         curve: Curves.easeOut,
       );
@@ -334,67 +462,247 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     final messages = widget.messages;
     final subtitle = widget.subtitle;
 
-    return Scaffold(
-      backgroundColor: BrandColors.offWhite,
-      appBar: AppBar(
-        title: Column(
+    return PopScope(
+      // Back leaves the selection before it leaves the conversation.
+      canPop: !_selecting,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _clearSelection();
+      },
+      child: Scaffold(
+        backgroundColor: BrandColors.offWhite,
+        appBar: AppBar(
+                title: Column(
+                  children: [
+                    Text(
+                      widget.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    if (subtitle != null && subtitle.isNotEmpty)
+                      Text(
+                        subtitle,
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: BrandColors.grey600),
+                      ),
+                  ],
+                ),
+                actions: widget.actions,
+              ),
+        body: Column(
           children: [
-            Text(widget.title, style: Theme.of(context).textTheme.titleMedium),
-            if (subtitle != null && subtitle.isNotEmpty)
-              Text(
-                subtitle,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: BrandColors.grey600),
+            if (widget.banner != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Insets.lg,
+                  Insets.md,
+                  Insets.lg,
+                  0,
+                ),
+                child: widget.banner,
+              ),
+            Expanded(
+              child: messages.isEmpty
+                  ? EmptyState(
+                      title: 'Sin mensajes',
+                      message: widget.emptyMessage,
+                      icon: Icons.chat_bubble_outline,
+                    )
+                  // Built from the bottom up: a conversation opens on the
+                  // last thing said, which is what somebody came to read, and
+                  // stays put when a message arrives while they scroll back
+                  // through the history.
+                  : ListView.builder(
+                      controller: _scroll,
+                      reverse: true,
+                      padding: const EdgeInsets.all(Insets.lg),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        final message = messages[messages.length - 1 - index];
+                        return _SelectableMessage(
+                          selecting: _selecting,
+                          selected: _selected.contains(message.id),
+                          onLongPress: () => _toggleSelected(message),
+                          onTap: _selecting
+                              ? () => _toggleSelected(message)
+                              : null,
+                          child: _Bubble(
+                            message: message,
+                            isMine: uid != null && message.isMine(uid),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            if (_selecting)
+              _SelectionBar(
+                count: _selected.length,
+                canDelete: _canDelete,
+                canDownload: _selectedImages.isNotEmpty,
+                onClose: _clearSelection,
+                onCopy: _copySelected,
+                onDelete: _deleteSelected,
+                onDownload: _downloadSelected,
+              )
+            else if (widget.canWrite) ...[
+              if (widget.otherTyping) const _TypingLine(),
+              _Composer(
+                controller: _controller,
+                sending: _sending,
+                onSend: () => _send(_controller.text),
+                onAttach:
+                    widget.photoPicker == null || widget.onSendImage == null
+                    ? null
+                    : _attach,
+                onChanged: widget.onTyping == null ? null : _onComposerChanged,
+              ),
+            ] else
+              _ChatClosedNotice(text: widget.closedNotice),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One message, and the checkbox that appears beside it while messages are
+/// being picked out.
+///
+/// The box sits on the right of every row, whoever sent the message: a column
+/// of boxes down one edge is easier to run a thumb along than boxes that
+/// follow the bubbles from side to side.
+class _SelectableMessage extends StatelessWidget {
+  const _SelectableMessage({
+    required this.selecting,
+    required this.selected,
+    required this.onLongPress,
+    required this.onTap,
+    required this.child,
+  });
+
+  final bool selecting;
+  final bool selected;
+  final VoidCallback onLongPress;
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: onLongPress,
+      onTap: onTap,
+      child: ColoredBox(
+        color: selected ? BrandColors.redTint : Colors.transparent,
+        child: Row(
+          children: [
+            // While picking, a tap belongs to the selection — otherwise
+            // tapping a photo would open it full-screen instead of ticking it.
+            Expanded(
+              child: AbsorbPointer(absorbing: selecting, child: child),
+            ),
+            if (selecting)
+              Padding(
+                padding: const EdgeInsets.only(
+                  left: Insets.sm,
+                  bottom: Insets.sm,
+                ),
+                child: Icon(
+                  selected ? Icons.check_circle : Icons.radio_button_unchecked,
+                  key: Key(selected ? 'selected-mark' : 'unselected-mark'),
+                  size: 22,
+                  color: selected ? BrandColors.red : BrandColors.grey400,
+                ),
               ),
           ],
         ),
-        actions: widget.actions,
       ),
-      body: Column(
-        children: [
-          if (widget.banner != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                Insets.lg,
-                Insets.md,
-                Insets.lg,
-                0,
-              ),
-              child: widget.banner,
-            ),
-          Expanded(
-            child: messages.isEmpty
-                ? EmptyState(
-                    title: 'Sin mensajes',
-                    message: widget.emptyMessage,
-                    icon: Icons.chat_bubble_outline,
-                  )
-                : ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.all(Insets.lg),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) => _Bubble(
-                      message: messages[index],
-                      isMine: uid != null && messages[index].isMine(uid),
-                    ),
-                  ),
+    );
+  }
+}
+
+/// What the message box becomes while messages are picked out: how many, and
+/// the three things that can be done with them.
+///
+/// At the bottom, in the box's place, rather than up in the header — the hand
+/// that just long-pressed a bubble is already down there, and the count sits
+/// beside the buttons it applies to.
+class _SelectionBar extends StatelessWidget {
+  const _SelectionBar({
+    required this.count,
+    required this.canDelete,
+    required this.canDownload,
+    required this.onClose,
+    required this.onCopy,
+    required this.onDelete,
+    required this.onDownload,
+  });
+
+  final int count;
+  final bool canDelete;
+  final bool canDownload;
+  final VoidCallback onClose;
+  final VoidCallback onCopy;
+  final VoidCallback onDelete;
+  final VoidCallback onDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: BrandColors.white,
+        border: Border(top: BorderSide(color: BrandColors.grey100)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          // The same breathing room the message box has, so the bottom of the
+          // screen keeps its height when the bar takes the box's place.
+          padding: const EdgeInsets.symmetric(
+            horizontal: Insets.xs,
+            vertical: Insets.md,
           ),
-          if (widget.canWrite) ...[
-            if (widget.otherTyping) const _TypingLine(),
-            _Composer(
-              controller: _controller,
-              sending: _sending,
-              onSend: () => _send(_controller.text),
-              onAttach: widget.photoPicker == null || widget.onSendImage == null
-                  ? null
-                  : _attach,
-              onChanged: widget.onTyping == null ? null : _onComposerChanged,
-            ),
-          ] else
-            _ChatClosedNotice(text: widget.closedNotice),
-        ],
+          child: Row(
+            children: [
+              IconButton(
+                key: const Key('selection-close'),
+                tooltip: 'Salir de la selección',
+                onPressed: onClose,
+                icon: const Icon(Icons.close, color: BrandColors.grey800),
+              ),
+              Expanded(
+                child: Text(
+                  count == 1 ? '1 seleccionado' : '$count seleccionados',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                key: const Key('selection-copy'),
+                tooltip: 'Copiar',
+                onPressed: onCopy,
+                icon: const Icon(Icons.copy_outlined),
+                color: BrandColors.grey800,
+              ),
+              IconButton(
+                key: const Key('selection-delete'),
+                tooltip: 'Eliminar para todos',
+                // Only your own messages, and only while they still say
+                // something.
+                onPressed: canDelete ? onDelete : null,
+                icon: const Icon(Icons.delete_outline),
+                color: BrandColors.danger,
+              ),
+              IconButton(
+                key: const Key('selection-download'),
+                tooltip: 'Guardar foto',
+                // Nothing to save unless a photo is among the chosen.
+                onPressed: canDownload ? onDownload : null,
+                // Reads as "keep this on my phone" rather than the thin
+                // browser-download arrow.
+                icon: const Icon(Icons.save_alt_rounded),
+                color: BrandColors.grey800,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -432,9 +740,29 @@ class _Bubble extends StatelessWidget {
           boxShadow: isMine ? null : Shadows.card,
         ),
         child: Column(
-          crossAxisAlignment:
-              isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: isMine
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
           children: [
+            if (message.isDeleted)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.block,
+                    size: 14,
+                    color: isMine ? Colors.white70 : BrandColors.grey400,
+                  ),
+                  const SizedBox(width: Insets.xs),
+                  Text(
+                    'Se eliminó este mensaje',
+                    style: text.bodyMedium?.copyWith(
+                      fontStyle: FontStyle.italic,
+                      color: isMine ? Colors.white70 : BrandColors.grey600,
+                    ),
+                  ),
+                ],
+              ),
             if (message.hasImage) ...[
               _ChatImage(url: message.imageUrl),
               if (message.text.isNotEmpty) const SizedBox(height: Insets.sm),
@@ -459,8 +787,8 @@ class _Bubble extends StatelessWidget {
                     color: isMine ? Colors.white70 : BrandColors.grey400,
                   ),
                 ),
-                // Only on your own messages: the other side's tell you nothing.
-                if (isMine) ...[
+                // Only on your own messages, and not on a retracted one.
+                if (isMine && !message.isDeleted) ...[
                   const SizedBox(width: Insets.xs),
                   _DeliveryTick(message: message),
                 ],
@@ -525,10 +853,8 @@ class _TypingLine extends StatelessWidget {
       child: Text(
         'Escribiendo…',
         key: const Key('typing-indicator'),
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: BrandColors.success,
-              fontWeight: FontWeight.w600,
-            ),
+        style: Theme.of(context).textTheme.bodySmall
+            ?.copyWith(color: BrandColors.success, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -680,6 +1006,23 @@ class _ImageViewer extends StatelessWidget {
   }
 }
 
+/// Hands the chosen photos to the platform.
+///
+/// Opening rather than writing to the gallery: a browser downloads it, a phone
+/// shows it in the viewer where saving is one tap, and neither needs a
+/// permission prompt in the middle of a conversation.
+Future<void> openChatImages(List<String> urls) async {
+  for (final url in urls) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) continue;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on Object catch (error) {
+      debugPrint('Chat photo not opened: $error');
+    }
+  }
+}
+
 /// Shown in place of a photo that will not load or decode.
 const _brokenImage = Padding(
   padding: EdgeInsets.all(Insets.lg),
@@ -721,9 +1064,7 @@ class _ChatClosedNotice extends StatelessWidget {
         child: Text(
           text,
           textAlign: TextAlign.center,
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
+          style: Theme.of(context).textTheme.bodyMedium
               ?.copyWith(color: BrandColors.grey600),
         ),
       ),

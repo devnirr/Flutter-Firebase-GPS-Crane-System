@@ -1119,6 +1119,44 @@ class DemoBackend {
     if (changed) _chatRequestMessagesController.add(id);
   }
 
+  /// Retracts a sender's own messages in a job's chat, the way the rules let
+  /// them: the words and the photo go, a tombstone stays.
+  void retractMessages(String serviceId, String senderId, List<String> ids) {
+    if (_retract(_messages[serviceId], senderId, ids)) {
+      _messagesController.add(serviceId);
+    }
+  }
+
+  /// The same, in a conversation opened from the map.
+  void retractChatRequestMessages(
+    String requestId,
+    String senderId,
+    List<String> ids,
+  ) {
+    if (_retract(_chatRequestMessages[requestId], senderId, ids)) {
+      _chatRequestMessagesController.add(requestId);
+    }
+  }
+
+  bool _retract(List<ChatMessage>? messages, String senderId, List<String> ids) {
+    if (messages == null) return false;
+    final wanted = ids.toSet();
+    var changed = false;
+    for (var i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      // Only your own, and only once.
+      if (!wanted.contains(message.id)) continue;
+      if (message.senderId != senderId || message.isDeleted) continue;
+      messages[i] = message.copyWith(
+        text: '',
+        imageUrl: '',
+        deletedAt: _now(),
+      );
+      changed = true;
+    }
+    return changed;
+  }
+
   /// How long one keystroke keeps the indicator alive, as in the real one.
   static const _typingFreshness = Duration(seconds: 8);
 

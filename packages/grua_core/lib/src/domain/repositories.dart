@@ -254,6 +254,17 @@ abstract interface class ChatRepository {
     required String contentType,
   });
 
+  /// Retracts messages for both sides: the words and the photo are cleared and
+  /// a tombstone is left in their place.
+  ///
+  /// [senderId] may only be the caller, and the rules refuse anything that is
+  /// not their own message — nobody erases what the other side said.
+  Future<Result<void>> deleteMessages({
+    required String serviceId,
+    required String senderId,
+    required List<String> messageIds,
+  });
+
   Future<Result<void>> markRead(String serviceId, String readerId);
 }
 
@@ -288,6 +299,13 @@ abstract interface class ChatRequestRepository {
     required String requestId,
     required Uint8List bytes,
     required String contentType,
+  });
+
+  /// As [ChatRepository.deleteMessages].
+  Future<Result<void>> deleteMessages({
+    required String requestId,
+    required String senderId,
+    required List<String> messageIds,
   });
 
   Future<Result<void>> markRead(String requestId, String readerId);

@@ -757,6 +757,14 @@ class FirestoreChatRepository implements ChatRepository {
           }));
 
   @override
+  Future<Result<void>> deleteMessages({
+    required String serviceId,
+    required String senderId,
+    required List<String> messageIds,
+  }) =>
+      _retractMessages(Paths.messageWrites(serviceId), messageIds);
+
+  @override
   Future<Result<String>> uploadImage({
     required String serviceId,
     required Uint8List bytes,
@@ -797,6 +805,26 @@ class FirestoreChatRepository implements ChatRepository {
 // ---------------------------------------------------------------------------
 // Money
 // ---------------------------------------------------------------------------
+
+
+/// The write a retraction is: blank the content, stamp the time. Kept in one
+/// place because `firestore.rules` matches on exactly these three fields.
+Future<Result<void>> _retractMessages(
+  CollectionReference<Map<String, dynamic>> messages,
+  List<String> messageIds,
+) =>
+    _guard(() async {
+      if (messageIds.isEmpty) return;
+      final batch = FirebaseFirestore.instance.batch();
+      for (final id in messageIds.take(50)) {
+        batch.update(messages.doc(id), {
+          'text': '',
+          'imageUrl': '',
+          'deletedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    });
 
 /// One photo into `chat/{threadId}/`, shared by both conversations.
 ///
@@ -884,6 +912,14 @@ class FirestoreChatRequestRepository implements ChatRequestRepository {
           if (imageUrl.isNotEmpty) 'imageUrl': imageUrl,
         }),
       );
+
+  @override
+  Future<Result<void>> deleteMessages({
+    required String requestId,
+    required String senderId,
+    required List<String> messageIds,
+  }) =>
+      _retractMessages(Paths.chatRequestMessageWrites(requestId), messageIds);
 
   @override
   Future<Result<String>> uploadImage({
