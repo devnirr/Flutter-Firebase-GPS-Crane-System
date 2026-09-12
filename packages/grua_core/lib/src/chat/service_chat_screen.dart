@@ -7,12 +7,14 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../domain/enums.dart';
 import '../domain/failures.dart';
+import '../domain/models/chat_prefs.dart';
 import '../domain/models/dispatch_models.dart';
 import '../domain/repositories.dart';
 import '../media/photo_picker.dart';
 import '../providers.dart';
 import '../theme/brand.dart';
 import '../theme/widgets/brand_widgets.dart';
+import '../theme/widgets/driver_avatar.dart';
 import '../utils/date_time_do.dart';
 
 /// Chat between the customer and the assigned chofer of a job, in both apps.
@@ -44,11 +46,45 @@ class ServiceChatScreen extends ConsumerWidget {
     // The person on the other end of the conversation.
     final otherName =
         (isDriver ? service?.clientName : service?.driverName) ?? '';
+    final otherUid = (isDriver ? service?.clientId : service?.driverId) ?? '';
+
+    // What this person did to this conversation: their own doing, on their own
+    // screen. The other side sees none of it.
+    final threadKey = jobThreadKey(serviceId);
+    final prefs =
+        ref.watch(chatThreadPrefsProvider(threadKey)).value ?? ChatThreadPrefs.none;
+    final blocked =
+        ref.watch(blockedUsersProvider).value?.contains(otherUid) ?? false;
+    final blockedByOther =
+        ref.watch(blockedByProvider(otherUid)).value ?? false;
 
     return ChatThreadView(
       title: otherName.isNotEmpty
           ? otherName
           : (isDriver ? 'Cliente' : 'Chofer'),
+      // Only the chofer has a stored photo; the customer's face falls back to
+      // their initials, which is what the avatar draws without a URL.
+      photoUrl: isDriver ? '' : (service?.driverPhotoUrl ?? ''),
+      // On a job the two sides already have each other's number.
+      phoneNumber: (isDriver ? service?.clientPhone : service?.driverPhone) ?? '',
+      hiddenBefore: prefs.clearedAt,
+      blocked: blocked,
+      blockedByOther: blockedByOther,
+      onSetBlocked: uid == null || otherUid.isEmpty
+          ? null
+          : ({required blocked}) => ref
+                .read(chatPrefsRepositoryProvider)
+                .setBlocked(uid: uid, otherUid: otherUid, blocked: blocked),
+      onClearChat: uid == null
+          ? null
+          : () => ref
+                .read(chatPrefsRepositoryProvider)
+                .clearThread(uid: uid, threadKey: threadKey),
+      onDeleteChat: uid == null
+          ? null
+          : () => ref
+                .read(chatPrefsRepositoryProvider)
+                .deleteThread(uid: uid, threadKey: threadKey),
       subtitle: service?.status.label,
       messages: messages,
       myUid: uid,
@@ -147,6 +183,15 @@ class ChatThreadView extends StatefulWidget {
     required this.emptyMessage,
     required this.onSend,
     this.subtitle,
+    this.photoUrl = '',
+    this.phoneNumber = '',
+    this.hiddenBefore,
+    this.blocked = false,
+    this.blockedByOther = false,
+    this.onSetBlocked,
+    this.onClearChat,
+    this.onDeleteChat,
+    this.extraMenuItems = const [],
     this.onMarkRead,
     this.banner,
     this.actions = const [],
@@ -161,6 +206,38 @@ class ChatThreadView extends StatefulWidget {
 
   final String title;
   final String? subtitle;
+
+  /// The other person's face in the header. Empty draws their initials.
+  final String photoUrl;
+
+  /// Who the call button dials. Empty says we do not have their number yet.
+  final String phoneNumber;
+
+  /// This person emptied the conversation up to here: messages sent at or
+  /// before it are theirs to not see again. Nothing is removed for the other
+  /// side — see [onClearChat].
+  final DateTime? hiddenBefore;
+
+  /// This person blocked the other one. They can still read the history, and
+  /// the composer says why it is gone.
+  final bool blocked;
+
+  /// The other person blocked *them*. Writing is refused by the rules, so the
+  /// screen says so instead of letting a message fail on its way out.
+  final bool blockedByOther;
+
+  /// Blocks or unblocks the other person. Without it the menu offers neither.
+  final Future<Result<void>> Function({required bool blocked})? onSetBlocked;
+
+  /// Empties this conversation, and empties-and-hides it, for this person
+  /// only. Without them the menu offers neither.
+  final Future<Result<void>> Function()? onClearChat;
+  final Future<Result<void>> Function()? onDeleteChat;
+
+  /// What this particular conversation adds to the ⋮ menu — "Terminar
+  /// conversación" on a chat request, nothing on a job.
+  final List<PopupMenuEntry<void>> extraMenuItems;
+
   final List<ChatMessage> messages;
   final String? myUid;
 
@@ -188,8 +265,8 @@ class ChatThreadView extends StatefulWidget {
   /// safe to write straight to the backend from it.
   final ValueChanged<bool>? onTyping;
 
-  /// Retracts messages for both sides. Offered only for this side's own
-  /// messages: nobody deletes what the other person said.
+  /// Retracts messages for both sides — either side's, since a conversation
+  /// belongs to the two people in it.
   final Future<Result<void>> Function(List<String> messageIds)?
   onDeleteMessages;
 
@@ -212,7 +289,16 @@ class _ChatThreadViewState extends State<ChatThreadView> {
   /// The messages picked out by a long press. Empty means ordinary reading.
   final _selected = <String>{};
 
-  bool get _selecting => _selected.isNotEmpty;
+  /// Looking for something said earlier: the header becomes a search box and
+  /// the list narrows to what matches.
+  final _search = TextEditingController();
+  var _searching = false;
+
+  /// Picking messages out, whether or not anything is ticked yet: the menu
+  /// can start the mode with nothing chosen.
+  var _selectionMode = false;
+
+  bool get _selecting => _selectionMode;
 
   /// When this side last said it was typing, and the timer that takes it back.
   ///
@@ -243,6 +329,7 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     _typingStop?.cancel();
     if (_typingSince != null) widget.onTyping?.call(false);
     _controller.dispose();
+    _search.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -286,31 +373,286 @@ class _ChatThreadViewState extends State<ChatThreadView> {
 
   void _toggleSelected(ChatMessage message) {
     setState(() {
+      _selectionMode = true;
       if (!_selected.remove(message.id)) _selected.add(message.id);
     });
   }
 
-  void _clearSelection() => setState(_selected.clear);
+  void _clearSelection() => setState(() {
+    _selectionMode = false;
+    _selected.clear();
+  });
 
   List<ChatMessage> get _selectedMessages => [
     for (final message in widget.messages)
       if (_selected.contains(message.id)) message,
   ];
 
-  /// Only your own words can be taken back, and only once.
+  /// Anything in the conversation can be taken out of it, yours or theirs —
+  /// and only once, since a tombstone has nothing left to delete.
   bool get _canDelete {
-    final uid = widget.myUid;
     final chosen = _selectedMessages;
-    if (uid == null || widget.onDeleteMessages == null || chosen.isEmpty) {
-      return false;
-    }
-    return chosen.every((m) => m.isMine(uid) && !m.isDeleted);
+    if (widget.onDeleteMessages == null || chosen.isEmpty) return false;
+    return chosen.every((m) => !m.isDeleted);
   }
 
   List<String> get _selectedImages => [
     for (final message in _selectedMessages)
       if (message.hasImage) message.imageUrl,
   ];
+
+  /// What the ⋮ menu offers. The last three are only there when the screen
+  /// knows how to do them.
+  List<PopupMenuEntry<void>> _menuItems() => [
+    _menuItem(
+      key: const Key('menu-select'),
+      icon: Icons.check_box_outlined,
+      label: 'Seleccionar mensajes',
+      onTap: () => setState(() => _selectionMode = true),
+    ),
+    _menuItem(
+      key: const Key('menu-export'),
+      icon: Icons.ios_share,
+      label: 'Exportar chat',
+      onTap: _exportChat,
+    ),
+    if (widget.onSetBlocked != null)
+      _menuItem(
+        key: const Key('menu-block'),
+        icon: Icons.block,
+        label: widget.blocked ? 'Desbloquear' : 'Bloquear',
+        onTap: () => _setBlocked(blocked: !widget.blocked),
+      ),
+    if (widget.onClearChat != null)
+      _menuItem(
+        key: const Key('menu-clear'),
+        icon: Icons.remove_circle_outline,
+        label: 'Vaciar chat',
+        onTap: _clearChat,
+      ),
+    if (widget.onDeleteChat != null)
+      _menuItem(
+        key: const Key('menu-delete'),
+        icon: Icons.delete_outline,
+        label: 'Eliminar chat',
+        onTap: _deleteChat,
+      ),
+    ...widget.extraMenuItems,
+  ];
+
+  /// A menu row. The work runs after the menu closes, so a dialog of its own
+  /// has a route to sit on.
+  PopupMenuItem<void> _menuItem({
+    required Key key,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) =>
+      PopupMenuItem<void>(
+        key: key,
+        onTap: onTap,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 20, color: BrandColors.grey800),
+            const SizedBox(width: Insets.md),
+            // Flexible: a narrow menu shortens the label rather than
+            // overflowing the row.
+            Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+      );
+
+  /// The conversation as plain text, on the clipboard.
+  ///
+  /// Copying rather than writing a file: it lands in WhatsApp, a mail, or a
+  /// note without asking for storage permission anywhere.
+  Future<void> _exportChat() async {
+    final messages = _visibleMessages;
+    if (messages.isEmpty) {
+      _say('No hay mensajes para exportar.');
+      return;
+    }
+
+    final uid = widget.myUid;
+    final lines = <String>['Chat con ${widget.title}', ''];
+    for (final message in messages) {
+      final who = uid != null && message.isMine(uid) ? 'Tú' : widget.title;
+      final when = message.sentAt;
+      final what = message.isDeleted
+          ? '[mensaje eliminado]'
+          : message.hasImage && message.text.isEmpty
+          ? '[foto]'
+          : message.hasImage
+          ? '[foto] ${message.text}'
+          : message.text;
+      lines.add(
+        when == null ? '$who: $what' : '${DoTime.dateAndTime(when)} — $who: $what',
+      );
+    }
+
+    await Clipboard.setData(ClipboardData(text: lines.join('\n')));
+    _say('Chat copiado. Pégalo donde quieras guardarlo.');
+  }
+
+  /// Says, in as many words, that the other side will not receive this.
+  ///
+  /// The rules refuse the write anyway; catching it here means the answer is
+  /// "te bloqueó" instead of a failure the person cannot act on.
+  Future<bool> _refusedByBlock() async {
+    if (!widget.blockedByOther) return false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: const Key('blocked-by-other-dialog'),
+        title: const Text('Te bloquearon'),
+        content: Text(
+          '${widget.title} te bloqueó, así que no recibirá tus mensajes en '
+          'esta conversación.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('blocked-by-other-ok'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Entendido'),
+          ),
+        ],
+      ),
+    );
+    return true;
+  }
+
+  Future<void> _setBlocked({required bool blocked}) async {
+    final set = widget.onSetBlocked;
+    if (set == null) return;
+
+    if (blocked) {
+      final confirmed = await _confirm(
+        key: const Key('confirm-block'),
+        title: '¿Bloquear a ${widget.title}?',
+        message: 'No podrás escribirle en esta conversación. La otra persona '
+            'no recibe ningún aviso.',
+        action: 'Bloquear',
+      );
+      if (!confirmed) return;
+    }
+
+    final result = await set(blocked: blocked);
+    if (result case Err(:final failure)) {
+      _say(failure.userMessage);
+      return;
+    }
+    _say(blocked ? 'Bloqueaste a ${widget.title}.' : 'Desbloqueaste a ${widget.title}.');
+  }
+
+  Future<void> _clearChat() async {
+    final clear = widget.onClearChat;
+    if (clear == null) return;
+    final confirmed = await _confirm(
+      key: const Key('confirm-clear'),
+      title: '¿Vaciar el chat?',
+      message: 'Se borran los mensajes de tu pantalla. La otra persona sigue '
+          'viendo los suyos.',
+      action: 'Vaciar',
+    );
+    if (!confirmed) return;
+
+    final result = await clear();
+    if (result case Err(:final failure)) _say(failure.userMessage);
+  }
+
+  Future<void> _deleteChat() async {
+    final delete = widget.onDeleteChat;
+    if (delete == null) return;
+    final confirmed = await _confirm(
+      key: const Key('confirm-delete-chat'),
+      title: '¿Eliminar el chat?',
+      message: 'Sale de tu lista y se vacía. Vuelve si te escriben de nuevo.',
+      action: 'Eliminar',
+    );
+    if (!confirmed) return;
+
+    final result = await delete();
+    if (result case Err(:final failure)) {
+      _say(failure.userMessage);
+      return;
+    }
+    // Nothing left to look at on this screen.
+    if (mounted) await Navigator.of(context).maybePop();
+  }
+
+  /// The one question these actions all ask before doing anything.
+  Future<bool> _confirm({
+    required Key key,
+    required String title,
+    required String message,
+    required String action,
+  }) async {
+    final answer = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            key: key,
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return answer ?? false;
+  }
+
+  String get _query => _search.text.trim().toLowerCase();
+
+  /// What the list shows: the conversation minus whatever this person emptied
+  /// out of it, and minus what the search leaves behind.
+  List<ChatMessage> get _visibleMessages {
+    final query = _query;
+    final cleared = ChatThreadPrefs(clearedAt: widget.hiddenBefore);
+    return [
+      for (final message in widget.messages)
+        if (!cleared.hides(message) &&
+            (query.isEmpty || message.text.toLowerCase().contains(query)))
+          message,
+    ];
+  }
+
+  void _startSearch() => setState(() => _searching = true);
+
+  void _stopSearch() => setState(() {
+    _searching = false;
+    _search.clear();
+  });
+
+  /// Hands the number to the phone's dialer rather than placing the call: the
+  /// customer and the chofer talk on their own line, as they do today.
+  Future<void> _call() async {
+    final number = widget.phoneNumber;
+    if (number.isEmpty) {
+      _say('Todavía no tenemos su número de teléfono.');
+      return;
+    }
+    final opened = await launchUrl(Uri(scheme: 'tel', path: number));
+    if (!opened) _say('No se pudo abrir el teléfono.');
+  }
+
+  /// There is no video service behind this yet — better to say so than to
+  /// open a screen that never connects.
+  void _videoCall() => _say('Las videollamadas todavía no están disponibles.');
+
+  void _say(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<void> _copySelected() async {
     final text = [
@@ -341,8 +683,8 @@ class _ChatThreadViewState extends State<ChatThreadView> {
               : '¿Eliminar ${ids.length} mensajes?',
         ),
         content: const Text(
-          'Se eliminan para los dos. La otra persona verá que eliminaste un '
-          'mensaje.',
+          'Se eliminan para los dos. En su lugar queda el aviso de que se '
+          'eliminó un mensaje.',
         ),
         actions: [
           TextButton(
@@ -379,6 +721,7 @@ class _ChatThreadViewState extends State<ChatThreadView> {
   Future<void> _send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || _sending) return;
+    if (await _refusedByBlock()) return;
 
     setState(() => _sending = true);
     _controller.clear();
@@ -408,6 +751,8 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     final picker = widget.photoPicker;
     final send = widget.onSendImage;
     if (picker == null || send == null || _sending) return;
+
+    if (await _refusedByBlock() || !mounted) return;
 
     final source = await askPhotoSource(context);
     if (source == null || !mounted) return;
@@ -459,33 +804,125 @@ class _ChatThreadViewState extends State<ChatThreadView> {
   @override
   Widget build(BuildContext context) {
     final uid = widget.myUid;
-    final messages = widget.messages;
+    final messages = _visibleMessages;
     final subtitle = widget.subtitle;
 
     return PopScope(
-      // Back leaves the selection before it leaves the conversation.
-      canPop: !_selecting,
+      // Back leaves the selection, then the search, before it leaves the
+      // conversation.
+      canPop: !_selecting && !_searching,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _clearSelection();
+        if (didPop) return;
+        if (_selecting) {
+          _clearSelection();
+        } else {
+          _stopSearch();
+        }
       },
       child: Scaffold(
         backgroundColor: BrandColors.offWhite,
-        appBar: AppBar(
-                title: Column(
-                  children: [
-                    Text(
-                      widget.title,
-                      style: Theme.of(context).textTheme.titleMedium,
+        appBar: _searching
+            ? AppBar(
+                titleSpacing: 0,
+                leading: IconButton(
+                  key: const Key('chat-search-close'),
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: _stopSearch,
+                ),
+                title: TextField(
+                  key: const Key('chat-search-field'),
+                  controller: _search,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    hintText: 'Buscar en el chat…',
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                actions: [
+                  if (_search.text.isNotEmpty)
+                    IconButton(
+                      key: const Key('chat-search-clear'),
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(_search.clear),
                     ),
-                    if (subtitle != null && subtitle.isNotEmpty)
-                      Text(
-                        subtitle,
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(color: BrandColors.grey600),
+                ],
+              )
+            : AppBar(
+                // Beside the face, as a conversation reads everywhere else,
+                // rather than centred over it.
+                centerTitle: false,
+                titleSpacing: 0,
+                title: Row(
+                  children: [
+                    DriverAvatar(
+                      key: const Key('chat-avatar'),
+                      name: widget.title,
+                      photoUrl: widget.photoUrl,
+                      size: 36,
+                    ),
+                    const SizedBox(width: Insets.md),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          if (subtitle != null && subtitle.isNotEmpty)
+                            Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: BrandColors.grey600),
+                            ),
+                        ],
                       ),
+                    ),
                   ],
                 ),
-                actions: widget.actions,
+                actions: [
+                  // Compact, so four actions and a name still fit a phone.
+                  IconButton(
+                    key: const Key('chat-video-call'),
+                    tooltip: 'Videollamada',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.videocam_outlined),
+                    onPressed: _videoCall,
+                  ),
+                  IconButton(
+                    key: const Key('chat-call'),
+                    tooltip: 'Llamar',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.call_outlined),
+                    onPressed: _call,
+                  ),
+                  IconButton(
+                    key: const Key('chat-search'),
+                    tooltip: 'Buscar en el chat',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.search),
+                    onPressed: _startSearch,
+                  ),
+                  ...widget.actions,
+                  PopupMenuButton<void>(
+                    key: const Key('chat-menu'),
+                    tooltip: 'Más opciones',
+                    icon: const Icon(Icons.more_vert),
+                    // Drops below the header rather than over it: the name of
+                    // whoever you are talking to stays readable while you
+                    // choose. The offset clears the header's edge, so the menu
+                    // reads as its own card instead of hanging off the bar.
+                    position: PopupMenuPosition.under,
+                    offset: const Offset(0, Insets.sm),
+                    itemBuilder: (context) => _menuItems(),
+                  ),
+                ],
               ),
         body: Column(
           children: [
@@ -502,9 +939,14 @@ class _ChatThreadViewState extends State<ChatThreadView> {
             Expanded(
               child: messages.isEmpty
                   ? EmptyState(
-                      title: 'Sin mensajes',
-                      message: widget.emptyMessage,
-                      icon: Icons.chat_bubble_outline,
+                      title: _query.isEmpty ? 'Sin mensajes' : 'Sin resultados',
+                      message: _query.isEmpty
+                          ? widget.emptyMessage
+                          : 'Ningún mensaje de esta conversación dice '
+                                '"${_search.text.trim()}".',
+                      icon: _query.isEmpty
+                          ? Icons.chat_bubble_outline
+                          : Icons.search_off,
                     )
                   // Built from the bottom up: a conversation opens on the
                   // last thing said, which is what somebody came to read, and
@@ -535,12 +977,18 @@ class _ChatThreadViewState extends State<ChatThreadView> {
             if (_selecting)
               _SelectionBar(
                 count: _selected.length,
+                canCopy: _selected.isNotEmpty,
                 canDelete: _canDelete,
                 canDownload: _selectedImages.isNotEmpty,
                 onClose: _clearSelection,
                 onCopy: _copySelected,
                 onDelete: _deleteSelected,
                 onDownload: _downloadSelected,
+              )
+            else if (widget.blocked)
+              _BlockedNotice(
+                name: widget.title,
+                onUnblock: () => _setBlocked(blocked: false),
               )
             else if (widget.canWrite) ...[
               if (widget.otherTyping) const _TypingLine(),
@@ -628,6 +1076,7 @@ class _SelectableMessage extends StatelessWidget {
 class _SelectionBar extends StatelessWidget {
   const _SelectionBar({
     required this.count,
+    required this.canCopy,
     required this.canDelete,
     required this.canDownload,
     required this.onClose,
@@ -637,6 +1086,7 @@ class _SelectionBar extends StatelessWidget {
   });
 
   final int count;
+  final bool canCopy;
   final bool canDelete;
   final bool canDownload;
   final VoidCallback onClose;
@@ -677,7 +1127,7 @@ class _SelectionBar extends StatelessWidget {
               IconButton(
                 key: const Key('selection-copy'),
                 tooltip: 'Copiar',
-                onPressed: onCopy,
+                onPressed: canCopy ? onCopy : null,
                 icon: const Icon(Icons.copy_outlined),
                 color: BrandColors.grey800,
               ),
@@ -922,6 +1372,7 @@ class _Composer extends StatelessWidget {
               ),
               const SizedBox(width: Insets.sm),
               IconButton.filled(
+                key: const Key('chat-send'),
                 onPressed: sending ? null : onSend,
                 style: IconButton.styleFrom(
                   backgroundColor: BrandColors.red,
@@ -1047,6 +1498,43 @@ Widget chatImage(String url, {BoxFit fit = BoxFit.cover}) {
     webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
     errorBuilder: broken,
   );
+}
+
+/// What the message box becomes for somebody you blocked: the history stays
+/// readable, and one tap undoes it.
+class _BlockedNotice extends StatelessWidget {
+  const _BlockedNotice({required this.name, required this.onUnblock});
+
+  final String name;
+  final VoidCallback onUnblock;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('chat-blocked-notice'),
+      width: double.infinity,
+      color: BrandColors.white,
+      padding: const EdgeInsets.all(Insets.lg),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Bloqueaste a $name.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: BrandColors.grey600),
+            ),
+            TextButton(
+              key: const Key('chat-unblock'),
+              onPressed: onUnblock,
+              child: const Text('Desbloquear'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ChatClosedNotice extends StatelessWidget {

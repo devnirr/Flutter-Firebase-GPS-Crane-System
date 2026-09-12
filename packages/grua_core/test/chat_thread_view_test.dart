@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grua_core/grua_core.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -28,14 +29,22 @@ Future<void> main() async {
 
   Widget harness({
     required List<ChatMessage> messages,
+    String photoUrl = '',
     bool otherTyping = false,
+    bool blocked = false,
+    bool blockedByOther = false,
+    DateTime? hiddenBefore,
     ValueChanged<bool>? onTyping,
     Future<Result<void>> Function(List<String> ids)? onDeleteMessages,
     Future<void> Function(List<String> urls)? onDownloadImages,
+    Future<Result<void>> Function({required bool blocked})? onSetBlocked,
+    Future<Result<void>> Function()? onClearChat,
+    Future<Result<void>> Function()? onDeleteChat,
   }) => MaterialApp(
     theme: AppTheme.phone(),
     home: ChatThreadView(
       title: 'Chofer',
+      photoUrl: photoUrl,
       subtitle: 'Grúa en camino',
       messages: messages,
       myUid: me,
@@ -43,7 +52,13 @@ Future<void> main() async {
       closedNotice: 'Cerrado',
       emptyMessage: 'Sin mensajes',
       otherTyping: otherTyping,
+      blocked: blocked,
+      blockedByOther: blockedByOther,
+      hiddenBefore: hiddenBefore,
       onTyping: onTyping,
+      onSetBlocked: onSetBlocked,
+      onClearChat: onClearChat,
+      onDeleteChat: onDeleteChat,
       onDeleteMessages: onDeleteMessages,
       onDownloadImages: onDownloadImages,
       onSend: (_, _) async => const Result.ok(null),
@@ -89,6 +104,86 @@ Future<void> main() async {
     // Four messages, three ticks: the other side's carries none, since what
     // they know about my reading is none of my business here.
     expect(find.byIcon(Icons.done_all), findsOneWidget);
+  });
+
+  testWidgets('the header shows who you are talking to', (tester) async {
+    await tester.pumpWidget(harness(messages: const []));
+    await tester.pump();
+
+    final avatar = find.byKey(const Key('chat-avatar'));
+    expect(avatar, findsOneWidget);
+    expect(tester.widget<DriverAvatar>(avatar).name, 'Chofer');
+
+    // Beside the name, not behind it.
+    expect(
+      tester.getRect(avatar).right,
+      lessThanOrEqualTo(tester.getRect(find.text('Chofer')).left),
+    );
+
+    // No photo yet: their initial stands in for it.
+    expect(find.text('C'), findsOneWidget);
+
+    // With one, the photo itself is drawn.
+    await tester.pumpWidget(
+      harness(messages: const [], photoUrl: 'https://example/chofer.jpg'),
+    );
+    await tester.pump();
+    expect(
+      find.descendant(of: avatar, matching: find.byType(Image)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('the header calls, video-calls and searches', (tester) async {
+    final sentAt = DateTime.utc(2026, 9, 12, 3, 10);
+    ChatMessage said(String id, String text) => ChatMessage(
+      id: id,
+      senderId: them,
+      senderRole: UserRole.driver,
+      text: text,
+      clientMsgId: id,
+      sentAt: sentAt,
+    );
+
+    await tester.pumpWidget(
+      harness(
+        messages: [
+          said('m-1', 'Voy llegando a la esquina'),
+          said('m-2', 'El pago es en efectivo'),
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('chat-video-call')), findsOneWidget);
+    expect(find.byKey(const Key('chat-call')), findsOneWidget);
+
+    // Searching narrows the conversation to what matches, and says so when
+    // nothing does.
+    await tester.tap(find.byKey(const Key('chat-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('chat-search-field')), 'pago');
+    await tester.pumpAndSettle();
+    expect(find.text('El pago es en efectivo'), findsOneWidget);
+    expect(find.text('Voy llegando a la esquina'), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('chat-search-field')), 'grúa');
+    await tester.pumpAndSettle();
+    expect(find.text('Sin resultados'), findsOneWidget);
+
+    // And leaving it gives the whole conversation back.
+    await tester.tap(find.byKey(const Key('chat-search-close')));
+    await tester.pumpAndSettle();
+    expect(find.text('Voy llegando a la esquina'), findsOneWidget);
+    expect(find.byKey(const Key('chat-search-field')), findsNothing);
+
+    // The video call says plainly that it is not there yet.
+    await tester.tap(find.byKey(const Key('chat-video-call')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Las videollamadas todavía no están disponibles.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('the other side typing shows just above the message box', (
@@ -225,43 +320,62 @@ Future<void> main() async {
       expect(find.byKey(const Key('selected-mark')), findsNothing);
     });
 
-    testWidgets('delete is offered for your own words only', (tester) async {
+    testWidgets('either side of the conversation can be deleted', (
+      tester,
+    ) async {
       var asked = <String>[];
-      await tester.pumpWidget(
-        harness(
-          messages: [mine('m-1'), theirs('m-2')],
-          onDeleteMessages: (ids) async {
-            asked = ids;
-            return const Result.ok(null);
-          },
-        ),
+      Widget view(List<ChatMessage> messages) => harness(
+        messages: messages,
+        onDeleteMessages: (ids) async {
+          asked = ids;
+          return const Result.ok(null);
+        },
       );
+
+      await tester.pumpWidget(view([mine('m-1'), theirs('m-2')]));
       await tester.pump();
 
-      // Theirs: nothing to take back.
+      Object? deleteAction() => tester
+          .widget<IconButton>(find.byKey(const Key('selection-delete')))
+          .onPressed;
+
+      // What they said is as deletable as what I said: both, together.
       await tester.longPress(find.text('Suyo'));
       await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<IconButton>(find.byKey(const Key('selection-delete')))
-            .onPressed,
-        isNull,
-      );
+      expect(deleteAction(), isNotNull);
+      await tester.tap(find.text('Mío'));
+      await tester.pumpAndSettle();
+      expect(deleteAction(), isNotNull);
 
-      // Mine, and it asks before taking it off both screens.
-      await tester.tap(find.text('Suyo'));
-      await tester.pumpAndSettle();
-      await tester.longPress(find.text('Mío'));
-      await tester.pumpAndSettle();
+      // And it asks before taking them off both screens.
       await tester.tap(find.byKey(const Key('selection-delete')));
       await tester.pumpAndSettle();
-      expect(find.text('¿Eliminar el mensaje?'), findsOneWidget);
+      expect(find.text('¿Eliminar 2 mensajes?'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('confirm-delete')));
       await tester.pumpAndSettle();
-      expect(asked, ['m-1']);
+      expect(asked, ['m-1', 'm-2']);
       // The selection is over once it has been acted on.
       expect(find.byKey(const Key('selection-close')), findsNothing);
+
+      // A message already gone has nothing left to delete.
+      await tester.pumpWidget(
+        view([
+          ChatMessage(
+            id: 'm-3',
+            senderId: them,
+            senderRole: UserRole.driver,
+            text: '',
+            clientMsgId: 'm-3',
+            sentAt: sentAt,
+            deletedAt: sentAt,
+          ),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('Se eliminó este mensaje'));
+      await tester.pumpAndSettle();
+      expect(deleteAction(), isNull);
     });
 
     testWidgets('download waits for a photo to be among the chosen', (
@@ -321,6 +435,237 @@ Future<void> main() async {
       expect(find.byKey(const Key('tick-sent')), findsNothing);
       expect(find.byKey(const Key('tick-read')), findsNothing);
     });
+  });
+
+  group('the more menu', () {
+    final sentAt = DateTime.utc(2026, 9, 12, 4, 15);
+    ChatMessage said(String id, String from, String text) => ChatMessage(
+      id: id,
+      senderId: from,
+      senderRole: from == me ? UserRole.client : UserRole.driver,
+      text: text,
+      clientMsgId: id,
+      sentAt: sentAt,
+    );
+
+    Future<void> openMenu(WidgetTester tester, Key item) async {
+      await tester.tap(find.byKey(const Key('chat-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(item));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('starts a selection with nothing picked yet', (tester) async {
+      await tester.pumpWidget(harness(messages: [said('m-1', them, 'Hola')]));
+      await tester.pump();
+
+      // The menu hangs below the header, not over it.
+      await tester.tap(find.byKey(const Key('chat-menu')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getRect(find.text('Seleccionar mensajes')).top,
+        greaterThan(tester.getRect(find.byType(AppBar)).bottom),
+      );
+      await tester.tap(find.byKey(const Key('menu-select')));
+      await tester.pumpAndSettle();
+
+      // The bar is up, the boxes are out, and nothing is chosen for you.
+      expect(find.text('0 seleccionados'), findsOneWidget);
+      expect(find.byKey(const Key('unselected-mark')), findsOneWidget);
+      expect(find.byKey(const Key('selected-mark')), findsNothing);
+      for (final action in ['copy', 'delete', 'download']) {
+        expect(
+          tester
+              .widget<IconButton>(find.byKey(Key('selection-$action')))
+              .onPressed,
+          isNull,
+          reason: 'nothing is picked, so $action has nothing to act on',
+        );
+      }
+
+      // Picking one from there works like a long press.
+      await tester.tap(find.text('Hola'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 seleccionado'), findsOneWidget);
+    });
+
+    testWidgets('exports the conversation to the clipboard', (tester) async {
+      final calls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          calls.add(call);
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        harness(
+          messages: [
+            said('m-1', them, 'Voy en camino'),
+            said('m-2', me, 'Te espero en la esquina'),
+          ],
+        ),
+      );
+      await tester.pump();
+
+      await openMenu(tester, const Key('menu-export'));
+
+      final copied = calls.lastWhere((c) => c.method == 'Clipboard.setData');
+      final text = (copied.arguments as Map)['text'] as String;
+      expect(text, contains('Chat con Chofer'));
+      expect(text, contains('Chofer: Voy en camino'));
+      expect(text, contains('Tu: Te espero en la esquina'.replaceAll('Tu', 'Tú')));
+      expect(
+        find.text('Chat copiado. Pégalo donde quieras guardarlo.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('asks before blocking, and the box says so afterwards', (
+      tester,
+    ) async {
+      bool? asked;
+      Widget view({bool blocked = false}) => harness(
+        messages: [said('m-1', them, 'Hola')],
+        blocked: blocked,
+        onSetBlocked: ({required blocked}) async {
+          asked = blocked;
+          return const Result.ok(null);
+        },
+      );
+
+      await tester.pumpWidget(view());
+      await tester.pump();
+
+      await openMenu(tester, const Key('menu-block'));
+      expect(find.text('¿Bloquear a Chofer?'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('confirm-block')));
+      await tester.pumpAndSettle();
+      expect(asked, isTrue);
+
+      // Blocked: no message box, and a way back. The confirmation snackbar
+      // covers the bottom of the screen, so let it expire first.
+      await tester.pumpWidget(view(blocked: true));
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('chat-blocked-notice')), findsOneWidget);
+      expect(find.text('Escribe un mensaje…'), findsNothing);
+      // The history is still there to read.
+      expect(find.text('Hola'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('chat-unblock')));
+      await tester.pumpAndSettle();
+      expect(asked, isFalse);
+    });
+
+    testWidgets('empties the chat and deletes it, each after a question', (
+      tester,
+    ) async {
+      var cleared = 0;
+      var deleted = 0;
+      await tester.pumpWidget(
+        harness(
+          messages: [said('m-1', them, 'Hola')],
+          onClearChat: () async {
+            cleared++;
+            return const Result.ok(null);
+          },
+          onDeleteChat: () async {
+            deleted++;
+            return const Result.ok(null);
+          },
+        ),
+      );
+      await tester.pump();
+
+      // Cancelling leaves the conversation alone.
+      await openMenu(tester, const Key('menu-clear'));
+      expect(find.text('¿Vaciar el chat?'), findsOneWidget);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(cleared, 0);
+
+      await openMenu(tester, const Key('menu-clear'));
+      await tester.tap(find.byKey(const Key('confirm-clear')));
+      await tester.pumpAndSettle();
+      expect(cleared, 1);
+
+      await openMenu(tester, const Key('menu-delete'));
+      expect(find.text('¿Eliminar el chat?'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('confirm-delete-chat')));
+      await tester.pumpAndSettle();
+      expect(deleted, 1);
+    });
+
+    testWidgets('an emptied chat keeps only what came after', (tester) async {
+      await tester.pumpWidget(
+        harness(
+          messages: [
+            said('m-1', them, 'Antes de vaciar'),
+            ChatMessage(
+              id: 'm-2',
+              senderId: them,
+              senderRole: UserRole.driver,
+              text: 'Después de vaciar',
+              clientMsgId: 'm-2',
+              sentAt: sentAt.add(const Duration(minutes: 5)),
+            ),
+          ],
+          hiddenBefore: sentAt.add(const Duration(minutes: 1)),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Antes de vaciar'), findsNothing);
+      expect(find.text('Después de vaciar'), findsOneWidget);
+    });
+  });
+
+  testWidgets('somebody who blocked you is told, not left to guess', (
+    tester,
+  ) async {
+    final sent = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.phone(),
+        home: ChatThreadView(
+          title: 'Chofer',
+          messages: const [],
+          myUid: me,
+          canWrite: true,
+          blockedByOther: true,
+          closedNotice: 'Cerrado',
+          emptyMessage: 'Sin mensajes',
+          onSend: (text, _) async {
+            sent.add(text);
+            return const Result.ok(null);
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), 'Hola');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+
+    // Said plainly, and nothing left on its way to somebody who will not get
+    // it.
+    expect(find.byKey(const Key('blocked-by-other-dialog')), findsOneWidget);
+    expect(find.text('Te bloquearon'), findsOneWidget);
+    expect(sent, isEmpty);
+
+    await tester.tap(find.byKey(const Key('blocked-by-other-ok')));
+    await tester.pumpAndSettle();
+    // What they typed is still there, to copy elsewhere if they want it.
+    expect(find.text('Hola'), findsOneWidget);
   });
 
   testWidgets('typing is announced once and withdrawn after a pause', (

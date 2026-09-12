@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/enums.dart';
 import '../domain/failures.dart';
+import '../domain/models/chat_prefs.dart';
 import '../domain/models/chat_request.dart';
 import '../domain/repositories.dart';
 import '../media/photo_picker.dart';
@@ -103,12 +104,43 @@ class _RequestChatScreenState extends ConsumerState<RequestChatScreen> {
     final phase = request.phaseAt(now);
     _armDeadline(request, phase, now);
 
+    // This person's own view of this conversation — cleared, deleted, blocked.
+    final threadKey = requestThreadKey(widget.requestId);
+    final prefs =
+        ref.watch(chatThreadPrefsProvider(threadKey)).value ?? ChatThreadPrefs.none;
+    final otherUid = _isDriver ? request.clientId : request.driverId;
+    final blocked =
+        ref.watch(blockedUsersProvider).value?.contains(otherUid) ?? false;
+    final blockedByOther =
+        ref.watch(blockedByProvider(otherUid)).value ?? false;
+
     final title = _isDriver
         ? (request.clientName.isEmpty ? 'Cliente' : request.clientName)
         : (request.driverName.isEmpty ? 'Chofer de la grúa' : request.driverName);
 
     return ChatThreadView(
       title: title,
+      // Denormalised onto the request when the chofer accepts, so the customer
+      // sees the face they picked off the map.
+      photoUrl: _isDriver ? '' : request.driverPhotoUrl,
+      hiddenBefore: prefs.clearedAt,
+      blocked: blocked,
+      blockedByOther: blockedByOther,
+      onSetBlocked: uid == null || otherUid.isEmpty
+          ? null
+          : ({required blocked}) => ref
+                .read(chatPrefsRepositoryProvider)
+                .setBlocked(uid: uid, otherUid: otherUid, blocked: blocked),
+      onClearChat: uid == null
+          ? null
+          : () => ref
+                .read(chatPrefsRepositoryProvider)
+                .clearThread(uid: uid, threadKey: threadKey),
+      onDeleteChat: uid == null
+          ? null
+          : () => ref
+                .read(chatPrefsRepositoryProvider)
+                .deleteThread(uid: uid, threadKey: threadKey),
       subtitle: switch (phase) {
         ChatRequestPhase.waiting =>
           _isDriver ? 'Quiere hablar contigo' : 'Esperando respuesta',
@@ -177,12 +209,26 @@ class _RequestChatScreenState extends ConsumerState<RequestChatScreen> {
                   onDecline: () => _respond(accept: false),
                 )
               : _WaitingBanner(busy: _busy, onCancel: _close),
-      actions: [
+      // Ending the conversation joined the ⋮ menu when calling and search
+      // took the header's room; it is a rare tap, and a deliberate one.
+      extraMenuItems: [
         if (phase == ChatRequestPhase.open)
-          TextButton(
+          PopupMenuItem<void>(
             key: const Key('chat-request-close'),
-            onPressed: _busy ? null : _close,
-            child: const Text('Terminar'),
+            onTap: _busy ? null : _close,
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.logout, size: 20, color: BrandColors.grey800),
+                SizedBox(width: Insets.md),
+                Flexible(
+                  child: Text(
+                    'Terminar conversación',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
           ),
       ],
       onSend: (text, clientMsgId) {

@@ -4,6 +4,7 @@ import 'enums.dart';
 import 'failures.dart';
 import 'models/app_user.dart';
 import 'models/billing.dart';
+import 'models/chat_prefs.dart';
 import 'models/chat_request.dart';
 import 'models/dispatch_models.dart';
 import 'models/driver.dart';
@@ -257,8 +258,9 @@ abstract interface class ChatRepository {
   /// Retracts messages for both sides: the words and the photo are cleared and
   /// a tombstone is left in their place.
   ///
-  /// [senderId] may only be the caller, and the rules refuse anything that is
-  /// not their own message — nobody erases what the other side said.
+  /// Either party may retract anything in their own conversation, their
+  /// message or the other person's; [senderId] is the caller, and the rules
+  /// refuse anyone who is not in the conversation.
   Future<Result<void>> deleteMessages({
     required String serviceId,
     required String senderId,
@@ -337,6 +339,49 @@ abstract interface class TypingRepository {
     required String threadKey,
     required String uid,
     required bool typing,
+  });
+}
+
+/// Each person's own view of their conversations: what they cleared away,
+/// what they deleted off their list, and who they blocked.
+///
+/// None of it is visible to the other side, and none of it touches the
+/// messages themselves — retracting those is [ChatRepository.deleteMessages].
+abstract interface class ChatPrefsRepository {
+  /// What this person did to one conversation. Emits [ChatThreadPrefs.none]
+  /// for a conversation they never touched.
+  Stream<ChatThreadPrefs> watchThread({
+    required String uid,
+    required String threadKey,
+  });
+
+  /// Every conversation they touched, by thread key.
+  Stream<Map<String, ChatThreadPrefs>> watchThreads(String uid);
+
+  /// The uids this person blocked.
+  Stream<Set<String>> watchBlocked(String uid);
+
+  /// Whether [otherUid] blocked this person. One document, not their list:
+  /// you learn that you were blocked, never who else was.
+  Stream<bool> watchBlockedBy({required String uid, required String otherUid});
+
+  /// Hides everything said up to now, keeping the conversation on their list.
+  Future<Result<void>> clearThread({
+    required String uid,
+    required String threadKey,
+  });
+
+  /// As [clearThread], and takes the conversation off their list until
+  /// something new is said in it.
+  Future<Result<void>> deleteThread({
+    required String uid,
+    required String threadKey,
+  });
+
+  Future<Result<void>> setBlocked({
+    required String uid,
+    required String otherUid,
+    required bool blocked,
   });
 }
 

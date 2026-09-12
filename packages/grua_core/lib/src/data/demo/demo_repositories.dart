@@ -10,6 +10,7 @@ import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/billing.dart';
+import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
@@ -488,7 +489,7 @@ class DemoChatRepository implements ChatRepository {
     required String senderId,
     required List<String> messageIds,
   }) async {
-    _backend.retractMessages(serviceId, senderId, messageIds);
+    _backend.retractMessages(serviceId, messageIds);
     return const Result.ok(null);
   }
 
@@ -584,7 +585,7 @@ class DemoChatRequestRepository implements ChatRequestRepository {
     required String senderId,
     required List<String> messageIds,
   }) async {
-    _backend.retractChatRequestMessages(requestId, senderId, messageIds);
+    _backend.retractChatRequestMessages(requestId, messageIds);
     return const Result.ok(null);
   }
 
@@ -621,6 +622,63 @@ class DemoTypingRepository implements TypingRepository {
     required bool typing,
   }) async =>
       _backend.setTyping(threadKey: threadKey, uid: uid, typing: typing);
+}
+
+class DemoChatPrefsRepository implements ChatPrefsRepository {
+  DemoChatPrefsRepository(this._backend);
+
+  final DemoBackend _backend;
+
+  @override
+  Stream<ChatThreadPrefs> watchThread({
+    required String uid,
+    required String threadKey,
+  }) =>
+      _backend
+          .chatPrefsFor(uid)
+          .map((prefs) => prefs[threadKey] ?? ChatThreadPrefs.none);
+
+  @override
+  Stream<Map<String, ChatThreadPrefs>> watchThreads(String uid) =>
+      _backend.chatPrefsFor(uid);
+
+  @override
+  Stream<Set<String>> watchBlocked(String uid) => _backend.blockedFor(uid);
+
+  @override
+  Stream<bool> watchBlockedBy({
+    required String uid,
+    required String otherUid,
+  }) =>
+      _backend.blockedFor(otherUid).map((blocked) => blocked.contains(uid));
+
+  @override
+  Future<Result<void>> clearThread({
+    required String uid,
+    required String threadKey,
+  }) async {
+    _backend.clearChatThread(uid, threadKey);
+    return const Result.ok(null);
+  }
+
+  @override
+  Future<Result<void>> deleteThread({
+    required String uid,
+    required String threadKey,
+  }) async {
+    _backend.clearChatThread(uid, threadKey, alsoFromList: true);
+    return const Result.ok(null);
+  }
+
+  @override
+  Future<Result<void>> setBlocked({
+    required String uid,
+    required String otherUid,
+    required bool blocked,
+  }) async {
+    _backend.setBlocked(uid, otherUid, blocked: blocked);
+    return const Result.ok(null);
+  }
 }
 
 class DemoEarningsRepository implements EarningsRepository {

@@ -5,6 +5,7 @@ import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/billing.dart';
+import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
@@ -83,6 +84,14 @@ class DemoBackend {
   /// Who is typing where: `threadKey` → uid → when the last keystroke landed.
   final Map<String, Map<String, DateTime>> _typing = {};
   final _typingController = StreamController<String>.broadcast();
+
+  /// What each person did to their own conversations: uid → thread key → the
+  /// clear and delete stamps. Nobody else's screen ever sees it.
+  final Map<String, Map<String, ChatThreadPrefs>> _chatPrefs = {};
+
+  /// Who each person blocked: uid → the uids they will not hear from.
+  final Map<String, Set<String>> _blocked = {};
+  final _chatPrefsController = StreamController<String>.broadcast();
 
   final List<Timer> _timers = [];
   var _seeded = false;
@@ -1119,34 +1128,29 @@ class DemoBackend {
     if (changed) _chatRequestMessagesController.add(id);
   }
 
-  /// Retracts a sender's own messages in a job's chat, the way the rules let
-  /// them: the words and the photo go, a tombstone stays.
-  void retractMessages(String serviceId, String senderId, List<String> ids) {
-    if (_retract(_messages[serviceId], senderId, ids)) {
+  /// Retracts messages in a job's chat, the way the rules let either party:
+  /// the words and the photo go, a tombstone stays.
+  void retractMessages(String serviceId, List<String> ids) {
+    if (_retract(_messages[serviceId], ids)) {
       _messagesController.add(serviceId);
     }
   }
 
   /// The same, in a conversation opened from the map.
-  void retractChatRequestMessages(
-    String requestId,
-    String senderId,
-    List<String> ids,
-  ) {
-    if (_retract(_chatRequestMessages[requestId], senderId, ids)) {
+  void retractChatRequestMessages(String requestId, List<String> ids) {
+    if (_retract(_chatRequestMessages[requestId], ids)) {
       _chatRequestMessagesController.add(requestId);
     }
   }
 
-  bool _retract(List<ChatMessage>? messages, String senderId, List<String> ids) {
+  bool _retract(List<ChatMessage>? messages, List<String> ids) {
     if (messages == null) return false;
     final wanted = ids.toSet();
     var changed = false;
     for (var i = 0; i < messages.length; i++) {
       final message = messages[i];
-      // Only your own, and only once.
-      if (!wanted.contains(message.id)) continue;
-      if (message.senderId != senderId || message.isDeleted) continue;
+      // Only once: a tombstone has nothing left to clear.
+      if (!wanted.contains(message.id) || message.isDeleted) continue;
       messages[i] = message.copyWith(
         text: '',
         imageUrl: '',
@@ -1191,6 +1195,51 @@ class DemoBackend {
       entries.remove(uid);
     }
     _typingController.add(threadKey);
+  }
+
+  // -------------------------------------------------------------------------
+  // Each person's own view of their conversations
+  // -------------------------------------------------------------------------
+
+  Stream<Map<String, ChatThreadPrefs>> chatPrefsFor(String uid) async* {
+    yield _prefsOf(uid);
+    yield* _chatPrefsController.stream
+        .where((changed) => changed == uid)
+        .map((_) => _prefsOf(uid));
+  }
+
+  Stream<Set<String>> blockedFor(String uid) async* {
+    yield {...?_blocked[uid]};
+    yield* _chatPrefsController.stream
+        .where((changed) => changed == uid)
+        .map((_) => {...?_blocked[uid]});
+  }
+
+  Map<String, ChatThreadPrefs> _prefsOf(String uid) => {...?_chatPrefs[uid]};
+
+  /// Hides what has been said so far, and the conversation itself when
+  /// [alsoFromList] — the difference between "vaciar" and "eliminar".
+  void clearChatThread(
+    String uid,
+    String threadKey, {
+    bool alsoFromList = false,
+  }) {
+    final now = _now();
+    _chatPrefs.putIfAbsent(uid, () => {})[threadKey] = ChatThreadPrefs(
+      clearedAt: now,
+      deletedAt: alsoFromList ? now : _chatPrefs[uid]?[threadKey]?.deletedAt,
+    );
+    _chatPrefsController.add(uid);
+  }
+
+  void setBlocked(String uid, String otherUid, {required bool blocked}) {
+    final list = _blocked.putIfAbsent(uid, () => {});
+    if (blocked) {
+      list.add(otherUid);
+    } else {
+      list.remove(otherUid);
+    }
+    _chatPrefsController.add(uid);
   }
 
   /// Creates a service and starts the simulated dispatch cascade.

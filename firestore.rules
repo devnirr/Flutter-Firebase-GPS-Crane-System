@@ -79,16 +79,24 @@ service cloud.firestore {
         .affectedKeys().hasOnly(allowed);
     }
 
-    // Deleting for everyone: the sender blanks what they wrote and stamps
-    // `deletedAt`, leaving a tombstone both sides render as "se eliminó este
-    // mensaje". Only the sender, and only ever their own words — a customer
-    // must not be able to erase what the chofer promised, or the reverse.
+    // Deleting for everyone: the content is blanked and `deletedAt` stamped,
+    // leaving a tombstone both sides render as "se eliminó este mensaje".
+    // Either party to the conversation may do it, to their own message or the
+    // other person's — the caller is checked to be in the conversation where
+    // this is used, and the tombstone keeps the deletion visible to both.
     function isRetraction() {
-      return resource.data.senderId == uid()
-        && onlyChanges(['deletedAt', 'text', 'imageUrl'])
+      return onlyChanges(['deletedAt', 'text', 'imageUrl'])
         && request.resource.data.text == ''
         && request.resource.data.get('imageUrl', '') == ''
         && request.resource.data.deletedAt == request.time;
+    }
+
+    // Whether the person on the other end of a conversation blocked the
+    // caller. Blocking stops the messages at the door, not only on screen.
+    function isBlockedBy(otherUid) {
+      return exists(
+        /databases/$(database)/documents/users/$(otherUid)/blocked/$(uid())
+      );
     }
 
     // A chat message the apps may write, in a job's chat or a chat request's.
@@ -139,6 +147,22 @@ service cloud.firestore {
       // deleted by id rather than pruned out of an array.
       match /tokens/{tokenId} {
         allow read, write: if ok() && uid() == userId;
+      }
+
+      // Each person's own view of their conversations: what they emptied,
+      // what they took off their list, and who they blocked. Private to them,
+      // and it never touches the messages the other side sees.
+      match /chatState/{threadKey} {
+        allow read, write: if ok() && uid() == userId;
+      }
+
+      // The owner keeps the list. The one person a document names may read
+      // that document — how the app can say "te bloqueó" instead of failing a
+      // send — but only the owner may list who else is on it.
+      match /blocked/{blockedUid} {
+        allow get: if ok() && (uid() == userId || uid() == blockedUid);
+        allow list: if ok() && uid() == userId;
+        allow write: if ok() && uid() == userId;
       }
 
       // The in-app inbox: written by triggers, marked read by the owner.
@@ -237,7 +261,10 @@ service cloud.firestore {
           && serviceDoc(serviceId).status in
              ['accepted', 'arrived', 'in_progress']
           && request.resource.data.senderId == uid()
-          && isSendableMessage(request.resource.data);
+          && isSendableMessage(request.resource.data)
+          && !isBlockedBy(uid() == serviceDoc(serviceId).clientId
+               ? serviceDoc(serviceId).get('driverId', '')
+               : serviceDoc(serviceId).clientId);
 
         // Two edits only: the reader stamps `readAt`, and the sender
         // retracts what they wrote. Nothing else about a message changes.
@@ -278,7 +305,10 @@ service cloud.firestore {
           && chatRequestDoc().status == 'accepted'
           && request.time < chatRequestDoc().closesAt
           && request.resource.data.senderId == uid()
-          && isSendableMessage(request.resource.data);
+          && isSendableMessage(request.resource.data)
+          && !isBlockedBy(uid() == chatRequestDoc().clientId
+               ? chatRequestDoc().driverId
+               : chatRequestDoc().clientId);
 
         allow update: if isChatParty(chatRequestDoc())
           && (onlyChanges(['readAt']) || isRetraction());

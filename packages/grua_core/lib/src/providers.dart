@@ -10,6 +10,7 @@ import 'data/demo/demo_repositories.dart';
 import 'domain/enums.dart';
 import 'domain/models/app_user.dart';
 import 'domain/models/billing.dart';
+import 'domain/models/chat_prefs.dart';
 import 'domain/models/chat_request.dart';
 import 'domain/models/dispatch_models.dart';
 import 'domain/models/driver.dart';
@@ -87,6 +88,11 @@ final typingRepositoryProvider = Provider<TypingRepository>(
       throw UnimplementedError('typingRepositoryProvider must be overridden'),
 );
 
+final chatPrefsRepositoryProvider = Provider<ChatPrefsRepository>(
+  (ref) =>
+      throw UnimplementedError('chatPrefsRepositoryProvider must be overridden'),
+);
+
 final earningsRepositoryProvider = Provider<EarningsRepository>(
   (ref) =>
       throw UnimplementedError('earningsRepositoryProvider must be overridden'),
@@ -131,6 +137,8 @@ List<Override> demoOverrides({
     chatRequestRepositoryProvider
         .overrideWithValue(DemoChatRequestRepository(instance)),
     typingRepositoryProvider.overrideWithValue(DemoTypingRepository(instance)),
+    chatPrefsRepositoryProvider
+        .overrideWithValue(DemoChatPrefsRepository(instance)),
     earningsRepositoryProvider
         .overrideWithValue(DemoEarningsRepository(instance)),
     invoiceRepositoryProvider.overrideWithValue(DemoInvoiceRepository(instance)),
@@ -358,6 +366,71 @@ final StreamProviderFamily<bool, String> otherTypingProvider =
       .watch(typingRepositoryProvider)
       .watchTyping(threadKey)
       .map((uids) => uids.any((typist) => typist != uid));
+});
+
+// ---------------------------------------------------------------------------
+// Each person's own view of their conversations
+// ---------------------------------------------------------------------------
+
+/// What the signed-in person did to one conversation: cleared it, deleted it,
+/// or neither.
+final StreamProviderFamily<ChatThreadPrefs, String> chatThreadPrefsProvider =
+    StreamProvider.family<ChatThreadPrefs, String>((ref, threadKey) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return Stream.value(ChatThreadPrefs.none);
+  return ref
+      .watch(chatPrefsRepositoryProvider)
+      .watchThread(uid: uid, threadKey: threadKey);
+});
+
+/// The uids the signed-in person blocked.
+final blockedUsersProvider = StreamProvider<Set<String>>((ref) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return Stream.value(const <String>{});
+  return ref.watch(chatPrefsRepositoryProvider).watchBlocked(uid);
+});
+
+/// Whether the other person blocked the signed-in one, so their messages
+/// would not arrive. Reads the one document that names them, never the list.
+final StreamProviderFamily<bool, String> blockedByProvider =
+    StreamProvider.family<bool, String>((ref, otherUid) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null || otherUid.isEmpty) return Stream.value(false);
+  return ref
+      .watch(chatPrefsRepositoryProvider)
+      .watchBlockedBy(uid: uid, otherUid: otherUid);
+});
+
+/// Whether a conversation stays off this person's list: they deleted it, and
+/// nothing has been said in it since.
+///
+/// Only a deleted conversation looks at its messages, so an untouched list
+/// costs nothing extra to draw.
+final ProviderFamily<bool, String> chatThreadHiddenProvider =
+    Provider.family<bool, String>((ref, threadKey) {
+  final prefs =
+      ref.watch(chatThreadPrefsProvider(threadKey)).value ?? ChatThreadPrefs.none;
+  if (!prefs.isDeleted) return false;
+
+  const jobPrefix = 'job:';
+  final messages = threadKey.startsWith(jobPrefix)
+      ? ref.watch(serviceMessagesProvider(threadKey.substring(jobPrefix.length)))
+            .value
+      : ref
+            .watch(
+              chatRequestMessagesProvider(
+                threadKey.substring('request:'.length),
+              ),
+            )
+            .value;
+
+  DateTime? lastAt;
+  for (final message in messages ?? const <ChatMessage>[]) {
+    final sentAt = message.sentAt;
+    if (sentAt == null) continue;
+    if (lastAt == null || sentAt.isAfter(lastAt)) lastAt = sentAt;
+  }
+  return !prefs.showsAgain(lastAt);
 });
 
 // ---------------------------------------------------------------------------

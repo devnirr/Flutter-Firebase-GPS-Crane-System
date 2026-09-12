@@ -219,6 +219,8 @@ abstract final class FirebaseBootstrap {
           .overrideWithValue(const FirestoreChatRequestRepository()),
       typingRepositoryProvider
           .overrideWithValue(const FirebaseTypingRepository()),
+      chatPrefsRepositoryProvider
+          .overrideWithValue(const FirestoreChatPrefsRepository()),
       earningsRepositoryProvider
           .overrideWithValue(const FirestoreEarningsRepository()),
       invoiceRepositoryProvider

@@ -58,12 +58,21 @@ class ChatListScreen extends ConsumerWidget {
     final active = ref.watch(activeClientServiceProvider).value;
     final recent = ref.watch(recentClientServicesProvider);
     final now = clock.now().toUtc();
+    // Conversations this customer deleted stay off the list until somebody
+    // writes in them again, and a blocked chofer's do not come back at all.
+    final blocked = ref.watch(blockedUsersProvider).value ?? const <String>{};
     final requests = [
       for (final request
           in ref.watch(clientChatRequestsProvider).value ??
               const <ChatRequest>[])
-        if (request.phaseAt(now) != ChatRequestPhase.over) request,
+        if (request.phaseAt(now) != ChatRequestPhase.over &&
+            !blocked.contains(request.driverId) &&
+            !ref.watch(chatThreadHiddenProvider(requestThreadKey(request.id))))
+          request,
     ];
+    final showActive = active != null &&
+        active.canChat &&
+        !ref.watch(chatThreadHiddenProvider(jobThreadKey(active.id)));
 
     return Scaffold(
       backgroundColor: BrandColors.offWhite,
@@ -83,7 +92,7 @@ class ChatListScreen extends ConsumerWidget {
           children: [
             const FieldLabel('Servicio en curso'),
             const SizedBox(height: Insets.sm),
-            if (active != null && active.canChat)
+            if (showActive)
               _ActiveConversation(service: active)
             else
               const _NoConversationCard(),
@@ -123,7 +132,11 @@ class ChatListScreen extends ConsumerWidget {
               data: (services) {
                 final past = [
                   for (final service in services)
-                    if (service.id != active?.id) service,
+                    if (service.id != active?.id &&
+                        !ref.watch(
+                          chatThreadHiddenProvider(jobThreadKey(service.id)),
+                        ))
+                      service,
                 ];
                 if (past.isEmpty) {
                   return [

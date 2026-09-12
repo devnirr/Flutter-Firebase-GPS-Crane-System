@@ -28,6 +28,7 @@ export 'src/domain/enums.dart';
 export 'src/domain/failures.dart';
 export 'src/domain/models/app_user.dart';
 export 'src/domain/models/billing.dart';
+export 'src/domain/models/chat_prefs.dart';
 export 'src/domain/models/chat_request.dart';
 export 'src/domain/models/dispatch_models.dart';
 export 'src/domain/models/driver.dart';

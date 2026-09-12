@@ -11,6 +11,7 @@ import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/billing.dart';
+import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
@@ -953,6 +954,82 @@ class FirestoreChatRequestRepository implements ChatRequestRepository {
         }
         if (pending == 0) return;
         await batch.commit();
+      });
+}
+
+/// Each person's own view of their conversations, under their user document.
+///
+/// Nothing here is readable by the other side: the rules give the whole
+/// subtree to its owner and to nobody else.
+class FirestoreChatPrefsRepository implements ChatPrefsRepository {
+  const FirestoreChatPrefsRepository();
+
+  @override
+  Stream<ChatThreadPrefs> watchThread({
+    required String uid,
+    required String threadKey,
+  }) =>
+      Paths.userChatStateDoc(uid, threadKey).snapshots().map((snap) {
+        final data = snap.data();
+        return data == null ? ChatThreadPrefs.none : ChatThreadPrefs.fromJson(data);
+      });
+
+  @override
+  Stream<Map<String, ChatThreadPrefs>> watchThreads(String uid) =>
+      Paths.userChatState(uid).snapshots().map((snap) => {
+            for (final doc in snap.docs) doc.id: ChatThreadPrefs.fromJson(doc.data()),
+          });
+
+  @override
+  Stream<Set<String>> watchBlocked(String uid) => Paths.userBlocked(uid)
+      .snapshots()
+      .map((snap) => {for (final doc in snap.docs) doc.id});
+
+  @override
+  Stream<bool> watchBlockedBy({
+    required String uid,
+    required String otherUid,
+  }) =>
+      Paths.userBlockedDoc(otherUid, uid).snapshots().map((snap) => snap.exists);
+
+  @override
+  Future<Result<void>> clearThread({
+    required String uid,
+    required String threadKey,
+  }) =>
+      _guard(() => Paths.userChatStateDoc(uid, threadKey).set(
+            {'clearedAt': FieldValue.serverTimestamp()},
+            SetOptions(merge: true),
+          ));
+
+  @override
+  Future<Result<void>> deleteThread({
+    required String uid,
+    required String threadKey,
+  }) =>
+      _guard(() => Paths.userChatStateDoc(uid, threadKey).set(
+            {
+              // Deleting hides what was said as well as the conversation, so
+              // reopening it on a new message does not bring the old back.
+              'clearedAt': FieldValue.serverTimestamp(),
+              'deletedAt': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true),
+          ));
+
+  @override
+  Future<Result<void>> setBlocked({
+    required String uid,
+    required String otherUid,
+    required bool blocked,
+  }) =>
+      _guard(() async {
+        final doc = Paths.userBlockedDoc(uid, otherUid);
+        if (!blocked) {
+          await doc.delete();
+          return;
+        }
+        await doc.set({'blockedAt': FieldValue.serverTimestamp()});
       });
 }
 

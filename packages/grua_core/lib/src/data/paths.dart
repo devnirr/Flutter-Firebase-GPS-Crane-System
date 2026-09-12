@@ -47,6 +47,8 @@ abstract final class Paths {
   static const String vehiclesSubcollection = 'vehicles';
   static const String placesSubcollection = 'places';
   static const String notificationsSubcollection = 'notifications';
+  static const String chatStateSubcollection = 'chatState';
+  static const String blockedSubcollection = 'blocked';
 
   // -------------------------------------------------------------------------
   // Users
@@ -71,6 +73,27 @@ abstract final class Paths {
 
   static CollectionReference<Map<String, dynamic>> userPlaces(String uid) =>
       _db.collection(usersCollection).doc(uid).collection(placesSubcollection);
+
+  /// What this person did to their own conversations, by thread key — see
+  /// `jobThreadKey` and `requestThreadKey`. Private to them.
+  static CollectionReference<Map<String, dynamic>> userChatState(String uid) =>
+      _db.collection(usersCollection).doc(uid).collection(chatStateSubcollection);
+
+  static DocumentReference<Map<String, dynamic>> userChatStateDoc(
+    String uid,
+    String threadKey,
+  ) =>
+      userChatState(uid).doc(threadKey);
+
+  /// Who this person blocked, one document per blocked uid.
+  static CollectionReference<Map<String, dynamic>> userBlocked(String uid) =>
+      _db.collection(usersCollection).doc(uid).collection(blockedSubcollection);
+
+  static DocumentReference<Map<String, dynamic>> userBlockedDoc(
+    String uid,
+    String otherUid,
+  ) =>
+      userBlocked(uid).doc(otherUid);
 
   static CollectionReference<Map<String, dynamic>> userNotifications(String uid) =>
       _db

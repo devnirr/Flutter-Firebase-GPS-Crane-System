@@ -1,3 +1,7 @@
+// `java` alone resolves to Gradle's own java extension inside a project
+// script, which shadows the package — so the class is imported by name.
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -9,7 +13,7 @@ plugins {
 
 // local.properties is machine-specific and git-ignored, so it can hold the
 // Maps key for local builds without committing it.
-val localProperties = java.util.Properties().apply {
+val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
