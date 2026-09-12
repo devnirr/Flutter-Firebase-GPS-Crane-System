@@ -104,6 +104,61 @@ Future<void> main() async {
     expect(find.text('FLOTA EN LÍNEA'), findsOneWidget);
   });
 
+  testWidgets('the flota tab lists every chofer, working or not',
+      (tester) async {
+    setDesktopSize(tester);
+    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    await tester.tap(find.text('Flota'));
+    await tester.pumpAndSettle();
+
+    // The jobs list gave way to the roster, and the whole roster is there:
+    // an account that cannot work is labelled, not hidden, because the
+    // dispatcher still needs to know the truck exists.
+    expect(find.text('Todo tranquilo'), findsNothing);
+    expect(find.text('Luis Fernández'), findsOneWidget);
+    expect(find.text('Pedro Aybar'), findsOneWidget);
+    expect(find.text('Inactivo'), findsWidgets);
+  });
+
+  testWidgets('picking a chofer from the flota opens their card',
+      (tester) async {
+    setDesktopSize(tester);
+    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    await tester.tap(find.text('Flota'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Luis Fernández'));
+    await tester.pumpAndSettle();
+
+    // The drawer, beside the row that is still in the list.
+    expect(find.text('Luis Fernández'), findsNWidgets(2));
+    expect(find.text('001-1234567-8'), findsOneWidget);
+    expect(find.text('Ver ficha completa'), findsOneWidget);
+  });
+
+  testWidgets('the flota search narrows the roster', (tester) async {
+    setDesktopSize(tester);
+    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    await tester.tap(find.text('Flota'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Nombre, cédula o placa'),
+      'Pedro',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pedro Aybar'), findsOneWidget);
+    expect(find.text('Luis Fernández'), findsNothing);
+  });
+
   testWidgets('the drivers screen lists the seeded fleet', (tester) async {
     setDesktopSize(tester);
     await tester.pumpWidget(harness(DemoBackend()..seed()));

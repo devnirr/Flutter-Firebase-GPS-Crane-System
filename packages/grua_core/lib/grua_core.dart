@@ -42,6 +42,7 @@ export 'src/domain/value_objects.dart';
 export 'src/location/geohash.dart';
 export 'src/location/location_service.dart';
 export 'src/location/my_position.dart';
+export 'src/location/places_service.dart';
 export 'src/location/route_service.dart';
 
 // Media — photos a form or a chat sends

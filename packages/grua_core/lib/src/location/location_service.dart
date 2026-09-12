@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 
 import '../domain/failures.dart';
 import '../domain/value_objects.dart';
+import 'script_geocoder.dart';
 
 /// Why the app cannot use location right now, if it cannot.
 ///
@@ -261,7 +262,11 @@ class LocationService {
   Future<ResolvedPlace> describe(LatLng point) async {
     try {
       final geocoder = _geocoder;
-      if (geocoder == null) return ResolvedPlace(position: point);
+      if (geocoder == null) {
+        // No plugin: the web, where the page's own Maps script can answer.
+        final named = await scriptReverseGeocode(point.latitude, point.longitude);
+        return ResolvedPlace(position: point, address: named ?? '');
+      }
 
       final results = await geocoder.placemarkFromCoordinates(
         point.latitude,

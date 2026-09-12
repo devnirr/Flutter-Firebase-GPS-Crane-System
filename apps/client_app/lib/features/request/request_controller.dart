@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
@@ -103,13 +105,102 @@ class PreferredTruck {
 class RequestController extends Notifier<RequestDraft> {
   @override
   RequestDraft build() {
-    // Seed the pickup with the customer's current position so the common case
-    // — "tow me from where I am" — needs no input at all.
-    return const RequestDraft(
+    // Empty on purpose: the pickup is the phone's own position, filled in by
+    // [usePickupFromDevice] as soon as there is a fix. A hardcoded address
+    // here used to look like an answer the customer had given.
+    return const RequestDraft();
+  }
+
+  /// Takes the device's position as the pickup point.
+  ///
+  /// The customer is the one who is stranded, so where they are is not a
+  /// question worth asking — and the form does not let them point somewhere
+  /// else. Whatever landmark they typed survives a new fix.
+  void usePickupFromDevice(ResolvedPlace place) {
+    final current = state.pickup;
+
+    // The same point again: fill in a name if this answer has one, and
+    // otherwise leave what is there. `displayAddress` is not used here — its
+    // "Ubicación en el mapa" would read as an answer the geocoder gave.
+    if (current != null && current.geo == place.position) {
+      if (place.address.isEmpty || current.address == place.address) return;
+      state = state.copyWith(
+        pickup: current.copyWith(address: place.address),
+        clearQuote: true,
+      );
+      return;
+    }
+
+    state = state.copyWith(
       pickup: ServiceLocation(
-        geo: DoLocations.defaultCenter,
-        address: 'Av. 27 de Febrero, Santo Domingo',
+        geo: place.position,
+        address: place.address,
+        reference: current?.reference ?? '',
       ),
+      clearQuote: true,
+      clearFailure: true,
+    );
+    if (place.address.isEmpty) unawaited(_namePickup(place.position));
+  }
+
+  /// Takes a bare point as the pickup, before any address is known.
+  ///
+  /// The live position stream has a fix long before a fresh
+  /// `getCurrentPosition` answers, and a pickup with coordinates and no street
+  /// name is already enough to quote and to dispatch. The name arrives a
+  /// moment later through [usePickupFromDevice].
+  void usePickupPoint(LatLng point) {
+    if (state.pickup != null) return;
+    state = state.copyWith(
+      pickup: ServiceLocation(geo: point),
+      clearQuote: true,
+      clearFailure: true,
+    );
+    // Name it straight away rather than waiting for the precise fix: the
+    // customer should read their street, not "tu ubicación actual".
+    unawaited(_namePickup(point));
+  }
+
+  /// Fills in the address of a pickup that has only coordinates.
+  ///
+  /// Dropped if the customer's pickup has moved on since — a precise fix
+  /// landed, or they picked a place by name — so a slow geocode never
+  /// overwrites something better.
+  ///
+  /// When nothing can name the point (no geocoder on this platform, a key
+  /// without the Geocoding API, no signal) the coordinates themselves are the
+  /// answer: exact, and better than a form that waits forever for a street.
+  Future<void> _namePickup(LatLng point) async {
+    // Whichever of the two Google APIs the project has enabled: a reverse
+    // geocode names the street, and failing that the nearest place names the
+    // spot. Coordinates only when neither answers.
+    final place = await ref.read(locationServiceProvider).describe(point);
+    var name = place.address;
+    if (name.isEmpty) {
+      final nearby = await ref.read(placesServiceProvider).describePoint(point);
+      name = nearby?.address ?? '';
+    }
+    final named = name.isNotEmpty ? name : _coordinates(point);
+
+    final current = state.pickup;
+    if (current == null || current.geo != point || current.address.isNotEmpty) {
+      return;
+    }
+    state = state.copyWith(pickup: current.copyWith(address: named));
+  }
+
+  /// Five decimals: about a metre, which is finer than any tow needs.
+  static String _coordinates(LatLng point) =>
+      '${point.latitude.toStringAsFixed(5)}, '
+      '${point.longitude.toStringAsFixed(5)}';
+
+  /// The landmark the customer types: "frente al colmado, portón azul".
+  void setPickupReference(String reference) {
+    final current = state.pickup;
+    if (current == null || current.reference == reference) return;
+    state = state.copyWith(
+      pickup: current.copyWith(reference: reference),
+      clearQuote: true,
     );
   }
 

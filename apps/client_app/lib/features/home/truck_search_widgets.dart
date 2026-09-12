@@ -58,9 +58,11 @@ class _NearbyTrucksRowState extends ConsumerState<NearbyTrucksRow> {
     };
 
     final left = search.endsAt?.difference(clock.now()).inSeconds ?? 0;
+    // A finished search is a snapshot: trucks come online after it stops, so
+    // the label says how to look again rather than calling the count final.
     final status = search.isSearching
         ? 'Buscando… ${left.clamp(0, 999)} s'
-        : 'Búsqueda completa';
+        : 'Buscar de nuevo';
 
     return ListTile(
       key: const Key('nearby-trucks-row'),

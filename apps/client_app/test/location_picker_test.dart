@@ -40,6 +40,8 @@ Future<void> main() async {
       // No GPS and no geocoder in a widget test; the picker asks for both the
       // moment it opens.
       locationServiceProvider.overrideWithValue(_FakeLocation()),
+      // No network either: the suggestions come from here.
+      placesServiceProvider.overrideWithValue(_FakePlaces()),
     ],
     child: const ClientApp(),
   );
@@ -101,13 +103,24 @@ Future<void> main() async {
     expect(map.height, greaterThan(200));
   }
 
-  testWidgets('the pickup picker shows a full-width map', (tester) async {
+  testWidgets("the pickup is the phone's own position, and is not a button", (
+    tester,
+  ) async {
     await signIn(tester);
+
+    // Reaching the field is the same journey; what it does when tapped is
+    // what changed.
     await openPicker(tester, 'PUNTO DE RECOGIDA');
 
-    expect(find.text('¿Dónde estás?'), findsWidgets);
-    expect(find.text('CONFIRMAR UBICACIÓN'), findsOneWidget);
-    expectMapFillsWidth(tester);
+    // No picker opened: the form is still the form.
+    expect(find.text('CONFIRMAR UBICACIÓN'), findsNothing);
+    expect(find.text('PUNTO DE RECOGIDA'), findsOneWidget);
+
+    // And it says where the phone is, geocoded — not a hardcoded avenue.
+    expect(find.text('Av. 27 de Febrero, Santo Domingo'), findsOneWidget);
+
+    // The landmark is the part the customer fills in.
+    expect(find.byKey(const Key('pickup-reference')), findsOneWidget);
   });
 
   testWidgets('the destination picker shows a full-width map', (tester) async {
@@ -118,6 +131,93 @@ Future<void> main() async {
     expect(find.text('CONFIRMAR UBICACIÓN'), findsOneWidget);
     expectMapFillsWidth(tester);
   });
+
+
+  testWidgets('the destination picker opens on the position already known', (
+    tester,
+  ) async {
+    await signIn(tester);
+    await openPicker(tester, 'DESTINO');
+
+    // Not the centre of Santo Domingo, which is where it used to start before
+    // a fresh fix arrived seconds later: the home map's position is already
+    // paid for, so the map opens there.
+    final map = tester.widget<GruaMap>(find.byType(GruaMap));
+    expect(map.center.latitude, closeTo(gazcue.latitude, 0.0001));
+    expect(map.center.longitude, closeTo(gazcue.longitude, 0.0001));
+  });
+
+  testWidgets('typing a destination offers matches above the field', (
+    tester,
+  ) async {
+    await signIn(tester);
+    await openPicker(tester, 'DESTINO');
+
+    // Nothing is offered for a single letter: it would match half the country.
+    await tester.enterText(find.byKey(const Key('address-field')), 'W');
+    await advance(tester, const Duration(milliseconds: 400));
+    expect(find.byKey(const Key('address-suggestions')), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('address-field')), 'Winston');
+    await advance(tester, const Duration(milliseconds: 400));
+
+    // The list is there, and it sits above the field it belongs to.
+    expect(find.byKey(const Key('address-suggestions')), findsOneWidget);
+    expect(find.text('Av. Winston Churchill'), findsOneWidget);
+    expect(find.text('Plaza Central'), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const Key('address-suggestions'))).bottom,
+      lessThanOrEqualTo(
+        tester.getRect(find.byKey(const Key('address-field'))).top,
+      ),
+    );
+
+    // Choosing one names the place, moves the map to it, and closes the list.
+    await tester.tap(find.text('Av. Winston Churchill'));
+    await advance(tester, const Duration(seconds: 1));
+
+    expect(find.byKey(const Key('address-suggestions')), findsNothing);
+    expect(find.text('Av. Winston Churchill, Piantini'), findsOneWidget);
+    final map = tester.widget<GruaMap>(find.byType(GruaMap));
+    expect(map.center.latitude, closeTo(18.4861, 0.0001));
+
+    // And that is what the form gets back.
+    await tester.tap(find.text('CONFIRMAR UBICACIÓN'));
+    await advance(tester, const Duration(seconds: 1));
+    expect(find.text('Av. Winston Churchill, Piantini'), findsWidgets);
+  });
+}
+
+/// Suggestions without a network: the same two answers for anything typed.
+class _FakePlaces extends PlacesService {
+  _FakePlaces() : super(apiKey: 'test-key');
+
+  @override
+  Future<List<PlaceSuggestion>> suggest(
+    String input, {
+    LatLng? near,
+    double radiusKm = 50,
+  }) async {
+    if (input.trim().length < 2) return const [];
+    return const [
+      PlaceSuggestion(
+        placeId: 'place-1',
+        title: 'Av. Winston Churchill',
+        subtitle: 'Piantini, Santo Domingo',
+      ),
+      PlaceSuggestion(
+        placeId: 'place-2',
+        title: 'Plaza Central',
+        subtitle: 'Av. 27 de Febrero, Santo Domingo',
+      ),
+    ];
+  }
+
+  @override
+  Future<ResolvedPlace?> details(String placeId) async => const ResolvedPlace(
+    position: LatLng(18.4861, -69.9312),
+    address: 'Av. Winston Churchill, Piantini',
+  );
 }
 
 /// A phone that knows where it is and can name the place, so the picker gets

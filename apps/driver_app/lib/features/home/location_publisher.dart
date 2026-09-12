@@ -25,6 +25,7 @@ class LocationPublisher {
     required this._drivers,
     required this._driverId,
     required this._truckType,
+    this._heartbeat = const Duration(seconds: 30),
   });
 
   final LocationService _location;
@@ -33,7 +34,10 @@ class LocationPublisher {
   final TruckType _truckType;
 
   static const _minInterval = Duration(seconds: 5);
-  static const _heartbeat = Duration(seconds: 30);
+
+  /// How often a stationary truck repeats itself. A parameter only so a test
+  /// does not have to wait half a minute.
+  final Duration _heartbeat;
 
   // Cancelled in `stop()`, which `ref.onDispose` calls; the analyzer only
   // looks for a cancel in the same function that created it.
@@ -75,7 +79,18 @@ class LocationPublisher {
     // a chofer waiting at a stoplight ages out of the candidate list.
     _heartbeatTimer = Timer.periodic(_heartbeat, (_) {
       final last = _latest;
-      if (last != null) _publish(last, serviceId, state, force: true);
+      if (last != null) {
+        _publish(last, serviceId, state, force: true);
+        return;
+      }
+      // Nothing to repeat yet: the fix asked for on switch-on came back empty
+      // — permission granted a moment ago, no lock, a phone indoors, a
+      // browser that answers when it feels like it. Ask again rather than
+      // waiting for movement the stream may never report: a chofer who
+      // publishes nothing is invisible to dispatch and to the customer's
+      // "grúas cerca de ti", and `reapStaleDrivers` switches them off after
+      // five minutes of it.
+      unawaited(_publishFirstFix(serviceId, state));
     });
   }
 

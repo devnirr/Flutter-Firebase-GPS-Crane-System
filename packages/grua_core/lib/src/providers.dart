@@ -20,6 +20,7 @@ import 'domain/models/truck.dart';
 import 'domain/repositories.dart';
 import 'domain/value_objects.dart';
 import 'location/location_service.dart';
+import 'location/places_service.dart';
 import 'location/route_service.dart';
 
 /// Dependency wiring for all three apps.
@@ -168,6 +169,15 @@ final hasMapsKeyProvider = Provider<bool>(
       ref.watch(appConfigProvider).googleMapsApiKey.isNotEmpty ||
       googleMapsScriptLoaded,
 );
+
+/// Address suggestions. Uses the build-time key, or — on the web, where the
+/// key lives in `index.html` — the one the page's Maps script was loaded with.
+final placesServiceProvider = Provider<PlacesService>((ref) {
+  final configured = ref.watch(appConfigProvider).googleMapsApiKey;
+  return PlacesService(
+    apiKey: configured.isNotEmpty ? configured : googleMapsScriptKey,
+  );
+});
 
 final routeServiceProvider = Provider<RouteService>(
   (ref) => RouteService(apiKey: ref.watch(appConfigProvider).googleMapsApiKey),

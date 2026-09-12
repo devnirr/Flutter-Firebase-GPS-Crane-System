@@ -40,22 +40,47 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
 
   late LatLng _center;
   Timer? _debounce;
+  Timer? _suggestDebounce;
   var _resolving = false;
   var _locating = false;
   String? _error;
 
+  /// What the typed text matches, newest answer only.
+  var _suggestions = <PlaceSuggestion>[];
+
+  /// Bumped per keystroke, so a slow answer to an older query is dropped
+  /// rather than replacing the list under the customer's finger.
+  var _suggestQuery = 0;
+
+  /// The address came from a suggestion the customer chose. The camera move
+  /// that follows must not have it overwritten by the reverse geocoder, whose
+  /// answer for the same point is usually a street number.
+  var _addressIsChosen = false;
+
   @override
   void initState() {
     super.initState();
-    _center = widget.initial?.geo ?? DoLocations.defaultCenter;
+    // Open where the phone already knows it is, rather than at the centre of
+    // Santo Domingo: the position stream on the home map and the fix taken
+    // for the pickup are both resolved by now, and waiting on a fresh
+    // `getCurrentPosition` left the map sitting on the wrong city for
+    // seconds, then animating across it.
+    _center = widget.initial?.geo ?? _positionAlreadyKnown() ??
+        DoLocations.defaultCenter;
     _address.text = widget.initial?.address ?? '';
     _reference.text = widget.initial?.reference ?? '';
     if (widget.initial == null) unawaited(_useCurrentLocation());
   }
 
+  /// A position some other screen has already paid for, if there is one.
+  LatLng? _positionAlreadyKnown() =>
+      ref.read(myPositionProvider).value?.position ??
+      ref.read(currentPlaceProvider).value?.position;
+
   @override
   void dispose() {
     _debounce?.cancel();
+    _suggestDebounce?.cancel();
     _address.dispose();
     _reference.dispose();
     super.dispose();
@@ -74,6 +99,13 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
 
   Future<void> _resolveAddress() async {
     if (!mounted) return;
+    // The customer picked this place by name; naming it again by street would
+    // replace what they chose with something they did not.
+    if (_addressIsChosen) {
+      _addressIsChosen = false;
+      return;
+    }
+
     setState(() => _resolving = true);
 
     final place = await ref.read(locationServiceProvider).describe(_center);
@@ -82,6 +114,56 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
     setState(() {
       _resolving = false;
       if (place.address.isNotEmpty) _address.text = place.address;
+    });
+  }
+
+  /// Asks for suggestions a moment after the typing stops.
+  ///
+  /// Debounced because every call is billed and a five-letter street would
+  /// otherwise cost five of them; biased to where the map is looking, so
+  /// "Duarte" offers the one in this city first.
+  void _onAddressTyped(String value) {
+    _addressIsChosen = false;
+    _suggestDebounce?.cancel();
+
+    if (value.trim().length < 2) {
+      if (_suggestions.isNotEmpty) setState(() => _suggestions = const []);
+      return;
+    }
+
+    _suggestDebounce = Timer(const Duration(milliseconds: 250), () async {
+      final query = ++_suggestQuery;
+      final found = await ref
+          .read(placesServiceProvider)
+          .suggest(value, near: _center);
+      if (!mounted || query != _suggestQuery) return;
+      setState(() => _suggestions = found);
+    });
+  }
+
+  /// Takes the chosen place as the answer: the map goes there, the field says
+  /// its name, and the list closes.
+  Future<void> _choose(PlaceSuggestion suggestion) async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _suggestions = const [];
+      _resolving = true;
+    });
+
+    final place = await ref.read(placesServiceProvider).details(suggestion.placeId);
+    if (!mounted) return;
+
+    setState(() {
+      _resolving = false;
+      if (place == null) {
+        // The name is still worth keeping; the pin stays where it was and the
+        // customer can drag it.
+        _address.text = suggestion.title;
+        return;
+      }
+      _addressIsChosen = true;
+      _center = place.position;
+      _address.text = place.address.isNotEmpty ? place.address : suggestion.title;
     });
   }
 
@@ -194,6 +276,18 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
                         : const Icon(Icons.my_location, color: BrandColors.red),
                   ),
                 ),
+                // The matches sit directly above the address field, over the
+                // bottom of the map, the way a search bar's dropdown does.
+                if (_suggestions.isNotEmpty)
+                  Positioned(
+                    left: Insets.lg,
+                    right: Insets.lg,
+                    bottom: Insets.md,
+                    child: _SuggestionList(
+                      suggestions: _suggestions,
+                      onChosen: _choose,
+                    ),
+                  ),
                 if (!hasApiKey)
                   const Positioned(
                     top: Insets.md,
@@ -218,9 +312,12 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
                 const FieldLabel('Dirección'),
                 const SizedBox(height: Insets.sm),
                 TextField(
+                  key: const Key('address-field'),
                   controller: _address,
+                  textInputAction: TextInputAction.search,
+                  onChanged: _onAddressTyped,
                   decoration: InputDecoration(
-                    hintText: 'Dirección aproximada',
+                    hintText: 'Escribe o elige un lugar',
                     suffixIcon: _resolving
                         ? const Padding(
                             padding: EdgeInsets.all(Insets.md),
@@ -268,6 +365,65 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// What the typed address matches, nearest the map's centre first.
+class _SuggestionList extends StatelessWidget {
+  const _SuggestionList({required this.suggestions, required this.onChosen});
+
+  final List<PlaceSuggestion> suggestions;
+  final ValueChanged<PlaceSuggestion> onChosen;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Material(
+      key: const Key('address-suggestions'),
+      color: BrandColors.white,
+      borderRadius: Corners.brMd,
+      elevation: 6,
+      child: ConstrainedBox(
+        // Five rows at most: a list that covers the map hides the thing the
+        // customer is aiming at.
+        constraints: const BoxConstraints(maxHeight: 260),
+        child: ListView.separated(
+          padding: EdgeInsets.zero,
+          shrinkWrap: true,
+          itemCount: suggestions.length,
+          separatorBuilder: (_, _) =>
+              const Divider(height: 1, color: BrandColors.grey100),
+          itemBuilder: (context, index) {
+            final suggestion = suggestions[index];
+            return ListTile(
+              dense: true,
+              leading: const Icon(
+                Icons.place_outlined,
+                color: BrandColors.grey600,
+              ),
+              title: Text(
+                suggestion.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.titleSmall,
+              ),
+              subtitle: suggestion.subtitle.isEmpty
+                  ? null
+                  : Text(
+                      suggestion.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall?.copyWith(
+                        color: BrandColors.grey600,
+                      ),
+                    ),
+              onTap: () => onChosen(suggestion),
+            );
+          },
+        ),
       ),
     );
   }

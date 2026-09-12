@@ -42,15 +42,16 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
   void initState() {
     super.initState();
     final draft = ref.read(requestControllerProvider);
-    _pickup.text = draft.pickup?.address ?? '';
     _reference.text = draft.pickup?.reference ?? '';
     // After the first frame: a provider may not be changed mid-build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ref
-            .read(requestControllerProvider.notifier)
-            .setPreferredTruck(widget.preferredTruck);
-      }
+      if (!mounted) return;
+      ref
+          .read(requestControllerProvider.notifier)
+          .setPreferredTruck(widget.preferredTruck);
+      // A fresh fix for every visit to the form. The cached one could be from
+      // a different street: the customer may have coasted somewhere since.
+      ref.invalidate(currentPlaceProvider);
     });
   }
 
@@ -77,46 +78,35 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
     );
   }
 
-  /// Opens the map picker and folds the result back into the draft.
-  Future<void> _pickLocation({required bool isPickup}) async {
+  /// Opens the map picker for the destination and folds the result back into
+  /// the draft.
+  ///
+  /// Only the destination: the pickup is wherever the phone is, and asking a
+  /// stranded customer to point at themselves on a map was one step for
+  /// nothing — and one chance to get it wrong.
+  Future<void> _pickDestination() async {
     final draft = ref.read(requestControllerProvider);
     final picked = await Navigator.of(context).push<ServiceLocation>(
       MaterialPageRoute(
         builder: (_) => LocationPickerScreen(
-          title: isPickup ? '¿Dónde estás?' : '¿A dónde la llevamos?',
-          initial: isPickup ? draft.pickup : draft.dropoff,
-          requireReference: isPickup,
+          title: '¿A dónde la llevamos?',
+          initial: draft.dropoff,
         ),
       ),
     );
     if (picked == null || !mounted) return;
 
-    final controller = ref.read(requestControllerProvider.notifier);
-    if (isPickup) {
-      controller.setPickup(picked);
-      _pickup.text = picked.address;
-      _reference.text = picked.reference;
-    } else {
-      controller.setDropoff(picked);
-      _dropoff.text = picked.address;
-    }
+    ref.read(requestControllerProvider.notifier).setDropoff(picked);
+    _dropoff.text = picked.address;
   }
 
-  /// Folds any address text the customer edited by hand back onto the point
-  /// they already chose on the map.
+  /// Folds the landmark the customer typed, and any destination address they
+  /// edited by hand, back onto the points already chosen.
   void _syncLocations() {
     final controller = ref.read(requestControllerProvider.notifier);
     final draft = ref.read(requestControllerProvider);
 
-    final pickup = draft.pickup;
-    if (pickup != null) {
-      controller.setPickup(
-        pickup.copyWith(
-          address: _pickup.text.trim(),
-          reference: _reference.text.trim(),
-        ),
-      );
-    }
+    controller.setPickupReference(_reference.text.trim());
 
     final dropoff = draft.dropoff;
     if (dropoff != null) {
@@ -129,7 +119,10 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
 
     final chosen = ref.read(requestControllerProvider);
     if (chosen.pickup == null) {
-      _showMissing('Marca dónde estás para poder enviarte la grúa.');
+      _showMissing(
+        'Todavía no sabemos dónde estás. Activa la ubicación para pedir la '
+        'grúa.',
+      );
       return;
     }
     if (chosen.dropoff == null) {
@@ -207,6 +200,26 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
   Widget build(BuildContext context) {
     final draft = ref.watch(requestControllerProvider);
     final text = Theme.of(context).textTheme;
+
+    // Where the phone is. Two sources, cheapest first: the live stream the
+    // home map is already running has a fix in memory, while a fresh
+    // `getCurrentPosition` plus geocode takes seconds — and used to leave this
+    // row spinning on "Obteniendo tu ubicación…" for all of them.
+    final here = ref.watch(currentPlaceProvider);
+    final live = ref.watch(myPositionProvider).value?.position;
+    final pickup = draft.pickup;
+
+    // Folded into the draft after the frame: a provider may not be changed
+    // mid-build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final controller = ref.read(requestControllerProvider.notifier);
+      if (here.value case final place?) {
+        controller.usePickupFromDevice(place);
+      } else if (live != null) {
+        controller.usePickupPoint(live);
+      }
+    });
 
     return Scaffold(
       backgroundColor: BrandColors.redDark,
@@ -312,14 +325,50 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                     const SizedBox(height: Insets.xxl),
                     Text('¿Dónde estás?', style: text.headlineSmall),
                     const SizedBox(height: Insets.lg),
+                    // Read-only: this is the phone's own position, not a
+                    // field to fill in. What the customer can add is the
+                    // landmark below it.
                     _LocationField(
                       icon: Icons.my_location,
                       iconColor: BrandColors.red,
                       label: 'Punto de recogida',
-                      value: draft.pickup?.address ?? '',
-                      reference: draft.pickup?.reference ?? '',
-                      hint: 'Toca para marcarlo en el mapa',
-                      onTap: () => _pickLocation(isPickup: true),
+                      // Nothing stands in for the address: either the row
+                      // names where the customer is or it is still working it
+                      // out, and the spinner says which.
+                      value: pickup?.address ?? '',
+                      hint: here.hasError
+                          ? 'No pudimos obtener tu ubicación'
+                          : 'Obteniendo tu ubicación…',
+                      busy: !here.hasError &&
+                          (pickup == null || pickup.address.isEmpty),
+                    ),
+                    if (pickup == null && !here.isLoading) ...[
+                      const SizedBox(height: Insets.sm),
+                      InlineNotice(
+                        message:
+                            'Necesitamos tu ubicación para enviarte la grúa. '
+                            'Actívala y vuelve a intentarlo.',
+                        tone: NoticeTone.warning,
+                        icon: Icons.location_off_outlined,
+                        actionLabel: 'Reintentar',
+                        onAction: () => ref.invalidate(currentPlaceProvider),
+                      ),
+                    ],
+                    const SizedBox(height: Insets.md),
+                    TextFormField(
+                      key: const Key('pickup-reference'),
+                      controller: _reference,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: const InputDecoration(
+                        labelText: 'Referencia del punto de recogida',
+                        hintText: 'Frente al colmado, portón azul…',
+                      ),
+                      onChanged: (value) => ref
+                          .read(requestControllerProvider.notifier)
+                          .setPickupReference(value.trim()),
+                      validator: (v) => (v?.trim().isEmpty ?? true)
+                          ? 'Escribe una referencia'
+                          : null,
                     ),
                     const SizedBox(height: Insets.md),
                     _LocationField(
@@ -328,7 +377,7 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                       label: 'Destino',
                       value: draft.dropoff?.address ?? '',
                       hint: '¿A dónde la llevamos?',
-                      onTap: () => _pickLocation(isPickup: false),
+                      onTap: _pickDestination,
                     ),
 
                     if (draft.failure != null) ...[
@@ -654,25 +703,30 @@ class _LocationField extends StatelessWidget {
     required this.label,
     required this.value,
     required this.hint,
-    required this.onTap,
-    this.reference = '',
+    this.onTap,
+    this.busy = false,
   });
 
   final IconData icon;
   final Color iconColor;
   final String label;
   final String value;
-  final String reference;
   final String hint;
-  final VoidCallback onTap;
+
+  /// Null makes the row a statement rather than a button: no tap, no chevron.
+  final VoidCallback? onTap;
+
+  /// Waiting on something — a fix on its way — instead of empty.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final chosen = value.isNotEmpty;
+    final readOnly = onTap == null;
 
     return Material(
-      color: BrandColors.white,
+      color: readOnly ? BrandColors.offWhite : BrandColors.white,
       borderRadius: Corners.brMd,
       child: InkWell(
         onTap: onTap,
@@ -682,7 +736,9 @@ class _LocationField extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: Corners.brMd,
             border: Border.all(
-              color: chosen ? BrandColors.grey200 : BrandColors.redTintStrong,
+              color: chosen || readOnly
+                  ? BrandColors.grey200
+                  : BrandColors.redTintStrong,
             ),
           ),
           child: Row(
@@ -704,18 +760,17 @@ class _LocationField extends StatelessWidget {
                           : text.bodyMedium
                               ?.copyWith(color: BrandColors.grey400),
                     ),
-                    if (reference.isNotEmpty)
-                      Text(
-                        reference,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style:
-                            text.bodySmall?.copyWith(color: BrandColors.grey600),
-                      ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, color: BrandColors.grey400),
+              if (busy)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else if (!readOnly)
+                const Icon(Icons.chevron_right, color: BrandColors.grey400),
             ],
           ),
         ),

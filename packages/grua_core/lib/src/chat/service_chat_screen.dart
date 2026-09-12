@@ -191,7 +191,6 @@ class ChatThreadView extends StatefulWidget {
     this.onSetBlocked,
     this.onClearChat,
     this.onDeleteChat,
-    this.extraMenuItems = const [],
     this.onMarkRead,
     this.banner,
     this.actions = const [],
@@ -233,10 +232,6 @@ class ChatThreadView extends StatefulWidget {
   /// only. Without them the menu offers neither.
   final Future<Result<void>> Function()? onClearChat;
   final Future<Result<void>> Function()? onDeleteChat;
-
-  /// What this particular conversation adds to the ⋮ menu — "Terminar
-  /// conversación" on a chat request, nothing on a job.
-  final List<PopupMenuEntry<void>> extraMenuItems;
 
   final List<ChatMessage> messages;
   final String? myUid;
@@ -437,7 +432,6 @@ class _ChatThreadViewState extends State<ChatThreadView> {
         label: 'Eliminar chat',
         onTap: _deleteChat,
       ),
-    ...widget.extraMenuItems,
   ];
 
   /// A menu row. The work runs after the menu closes, so a dialog of its own

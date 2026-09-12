@@ -10,8 +10,14 @@ import { sealTruckRef } from '../lib/truckRef.js';
 import { loadDispatchConfig } from '../dispatch/dispatchNext.js';
 import { region } from './region.js';
 
-/** No wider than dispatch itself will ever look. */
-export const MAX_NEARBY_RADIUS_KM = 40;
+/**
+ * The widest search the map offers: the whole country from anywhere in it.
+ *
+ * Wider than dispatch's own cascade on purpose — this answers "is there a
+ * grúa anywhere near me", and one 400 km read is cheaper than a customer
+ * refreshing at 40 km and concluding the service does not exist.
+ */
+export const MAX_NEARBY_RADIUS_KM = 400;
 
 /** Enough to fill a map; a busy area has no use for more pins than this. */
 const MAX_RESULTS = 30;

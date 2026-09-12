@@ -19,8 +19,14 @@ class TruckSearchSettings {
   static const defaultRadiusKm = 5.0;
   static const defaultSeconds = 30;
 
-  /// The radii offered. 40 km is as far as dispatch ever looks.
-  static const radiusOptions = <double>[1, 2, 3, 5, 10, 15, 20, 30, 40];
+  /// The radii offered.
+  ///
+  /// Up to 400 km, which is the whole country from anywhere in it: dispatch
+  /// still starts its cascade at 5 km, so a wide search answers "is there a
+  /// grúa at all" rather than promising one from Monte Cristi.
+  static const radiusOptions = <double>[
+    1, 2, 3, 5, 10, 15, 20, 30, 40, 60, 100, 150, 200, 300, 400,
+  ];
   static const minSeconds = 10;
   static const maxSeconds = 120;
 

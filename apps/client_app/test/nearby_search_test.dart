@@ -102,7 +102,7 @@ Future<void> main() async {
 
     await tester.tap(row);
     await advance(tester, const Duration(milliseconds: 500));
-    expect(find.text('Búsqueda completa'), findsOneWidget);
+    expect(find.text('Buscar de nuevo'), findsOneWidget);
     // What was found stays on the map.
     expect(trucksOn(homeMap(tester)), isNotEmpty);
 
@@ -118,7 +118,7 @@ Future<void> main() async {
     // 30 s by default.
     await advance(tester, const Duration(seconds: 31));
 
-    expect(find.text('Búsqueda completa'), findsOneWidget);
+    expect(find.text('Buscar de nuevo'), findsOneWidget);
   });
 
   testWidgets('tapping a truck shows it anonymously, and '
@@ -193,21 +193,21 @@ Future<void> main() async {
     await tester.drag(find.byKey(const Key('radius-slider')), const Offset(400, 0));
     await tester.drag(find.byKey(const Key('duration-slider')), const Offset(-400, 0));
     await tester.pump();
-    expect(find.text('40 km'), findsOneWidget);
+    expect(find.text('400 km'), findsOneWidget);
     expect(find.text('10 s'), findsOneWidget);
 
     await tester.tap(find.text('Guardar'));
     await advance(tester, const Duration(seconds: 1));
 
-    expect(homeMap(tester).circles.single.radiusMeters, 40000);
+    expect(homeMap(tester).circles.single.radiusMeters, 400000);
     expect(find.textContaining('Buscando…'), findsOneWidget);
     // …and the new, shorter duration ends it.
     await advance(tester, const Duration(seconds: 11));
-    expect(find.text('Búsqueda completa'), findsOneWidget);
+    expect(find.text('Buscar de nuevo'), findsOneWidget);
 
     // Remembered on the device.
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getDouble('nearby.radiusKm'), 40);
+    expect(prefs.getDouble('nearby.radiusKm'), 400);
     expect(prefs.getInt('nearby.durationSeconds'), 10);
   });
 }

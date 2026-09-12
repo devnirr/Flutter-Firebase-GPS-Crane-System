@@ -110,7 +110,10 @@ const createDriverInput = z.object({
   zones: z.array(z.string().max(60)).max(20).default([]),
   companyName: z.string().max(120).default(''),
   rnc: rncSchema,
-  initialPassword: z.string().min(8).max(128).nullish(),
+  // Six is Auth's own floor. The office sets this by hand for an account it
+  // is handing over in person — self-registration in `registerDriverInput`
+  // still asks for eight, since nobody is standing there to say it out loud.
+  initialPassword: z.string().min(6).max(128).nullish(),
 });
 
 /**

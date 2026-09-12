@@ -209,28 +209,6 @@ class _RequestChatScreenState extends ConsumerState<RequestChatScreen> {
                   onDecline: () => _respond(accept: false),
                 )
               : _WaitingBanner(busy: _busy, onCancel: _close),
-      // Ending the conversation joined the ⋮ menu when calling and search
-      // took the header's room; it is a rare tap, and a deliberate one.
-      extraMenuItems: [
-        if (phase == ChatRequestPhase.open)
-          PopupMenuItem<void>(
-            key: const Key('chat-request-close'),
-            onTap: _busy ? null : _close,
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.logout, size: 20, color: BrandColors.grey800),
-                SizedBox(width: Insets.md),
-                Flexible(
-                  child: Text(
-                    'Terminar conversación',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
       onSend: (text, clientMsgId) {
         if (uid == null) {
           return Future.value(
