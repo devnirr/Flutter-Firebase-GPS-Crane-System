@@ -18,7 +18,7 @@ class ProfileScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: BrandColors.offWhite,
       appBar: AppBar(
-        leading: BackButton(onPressed: () => context.pop()),
+        automaticallyImplyLeading: false,
         title: const Text('Mi cuenta'),
       ),
       // Three states, not two. Reading `.value` alone made an error and a
@@ -87,7 +87,7 @@ class ProfileScreen extends ConsumerWidget {
                       _Row(
                         icon: Icons.receipt_long_outlined,
                         label: 'Mis servicios',
-                        onTap: () => context.push(Routes.history),
+                        onTap: () => context.go(Routes.history),
                       ),
                       const Divider(indent: Insets.huge),
                       _Row(

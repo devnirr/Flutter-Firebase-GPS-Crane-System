@@ -64,12 +64,29 @@ class LocationPublisher {
       cancelOnError: false,
     );
 
+    // A fix now, rather than at the first movement. `getPositionStream` only
+    // emits once the phone has moved past the distance filter — and in a
+    // browser frequently not at all — so a chofer who switches on and waits
+    // published nothing: online on their own screen, and absent from both
+    // dispatch and the customer's "grúas cerca de ti".
+    unawaited(_publishFirstFix(serviceId, state));
+
     // The heartbeat is what keeps a stationary truck dispatchable. Without it
     // a chofer waiting at a stoplight ages out of the candidate list.
     _heartbeatTimer = Timer.periodic(_heartbeat, (_) {
       final last = _latest;
       if (last != null) _publish(last, serviceId, state, force: true);
     });
+  }
+
+  /// Publishes the position the phone can give right now, unless the stream
+  /// has already beaten it to it.
+  Future<void> _publishFirstFix(String? serviceId, DriverLiveState state) async {
+    if (_latest != null) return;
+    final position = await _location.currentPosition();
+    // Stopped, or overtaken by a real update, while the fix was coming.
+    if (position == null || _latest != null || _subscription == null) return;
+    _onPosition(position, serviceId, state);
   }
 
   void _onPosition(

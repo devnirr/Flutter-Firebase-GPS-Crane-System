@@ -3,63 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../router.dart';
-
-/// A photo taken or chosen for upload, already read into memory.
-class PickedPhoto {
-  const PickedPhoto({required this.name, required this.bytes});
-
-  final String name;
-  final Uint8List bytes;
-
-  /// Only the types storage.rules accepts; anything unrecognised is sent as a
-  /// JPEG, which is what a phone camera produces anyway.
-  String get contentType {
-    final dot = name.lastIndexOf('.');
-    final ext = dot == -1 ? '' : name.substring(dot + 1).toLowerCase();
-    return switch (ext) {
-      'png' => 'image/png',
-      'webp' => 'image/webp',
-      'heic' => 'image/heic',
-      _ => 'image/jpeg',
-    };
-  }
-
-  String get sizeLabel {
-    final kb = bytes.lengthInBytes / 1024;
-    return kb < 1024
-        ? '${kb.toStringAsFixed(0)} KB'
-        : '${(kb / 1024).toStringAsFixed(1)} MB';
-  }
-}
-
-enum PhotoSource { camera, gallery }
-
-/// How the form gets a photo off the phone.
-///
-/// A provider rather than a direct call so a widget test can hand the form a
-/// licence: there is no camera to drive in a test, and a form whose required
-/// photo cannot be supplied is a form that cannot be submitted.
-typedef PhotoPicker = Future<PickedPhoto?> Function(PhotoSource source);
-
-final photoPickerProvider = Provider<PhotoPicker>((ref) => pickPhoto);
-
-/// The real picker.
-Future<PickedPhoto?> pickPhoto(PhotoSource source) async {
-  final file = await ImagePicker().pickImage(
-    source: source == PhotoSource.camera
-        ? ImageSource.camera
-        : ImageSource.gallery,
-    // A licence stays legible at this size, and it keeps a phone photo well
-    // under the bucket's 10 MB ceiling.
-    maxWidth: 2000,
-    imageQuality: 85,
-  );
-  if (file == null) return null;
-  return PickedPhoto(name: file.name, bytes: await file.readAsBytes());
-}
 
 /// Chofer self-registration.
 ///

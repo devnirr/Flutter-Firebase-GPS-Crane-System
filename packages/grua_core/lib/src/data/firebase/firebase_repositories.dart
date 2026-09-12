@@ -11,6 +11,7 @@ import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/billing.dart';
+import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
 import '../../domain/models/remote_config_models.dart';
@@ -737,35 +738,58 @@ class FirestoreChatRepository implements ChatRepository {
     required UserRole senderRole,
     required String text,
     required String clientMsgId,
+    String imageUrl = '',
   }) =>
       // Keyed by clientMsgId so a retry on bad signal overwrites rather than
       // duplicating. The field set matches the security rule exactly; anything
       // extra is rejected.
-      _guard(() => Paths.messages(serviceId).doc(clientMsgId).set(
-            ChatMessage(
-              id: clientMsgId,
-              senderId: senderId,
-              senderRole: senderRole,
-              text: text.trim(),
-              clientMsgId: clientMsgId,
-            ),
-          ));
+      _guard(() => Paths.messageWrites(serviceId).doc(clientMsgId).set({
+            'senderId': senderId,
+            'senderRole': senderRole.wire,
+            'text': text.trim(),
+            'clientMsgId': clientMsgId,
+            'sentAt': FieldValue.serverTimestamp(),
+            // Written as null rather than left out: a field that is absent is
+            // not matched by a query for it, and "mark this read" would pass
+            // the message by.
+            'readAt': null,
+            if (imageUrl.isNotEmpty) 'imageUrl': imageUrl,
+          }));
+
+  @override
+  Future<Result<String>> uploadImage({
+    required String serviceId,
+    required Uint8List bytes,
+    required String contentType,
+  }) =>
+      _uploadChatImage(
+        threadId: serviceId,
+        bytes: bytes,
+        contentType: contentType,
+      );
 
   @override
   Future<Result<void>> markRead(String serviceId, String readerId) =>
       _guard(() async {
-        final unread = await Paths.messages(serviceId)
-            .where('readAt', isNull: true)
+        // The last page of the conversation, rather than a query for unread
+        // ones. `where('readAt', isNull: true)` only matches documents that
+        // carry the field, and every message sent before this shipped has no
+        // `readAt` at all — so the query came back empty and the badge never
+        // cleared, however many times the chofer opened the chat.
+        final recent = await Paths.messages(serviceId)
+            .orderBy('sentAt', descending: true)
             .limit(50)
             .get();
 
         final batch = FirebaseFirestore.instance.batch();
-        for (final doc in unread.docs) {
-          if (doc.data().senderId == readerId) continue;
-          batch.update(doc.reference, {
-            'readAt': FieldValue.serverTimestamp(),
-          });
+        var pending = 0;
+        for (final doc in recent.docs) {
+          final message = doc.data();
+          if (message.senderId == readerId || message.isRead) continue;
+          batch.update(doc.reference, {'readAt': FieldValue.serverTimestamp()});
+          pending++;
         }
+        if (pending == 0) return;
         await batch.commit();
       });
 }
@@ -773,6 +797,176 @@ class FirestoreChatRepository implements ChatRepository {
 // ---------------------------------------------------------------------------
 // Money
 // ---------------------------------------------------------------------------
+
+/// One photo into `chat/{threadId}/`, shared by both conversations.
+///
+/// The download URL is what travels in the message: Storage lets any signed-in
+/// user read these objects, and the token in the URL is what keeps a photo to
+/// the conversation it was sent in.
+Future<Result<String>> _uploadChatImage({
+  required String threadId,
+  required Uint8List bytes,
+  required String contentType,
+}) =>
+    _guard(() async {
+      final ext = switch (contentType) {
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/heic' => 'heic',
+        _ => 'jpg',
+      };
+      final ref = FirebaseStorage.instance
+          .ref('chat/$threadId/${DateTime.now().millisecondsSinceEpoch}.$ext');
+
+      await ref.putData(
+        bytes,
+        SettableMetadata(
+          contentType: contentType,
+          cacheControl: 'private, max-age=604800',
+        ),
+      );
+      final url = await ref.getDownloadURL();
+      return url;
+    });
+
+class FirestoreChatRequestRepository implements ChatRequestRepository {
+  const FirestoreChatRequestRepository();
+
+  @override
+  Stream<List<ChatRequest>> watchForDriver(String driverId, {int limit = 20}) =>
+      Paths.chatRequests()
+          .where('driverId', isEqualTo: driverId)
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => d.data()).toList());
+
+  @override
+  Stream<List<ChatRequest>> watchForClient(String clientId, {int limit = 10}) =>
+      Paths.chatRequests()
+          .where('clientId', isEqualTo: clientId)
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => d.data()).toList());
+
+  @override
+  Stream<ChatRequest?> watchRequest(String requestId) =>
+      Paths.chatRequest(requestId).snapshots().map((snap) => snap.data());
+
+  @override
+  Stream<List<ChatMessage>> watchMessages(String requestId, {int limit = 100}) =>
+      Paths.chatRequestMessages(requestId)
+          .orderBy('sentAt')
+          .limit(limit)
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => d.data()).toList());
+
+  @override
+  Future<Result<void>> sendMessage({
+    required String requestId,
+    required String senderId,
+    required UserRole senderRole,
+    required String text,
+    required String clientMsgId,
+    String imageUrl = '',
+  }) =>
+      // Keyed by clientMsgId, as on a job's chat, so a retry overwrites.
+      _guard(
+        () => Paths.chatRequestMessageWrites(requestId).doc(clientMsgId).set({
+          'senderId': senderId,
+          'senderRole': senderRole.wire,
+          'text': text.trim(),
+          'clientMsgId': clientMsgId,
+          'sentAt': FieldValue.serverTimestamp(),
+          // See the job chat's sender: absent is not the same as null.
+          'readAt': null,
+          if (imageUrl.isNotEmpty) 'imageUrl': imageUrl,
+        }),
+      );
+
+  @override
+  Future<Result<String>> uploadImage({
+    required String requestId,
+    required Uint8List bytes,
+    required String contentType,
+  }) =>
+      _uploadChatImage(
+        threadId: requestId,
+        bytes: bytes,
+        contentType: contentType,
+      );
+
+  @override
+  Future<Result<void>> markRead(String requestId, String readerId) =>
+      _guard(() async {
+        // As on a job's chat: read the last page and stamp what this reader
+        // has not seen, rather than querying a field older messages lack.
+        final recent = await Paths.chatRequestMessages(requestId)
+            .orderBy('sentAt', descending: true)
+            .limit(50)
+            .get();
+
+        final batch = FirebaseFirestore.instance.batch();
+        var pending = 0;
+        for (final doc in recent.docs) {
+          final message = doc.data();
+          if (message.senderId == readerId || message.isRead) continue;
+          batch.update(doc.reference, {'readAt': FieldValue.serverTimestamp()});
+          pending++;
+        }
+        if (pending == 0) return;
+        await batch.commit();
+      });
+}
+
+/// The typing indicator, in the Realtime Database.
+///
+/// A keystroke writes a timestamp and the server clears it if the phone drops
+/// off. Readers ignore anything older than [_freshness], so a flag left behind
+/// by a lost connection stops claiming somebody is still typing.
+class FirebaseTypingRepository implements TypingRepository {
+  const FirebaseTypingRepository();
+
+  static const _freshness = Duration(seconds: 8);
+
+  @override
+  Stream<Set<String>> watchTyping(String threadKey) =>
+      Paths.typing(threadKey).onValue.map((event) {
+        final value = event.snapshot.value;
+        if (value is! Map) return const <String>{};
+
+        final now = DateTime.now().millisecondsSinceEpoch;
+        return {
+          for (final entry in value.entries)
+            if (entry.value is num &&
+                now - (entry.value! as num).toInt() < _freshness.inMilliseconds)
+              '${entry.key}',
+        };
+      });
+
+  @override
+  Future<void> setTyping({
+    required String threadKey,
+    required String uid,
+    required bool typing,
+  }) async {
+    final ref = Paths.typingBy(threadKey, uid);
+    try {
+      if (!typing) {
+        await ref.remove();
+        return;
+      }
+      // Set before the write, so a phone that dies mid-sentence is cleared by
+      // the server rather than leaving the other side waiting.
+      await ref.onDisconnect().remove();
+      await ref.set(DateTime.now().millisecondsSinceEpoch);
+    } on Object catch (error) {
+      // An indicator nobody can see is not worth an error on screen.
+      debugPrint('Typing flag not published: $error');
+    }
+  }
+}
 
 class FirestoreEarningsRepository implements EarningsRepository {
   const FirestoreEarningsRepository();

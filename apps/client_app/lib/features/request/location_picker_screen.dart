@@ -161,8 +161,10 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
       body: Column(
         children: [
           Expanded(
+            // Every child is positioned. A Stack takes the size of its
+            // unpositioned children, and the pin alone is 44 px wide — which
+            // is exactly how wide the map became.
             child: Stack(
-              alignment: Alignment.center,
               children: [
                 Positioned.fill(
                   child: GruaMap(
@@ -175,7 +177,7 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
                     markers: const [],
                   ),
                 ),
-                const _CentrePin(),
+                const Positioned.fill(child: Center(child: _CentrePin())),
                 Positioned(
                   right: Insets.lg,
                   bottom: Insets.lg,

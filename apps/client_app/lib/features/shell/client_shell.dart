@@ -7,39 +7,29 @@ import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
 import '../chat/chat_list_screen.dart';
-import '../home/location_publisher.dart';
-import '../home/offer_card.dart';
-import '../notifications/driver_notifications.dart';
-import '../notifications/notification_widgets.dart';
-import '../orders/orders_screen.dart';
+import '../notifications/client_notifications.dart';
 
-/// The frame around every signed-in page: the tabs, the bar that switches
+/// The frame around every signed-in page: the four tabs, the bar that switches
 /// between them, and the banner that announces what arrives.
 ///
-/// Inicio is the map and the online switch, Pedidos the open work, Chat the
-/// conversation with the customer, Perfil the account. Each tab keeps its own
-/// state and scroll position while another is on screen, so a chofer who
-/// glances at a message comes back to the map exactly as they left it.
-///
-/// Two things are allowed to take the chofer off whatever tab they chose,
-/// because both are work the chofer cannot afford to miss: an offer, which
-/// lapses in 25 seconds, and a job starting, which belongs on the service
-/// screen. Anything else that arrives — open work, a customer's message —
-/// drops in as a banner and waits under the bell.
-class DriverShell extends ConsumerStatefulWidget {
-  const DriverShell({required this.navigationShell, super.key});
+/// Inicio is the map, and it keeps the two things a stranded customer needs
+/// fastest — the search for grúas nearby and "PEDIR GRÚA 24/7". Servicios is
+/// the history with its invoices, Chat every conversation, Perfil the account.
+/// Each tab keeps its own state and scroll position, so a customer who steps
+/// away to check an invoice comes back to the map exactly as they left it.
+class ClientShell extends ConsumerStatefulWidget {
+  const ClientShell({required this.navigationShell, super.key});
 
   final StatefulNavigationShell navigationShell;
 
   @override
-  ConsumerState<DriverShell> createState() => _DriverShellState();
+  ConsumerState<ClientShell> createState() => _ClientShellState();
 }
 
-class _DriverShellState extends ConsumerState<DriverShell> {
-  static const int _inicio = 0;
+class _ClientShellState extends ConsumerState<ClientShell> {
   static const _toastDuration = Duration(seconds: 5);
 
-  DriverNotification? _toast;
+  ClientNotification? _toast;
   Timer? _toastTimer;
 
   StatefulNavigationShell get _shell => widget.navigationShell;
@@ -50,7 +40,7 @@ class _DriverShellState extends ConsumerState<DriverShell> {
     super.dispose();
   }
 
-  void _showToast(DriverNotification notification) {
+  void _showToast(ClientNotification notification) {
     _toastTimer?.cancel();
     setState(() => _toast = notification);
     _toastTimer = Timer(_toastDuration, _hideToast);
@@ -72,55 +62,36 @@ class _DriverShellState extends ConsumerState<DriverShell> {
     );
   }
 
+  /// The banner leads where the thing it announced is. The customer has no
+  /// list of notifications to land in — one tap, and they are in the
+  /// conversation.
+  void _open(ClientNotification notification) {
+    _hideToast();
+    unawaited(
+      context.push(
+        notification.isRequest
+            ? Routes.chatRequestFor(notification.targetId)
+            : Routes.chatFor(notification.targetId),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    ref
-      // Watched here rather than on a screen: position publishing follows the
-      // chofer's online state, and must not stop because they opened a tab.
-      ..watch(locationPublisherProvider)
-      ..listen<Offer?>(openOfferProvider, (previous, next) {
-        if (next == null || next.serviceId == previous?.serviceId) return;
-        if (_shell.currentIndex != _inicio) {
-          _later(() => _shell.goBranch(_inicio));
-        }
-      })
-      ..listen<String?>(
-        activeDriverServiceProvider.select((service) => service.value?.id),
-        (previous, next) {
-          if (next == null || next == previous) return;
-          // Accepting from Pedidos, or the office assigning a job, lands on
-          // the service screen wherever the chofer was.
-          _later(() => context.go(Routes.activeService));
-        },
-      )
-      ..listen<List<DriverNotification>>(driverNotificationsProvider, (
-        previous,
-        next,
-      ) {
-        if (next.isEmpty) return;
-        final newest = next.first;
-        if (previous != null &&
-            previous.isNotEmpty &&
-            previous.first.id == newest.id) {
-          return;
-        }
-        // An offer needs no banner: it takes over Inicio on its own.
-        if (newest.kind == DriverNotificationKind.offer) return;
-        _later(() => _showToast(newest));
-      });
+    ref.listen<List<ClientNotification>>(clientNotificationsProvider, (
+      previous,
+      next,
+    ) {
+      if (next.isEmpty) return;
+      final newest = next.first;
+      if (previous != null &&
+          previous.isNotEmpty &&
+          previous.first.id == newest.id) {
+        return;
+      }
+      _later(() => _showToast(newest));
+    });
 
-    final online = ref.watch(
-      currentDriverProvider.select((driver) => driver.value?.isOnline ?? false),
-    );
-    final orders = online ? ref.watch(availableOrdersProvider).length : 0;
-    final activeId = ref.watch(
-      activeDriverServiceProvider.select((s) => s.value?.id),
-    );
-    final unread = activeId == null
-        ? 0
-        : ref.watch(unreadMessageCountProvider(activeId));
-    // Chat requests waiting for an answer count on the Chat tab too.
-    final chatAttention = ref.watch(chatRequestAttentionProvider);
     final toast = _toast;
 
     return Scaffold(
@@ -151,18 +122,18 @@ class _DriverShellState extends ConsumerState<DriverShell> {
                     : Padding(
                         key: ValueKey(toast.id),
                         padding: const EdgeInsets.fromLTRB(
-                          Insets.lg,
+                          Insets.gutter,
                           Insets.sm,
-                          Insets.lg,
+                          Insets.gutter,
                           0,
                         ),
-                        child: NotificationToast(
-                          notification: toast,
+                        child: NotificationBanner(
+                          id: toast.id,
+                          title: toast.title,
+                          body: toast.body,
+                          leading: ClientNotificationGlyph(kind: toast.kind),
                           onClose: _hideToast,
-                          onOpen: () {
-                            _hideToast();
-                            unawaited(context.push(Routes.notifications));
-                          },
+                          onOpen: () => _open(toast),
                         ),
                       ),
               ),
@@ -172,8 +143,7 @@ class _DriverShellState extends ConsumerState<DriverShell> {
       ),
       bottomNavigationBar: _BottomBar(
         currentIndex: _shell.currentIndex,
-        orders: orders,
-        unread: unread + chatAttention,
+        unread: ref.watch(clientChatAttentionProvider),
         // Tapping the tab already open takes it back to its first page.
         onSelected: (index) => _shell.goBranch(
           index,
@@ -187,13 +157,11 @@ class _DriverShellState extends ConsumerState<DriverShell> {
 class _BottomBar extends StatelessWidget {
   const _BottomBar({
     required this.currentIndex,
-    required this.orders,
     required this.unread,
     required this.onSelected,
   });
 
   final int currentIndex;
-  final int orders;
   final int unread;
   final ValueChanged<int> onSelected;
 
@@ -239,28 +207,18 @@ class _BottomBar extends StatelessWidget {
               selectedIcon: Icon(Icons.map),
               label: 'Inicio',
             ),
-            NavigationDestination(
-              icon: _Counted(
-                count: orders,
-                badgeKey: const Key('orders-badge'),
-                child: const Icon(Icons.receipt_long_outlined),
-              ),
-              selectedIcon: _Counted(
-                count: orders,
-                badgeKey: const Key('orders-badge'),
-                child: const Icon(Icons.receipt_long),
-              ),
-              label: 'Pedidos',
+            const NavigationDestination(
+              icon: Icon(Icons.receipt_long_outlined),
+              selectedIcon: Icon(Icons.receipt_long),
+              label: 'Servicios',
             ),
             NavigationDestination(
               icon: _Counted(
                 count: unread,
-                badgeKey: const Key('chat-badge'),
                 child: const Icon(Icons.chat_bubble_outline),
               ),
               selectedIcon: _Counted(
                 count: unread,
-                badgeKey: const Key('chat-badge'),
                 child: const Icon(Icons.chat_bubble),
               ),
               label: 'Chat',
@@ -279,20 +237,15 @@ class _BottomBar extends StatelessWidget {
 
 /// An icon with a red count on its corner, hidden at zero.
 class _Counted extends StatelessWidget {
-  const _Counted({
-    required this.count,
-    required this.badgeKey,
-    required this.child,
-  });
+  const _Counted({required this.count, required this.child});
 
   final int count;
-  final Key badgeKey;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return Badge.count(
-      key: badgeKey,
+      key: const Key('chat-badge'),
       count: count,
       isLabelVisible: count > 0,
       backgroundColor: BrandColors.red,

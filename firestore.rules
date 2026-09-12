@@ -79,6 +79,21 @@ service cloud.firestore {
         .affectedKeys().hasOnly(allowed);
     }
 
+    // A chat message the apps may write, in a job's chat or a chat request's.
+    // Either words or a photo, never an empty bubble, and no other field —
+    // `sentAt` is the server's stamp and `readAt` is set by the reader.
+    function isSendableMessage(message) {
+      return message.text is string
+        && message.text.size() <= 1000
+        && message.get('imageUrl', '') is string
+        && message.get('imageUrl', '').size() <= 800
+        && (message.text.size() > 0 || message.get('imageUrl', '').size() > 0)
+        && message.keys().hasOnly([
+             'senderId', 'senderRole', 'text', 'clientMsgId',
+             'sentAt', 'readAt', 'imageUrl'
+           ]);
+    }
+
     // ---------------------------------------------------------------------
     // users — the customer's own profile
     // ---------------------------------------------------------------------
@@ -210,17 +225,49 @@ service cloud.firestore {
           && serviceDoc(serviceId).status in
              ['accepted', 'arrived', 'in_progress']
           && request.resource.data.senderId == uid()
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 1000
-          && request.resource.data.keys().hasOnly([
-               'senderId', 'senderRole', 'text', 'clientMsgId', 'sentAt', 'readAt'
-             ]);
+          && isSendableMessage(request.resource.data);
 
         // Marking read is the only edit; the text itself is immutable.
         allow update: if ok()
           && isPartyTo(serviceDoc(serviceId))
           && onlyChanges(['readAt']);
+
+        allow delete: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // chatRequests — a customer talking to a nearby chofer before any job
+    // ---------------------------------------------------------------------
+
+    // Created and answered only through the requestChat / respondChatRequest
+    // callables, which open the sealed truck ref; the two parties can read it.
+    // Queries must filter on the caller's own clientId or driverId.
+    match /chatRequests/{requestId} {
+      allow read: if isStaff() ||
+        (ok() && (resource.data.clientId == uid() || resource.data.driverId == uid()));
+      allow write: if false;
+
+      function chatRequestDoc() {
+        return get(/databases/$(database)/documents/chatRequests/$(requestId)).data;
+      }
+
+      function isChatParty(chat) {
+        return ok() && (uid() == chat.clientId || uid() == chat.driverId);
+      }
+
+      // Written from the apps like a job's chat, but only while the chofer has
+      // accepted and the conversation has not closed.
+      match /messages/{messageId} {
+        allow read: if isStaff() || isChatParty(chatRequestDoc());
+
+        allow create: if isChatParty(chatRequestDoc())
+          && chatRequestDoc().status == 'accepted'
+          && request.time < chatRequestDoc().closesAt
+          && request.resource.data.senderId == uid()
+          && isSendableMessage(request.resource.data);
+
+        allow update: if isChatParty(chatRequestDoc()) && onlyChanges(['readAt']);
 
         allow delete: if false;
       }

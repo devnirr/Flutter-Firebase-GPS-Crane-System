@@ -78,6 +78,21 @@ service firebase.storage {
       allow read, write: if false;
     }
 
+    // Photos shared inside a conversation — a job's chat or one opened from
+    // the map before any job.
+    //
+    // Any signed-in user may read: Storage rules cannot see who the two
+    // parties are, since that lives in Firestore. What stands in for it is
+    // that the object id is random and the URL carries its own token, so a
+    // photo is only reachable by someone the message was delivered to.
+    // Writes are images only, and small — a chat is not a file store.
+    match /chat/{threadId}/{fileName} {
+      allow read: if ok();
+      allow write: if ok()
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|png|webp|heic)');
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

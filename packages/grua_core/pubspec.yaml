@@ -47,6 +47,10 @@ dependencies:
   # Routes API calls for the chofer's road route to a pickup.
   http: ^1.2.0
 
+  # Photos: the chofer's paperwork, and what either side attaches to a chat.
+  # Here rather than in each app because the chat screen is shared.
+  image_picker: ^1.2.3
+
   # Utilities
   intl: ^0.20.3
   collection: ^1.19.1

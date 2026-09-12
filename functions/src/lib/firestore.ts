@@ -49,6 +49,7 @@ export const Collections = {
   reports: 'reports',
   audit: 'audit',
   webhookEvents: 'webhook_events',
+  chatRequests: 'chatRequests',
 } as const;
 
 export const Sub = {
@@ -94,6 +95,11 @@ export const Paths = {
     db.collection(Collections.services).doc(serviceId).collection(Sub.events),
   messages: (serviceId: string) =>
     db.collection(Collections.services).doc(serviceId).collection(Sub.messages),
+
+  chatRequests: () => db.collection(Collections.chatRequests),
+  chatRequest: (id: string) => db.collection(Collections.chatRequests).doc(id),
+  chatRequestMessages: (id: string) =>
+    db.collection(Collections.chatRequests).doc(id).collection(Sub.messages),
 
   tracking: (serviceId: string) =>
     db.collection(Collections.tracking).doc(serviceId),

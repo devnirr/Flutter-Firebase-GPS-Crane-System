@@ -4,6 +4,7 @@ import 'enums.dart';
 import 'failures.dart';
 import 'models/app_user.dart';
 import 'models/billing.dart';
+import 'models/chat_request.dart';
 import 'models/dispatch_models.dart';
 import 'models/driver.dart';
 import 'models/remote_config_models.dart';
@@ -233,15 +234,92 @@ abstract interface class ChatRepository {
 
   /// Written directly by the app — the only subcollection that is. Rules
   /// enforce sender identity, length, and that the service is still open.
+  ///
+  /// [imageUrl] comes from [uploadImage]. A message carries words, a photo, or
+  /// both; the rules refuse an empty one.
   Future<Result<void>> sendMessage({
     required String serviceId,
     required String senderId,
     required UserRole senderRole,
     required String text,
     required String clientMsgId,
+    String imageUrl,
+  });
+
+  /// Puts a photo in the bucket under `chat/{serviceId}/` and returns the URL
+  /// to send. Demo mode has no bucket and hands back a data URI.
+  Future<Result<String>> uploadImage({
+    required String serviceId,
+    required Uint8List bytes,
+    required String contentType,
   });
 
   Future<Result<void>> markRead(String serviceId, String readerId);
+}
+
+/// Conversations a customer opens with a nearby truck before any job exists.
+///
+/// The request itself is server-written through [FunctionsGateway.requestChat]
+/// and [FunctionsGateway.respondChatRequest]; its messages are written straight
+/// from the apps, like a job's, and the rules only let them in while the
+/// chofer has accepted and the conversation is open.
+abstract interface class ChatRequestRepository {
+  /// Requests addressed to this chofer, newest first.
+  Stream<List<ChatRequest>> watchForDriver(String driverId, {int limit = 20});
+
+  /// Requests this customer has sent, newest first.
+  Stream<List<ChatRequest>> watchForClient(String clientId, {int limit = 10});
+
+  Stream<ChatRequest?> watchRequest(String requestId);
+
+  Stream<List<ChatMessage>> watchMessages(String requestId, {int limit = 100});
+
+  Future<Result<void>> sendMessage({
+    required String requestId,
+    required String senderId,
+    required UserRole senderRole,
+    required String text,
+    required String clientMsgId,
+    String imageUrl,
+  });
+
+  /// As [ChatRepository.uploadImage], under `chat/{requestId}/`.
+  Future<Result<String>> uploadImage({
+    required String requestId,
+    required Uint8List bytes,
+    required String contentType,
+  });
+
+  Future<Result<void>> markRead(String requestId, String readerId);
+}
+
+/// Names one conversation for the typing indicator. Both kinds share the
+/// node, so the keys have to say which is which.
+String jobThreadKey(String serviceId) => 'job:$serviceId';
+
+String requestThreadKey(String requestId) => 'request:$requestId';
+
+/// Who is typing in a conversation, right now.
+///
+/// This lives in the Realtime Database rather than Firestore: it changes on
+/// every few keystrokes, it is worthless a moment later, and RTDB clears it on
+/// its own when a phone drops off — a Firestore write per keystroke would cost
+/// real money to say something nobody needs a minute from now.
+///
+/// The thread key names the conversation across both kinds — see
+/// [jobThreadKey] and [requestThreadKey].
+abstract interface class TypingRepository {
+  /// The uids typing in [threadKey], the caller's own included. Callers filter
+  /// themselves out; a stale flag ages out on its own.
+  Stream<Set<String>> watchTyping(String threadKey);
+
+  /// Says this user is typing, or has stopped. Never throws: a conversation
+  /// that cannot show the indicator still has to send messages.
+  Future<void> setTyping({
+    required String threadKey,
+    required String uid,
+    required bool typing,
+  });
 }
 
 abstract interface class EarningsRepository {
@@ -549,6 +627,24 @@ abstract interface class FunctionsGateway {
     required LatLng center,
     required double radiusKm,
   });
+
+  /// "Chatear" on a nearby truck: asks its chofer to talk, before any job.
+  ///
+  /// [truckRef] is [NearbyTruck.ref]; the server opens it, so the customer
+  /// never learns who drives. Asking the same truck again returns the request
+  /// already waiting or open. Returns the request's id.
+  Future<Result<String>> requestChat(String truckRef);
+
+  /// The chofer's answer to a chat request. Refused once it has lapsed or
+  /// been answered.
+  Future<Result<void>> respondChatRequest(
+    String requestId, {
+    required bool accept,
+  });
+
+  /// Ends a chat request from either side: withdrawn or refused while it
+  /// waits, closed once open.
+  Future<Result<void>> closeChatRequest(String requestId);
 
   Future<Result<QuoteResult>> quoteService({
     required ServiceLocation pickup,

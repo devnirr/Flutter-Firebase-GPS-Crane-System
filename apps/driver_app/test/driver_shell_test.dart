@@ -201,12 +201,13 @@ Future<void> main() async {
     // From the customer card, straight into the conversation.
     await tester.tap(find.byKey(const Key('client-chat')));
     await frames(tester);
-    expect(find.text('Voy en camino'), findsOneWidget);
+    expect(find.text('Escribe un mensaje…'), findsOneWidget);
 
-    await tester.tap(find.text('Voy en camino'));
+    await tester.enterText(find.byType(TextField).last, 'Voy en camino');
+    await tester.tap(find.byIcon(Icons.send));
     await frames(tester);
-    // The quick reply and the bubble it sent.
-    expect(find.text('Voy en camino'), findsNWidgets(2));
+    // The bubble it sent.
+    expect(find.text('Voy en camino'), findsOneWidget);
 
     final sent = (await tester.runAsync(
       () => backend.messagesFor(service.id).first,

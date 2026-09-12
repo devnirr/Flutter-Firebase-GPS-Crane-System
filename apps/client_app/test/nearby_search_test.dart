@@ -49,13 +49,14 @@ Future<void> main() async {
     }
   }
 
-  Future<void> signIn(WidgetTester tester) async {
+  Future<DemoBackend> signIn(WidgetTester tester) async {
     tester.view
       ..devicePixelRatio = 1
       ..physicalSize = const Size(430, 900);
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Entrar con Teléfono'));
     await tester.pumpAndSettle();
@@ -65,6 +66,7 @@ Future<void> main() async {
     await tester.pumpAndSettle(const Duration(seconds: 1));
     await tester.enterText(find.byType(TextField).first, '123456');
     await advance(tester, const Duration(seconds: 2));
+    return backend;
   }
 
   GruaMap homeMap(WidgetTester tester) => tester.widget<GruaMap>(find.byType(GruaMap));
@@ -119,7 +121,7 @@ Future<void> main() async {
     expect(find.text('Búsqueda completa'), findsOneWidget);
   });
 
-  testWidgets('tapping a truck shows it anonymously, explains chat, and '
+  testWidgets('tapping a truck shows it anonymously, and '
       '"Pedir esta grúa" opens the request with that truck first', (tester) async {
     await signIn(tester);
 
@@ -134,17 +136,49 @@ Future<void> main() async {
     // Truck type and distance, e.g. "Plataforma · a 850 m de ti".
     expect(find.textContaining(' · a '), findsOneWidget);
 
-    // No chofer has taken a request yet, so chat says when it opens.
-    await tester.tap(find.byKey(const Key('truck-chat')));
-    await advance(tester, const Duration(milliseconds: 500));
-    expect(find.byKey(const Key('chat-explainer')), findsOneWidget);
-
     await tester.tap(find.byKey(const Key('truck-request')));
     await advance(tester, const Duration(seconds: 1));
 
     // The request form, carrying the choice.
     expect(find.text('Detalles del vehículo'), findsOneWidget);
     expect(find.byKey(const Key('preferred-truck-notice')), findsOneWidget);
+  });
+
+  testWidgets('"Chatear" asks that truck\'s chofer to talk, and the '
+      'conversation opens when they accept', (tester) async {
+    final backend = await signIn(tester);
+
+    trucksOn(homeMap(tester)).first.onTap!();
+    await advance(tester, const Duration(seconds: 1));
+
+    await tester.tap(find.byKey(const Key('truck-chat')));
+    await advance(tester, const Duration(seconds: 1));
+
+    // A request went to that truck's chofer, and the customer waits for it.
+    final request = backend.allChatRequests.single;
+    expect(request.clientId, 'demo-client-1');
+    expect(request.status, ChatRequestStatus.pending);
+    expect(find.byKey(const Key('chat-request-waiting')), findsOneWidget);
+    // Nobody's name until the chofer answers.
+    expect(find.text('Chofer de la grúa'), findsOneWidget);
+
+    backend.respondChatRequest(request.id, request.driverId, accept: true);
+    await advance(tester, const Duration(seconds: 1));
+
+    expect(find.byKey(const Key('chat-request-waiting')), findsNothing);
+    expect(find.text('Escribe un mensaje…'), findsOneWidget);
+    expect(find.text(backend.chatRequest(request.id)!.driverName), findsOneWidget);
+
+    await tester.enterText(
+      find.byType(TextField).last,
+      '¿Cuánto cuesta el servicio?',
+    );
+    await tester.tap(find.byIcon(Icons.send));
+    await advance(tester, const Duration(seconds: 1));
+    final sent =
+        (await tester.runAsync(() => backend.chatRequestMessagesFor(request.id).first))!;
+    expect(sent.single.text, '¿Cuánto cuesta el servicio?');
+    expect(sent.single.senderRole, UserRole.client);
   });
 
   testWidgets('the gear sets radius and duration, and searches again with them',

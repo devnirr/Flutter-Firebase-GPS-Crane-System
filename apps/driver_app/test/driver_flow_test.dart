@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:driver_app/app.dart';
-import 'package:driver_app/features/auth/register_screen.dart';
+import 'package:driver_app/features/home/location_publisher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,6 +36,9 @@ Future<void> main() async {
             actingAs: 'driver-1',
           ),
           if (picker != null) photoPickerProvider.overrideWithValue(picker),
+          // An online chofer publishes their position, and a widget test has
+          // no GPS plugin to publish from.
+          locationPublisherProvider.overrideWith((ref) => null),
         ],
         child: const DriverApp(),
       );

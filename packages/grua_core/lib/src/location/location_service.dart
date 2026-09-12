@@ -227,6 +227,35 @@ class LocationService {
     );
   }
 
+  /// One fix now, with no name attached.
+  ///
+  /// The chofer's publisher needs this the moment they go online: a position
+  /// *stream* only emits once the phone has moved far enough, and in a browser
+  /// often not at all while parked. Without a first fix a chofer who switches
+  /// on and waits is invisible to dispatch and to the customer's "grúas cerca
+  /// de ti" — online on their own screen, absent from everyone else's.
+  ///
+  /// Falls back to the last known position, and finally to null: a truck at a
+  /// roughly right place beats a truck nowhere.
+  Future<Position?> currentPosition({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    try {
+      return await _geolocator.getCurrentPosition(
+        locationSettings: LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: timeout,
+        ),
+      );
+    } on Object {
+      try {
+        return await _geolocator.getLastKnownPosition();
+      } on Object {
+        return null;
+      }
+    }
+  }
+
   /// Reverse-geocodes a point. Never throws — an unnamed pin is still usable,
   /// and the customer types a landmark reference anyway.
   Future<ResolvedPlace> describe(LatLng point) async {

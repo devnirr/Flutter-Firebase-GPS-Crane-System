@@ -5,6 +5,7 @@ import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/billing.dart';
+import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
 import '../../domain/models/remote_config_models.dart';
@@ -53,6 +54,9 @@ class DemoBackend {
   final Map<String, Truck> _trucks = {};
   final Map<String, Service> _services = {};
   final Map<String, List<ChatMessage>> _messages = {};
+  final Map<String, ChatRequest> _chatRequests = {};
+  final Map<String, List<ChatMessage>> _chatRequestMessages = {};
+  var _chatRequestCounter = 0;
   final Map<String, List<ServiceEvent>> _events = {};
   final Map<String, ServiceTracking> _tracking = {};
   final Map<String, DriverLivePosition> _live = {};
@@ -73,6 +77,12 @@ class DemoBackend {
   final _usersController = StreamController<Map<String, AppUser>>.broadcast();
   final _messagesController = StreamController<String>.broadcast();
   final _trackingController = StreamController<String>.broadcast();
+  final _chatRequestsController = StreamController<void>.broadcast();
+  final _chatRequestMessagesController = StreamController<String>.broadcast();
+
+  /// Who is typing where: `threadKey` → uid → when the last keystroke landed.
+  final Map<String, Map<String, DateTime>> _typing = {};
+  final _typingController = StreamController<String>.broadcast();
 
   final List<Timer> _timers = [];
   var _seeded = false;
@@ -311,7 +321,11 @@ class DemoBackend {
 
     for (var i = 0; i < routes.length; i++) {
       final (from, to, vehicle, color, condition) = routes[i];
-      final completedAt = _now().subtract(Duration(days: i * 9 + 2, hours: i * 3));
+      // Spaced a week apart, so the oldest is 23 days old whatever the hour.
+      // The office's "últimos 30 días" starts at the beginning of today minus
+      // 29 days, so a fixture built from `now` alone fell outside that window
+      // in the small hours and the Servicios list quietly lost a row.
+      final completedAt = _now().subtract(Duration(days: i * 7 + 2, hours: i * 3));
       final id = 'svc-history-$i';
       final parts = vehicle.split(' ');
       final serviceVehicle = ServiceVehicle(
@@ -961,6 +975,186 @@ class DemoBackend {
     if (changed) _messagesController.add(serviceId);
   }
 
+  // -------------------------------------------------------------------------
+  // Chat requests — mirrors requestChat / respondChatRequest / closeChatRequest
+  // -------------------------------------------------------------------------
+
+  /// How long a chofer has to answer, and how long an accepted conversation
+  /// stays open — the values the callables use.
+  static const chatRequestTtl = Duration(minutes: 5);
+  static const chatRequestOpenFor = Duration(hours: 2);
+
+  List<ChatRequest> get allChatRequests => _chatRequestsWhere((_) => true);
+
+  ChatRequest? chatRequest(String id) => _chatRequests[id];
+
+  List<ChatRequest> _chatRequestsWhere(bool Function(ChatRequest) test) =>
+      List.unmodifiable(
+        _chatRequests.values.where(test).toList()
+          ..sort(
+            (a, b) => (b.createdAt ?? DateTime(0))
+                .compareTo(a.createdAt ?? DateTime(0)),
+          ),
+      );
+
+  Stream<List<ChatRequest>> chatRequestsWhere(
+    bool Function(ChatRequest) test,
+  ) async* {
+    yield _chatRequestsWhere(test);
+    yield* _chatRequestsController.stream.map((_) => _chatRequestsWhere(test));
+  }
+
+  Stream<ChatRequest?> chatRequestUpdates(String id) async* {
+    yield _chatRequests[id];
+    yield* _chatRequestsController.stream.map((_) => _chatRequests[id]);
+  }
+
+  Stream<List<ChatMessage>> chatRequestMessagesFor(String id) async* {
+    yield List.unmodifiable(_chatRequestMessages[id] ?? const []);
+    yield* _chatRequestMessagesController.stream
+        .where((changed) => changed == id)
+        .map((_) => List<ChatMessage>.unmodifiable(
+              _chatRequestMessages[id] ?? const [],
+            ));
+  }
+
+  /// Opens a request from [clientId] to [driverId], or returns the one already
+  /// waiting or open between them. Refused when the chofer cannot take work.
+  Result<String> createChatRequest({
+    required String clientId,
+    required String driverId,
+  }) {
+    final driver = _drivers[driverId];
+    final online =
+        (driver?.isOnline ?? false) || (_live[driverId]?.isOnline ?? false);
+    if (driver == null || !driver.status.canWork || driver.isBusy || !online) {
+      return const Result.err(Failure(FailureCode.chatRequestUnavailable));
+    }
+
+    final now = _now();
+    for (final existing in _chatRequests.values) {
+      if (existing.clientId == clientId &&
+          existing.driverId == driverId &&
+          existing.phaseAt(now) != ChatRequestPhase.over) {
+        return Result.ok(existing.id);
+      }
+    }
+
+    final id = 'chat-req-${++_chatRequestCounter}';
+    _chatRequests[id] = ChatRequest(
+      id: id,
+      clientId: clientId,
+      clientName: _users[clientId]?.shortName ?? 'Cliente',
+      driverId: driverId,
+      createdAt: now,
+      expiresAt: now.add(chatRequestTtl),
+    );
+    _chatRequestsController.add(null);
+    return Result.ok(id);
+  }
+
+  Result<void> respondChatRequest(
+    String id,
+    String driverId, {
+    required bool accept,
+  }) {
+    final request = _chatRequests[id];
+    if (request == null || request.driverId != driverId) {
+      return const Result.err(Failure(FailureCode.notFound));
+    }
+    final now = _now();
+    if (request.phaseAt(now) != ChatRequestPhase.waiting) {
+      return const Result.err(Failure(FailureCode.chatRequestExpired));
+    }
+
+    _chatRequests[id] = accept
+        ? request.copyWith(
+            status: ChatRequestStatus.accepted,
+            driverName: _drivers[driverId]?.shortName ?? 'Chofer',
+            driverPhotoUrl: _drivers[driverId]?.photoUrl ?? '',
+            respondedAt: now,
+            closesAt: now.add(chatRequestOpenFor),
+          )
+        : request.copyWith(status: ChatRequestStatus.declined, respondedAt: now);
+    _chatRequestsController.add(null);
+    return const Result.ok(null);
+  }
+
+  Result<void> closeChatRequest(String id, String callerId) {
+    final request = _chatRequests[id];
+    final byClient = request?.clientId == callerId;
+    if (request == null || (!byClient && request.driverId != callerId)) {
+      return const Result.err(Failure(FailureCode.notFound));
+    }
+
+    final next = switch (request.phaseAt(_now())) {
+      ChatRequestPhase.waiting =>
+        byClient ? ChatRequestStatus.cancelled : ChatRequestStatus.declined,
+      ChatRequestPhase.open => ChatRequestStatus.closed,
+      ChatRequestPhase.over => null,
+    };
+    if (next != null) {
+      _chatRequests[id] = request.copyWith(status: next);
+      _chatRequestsController.add(null);
+    }
+    return const Result.ok(null);
+  }
+
+  void addChatRequestMessage(String id, ChatMessage message) {
+    (_chatRequestMessages[id] ??= []).add(message);
+    _chatRequestMessagesController.add(id);
+  }
+
+  void markChatRequestMessagesRead(String id, String readerId) {
+    final messages = _chatRequestMessages[id];
+    if (messages == null) return;
+
+    var changed = false;
+    for (var i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      if (message.senderId == readerId || message.isRead) continue;
+      messages[i] = message.copyWith(readAt: _now());
+      changed = true;
+    }
+    if (changed) _chatRequestMessagesController.add(id);
+  }
+
+  /// How long one keystroke keeps the indicator alive, as in the real one.
+  static const _typingFreshness = Duration(seconds: 8);
+
+  /// Who is typing in one conversation. A flag nobody refreshed ages out, so a
+  /// phone that died mid-word does not say "escribiendo…" forever.
+  Stream<Set<String>> typingFor(String threadKey) async* {
+    yield _typingNow(threadKey);
+    yield* _typingController.stream
+        .where((changed) => changed == threadKey)
+        .map((_) => _typingNow(threadKey));
+  }
+
+  Set<String> _typingNow(String threadKey) {
+    final entries = _typing[threadKey];
+    if (entries == null) return const {};
+    final now = _now();
+    return {
+      for (final entry in entries.entries)
+        if (now.difference(entry.value) < _typingFreshness) entry.key,
+    };
+  }
+
+  void setTyping({
+    required String threadKey,
+    required String uid,
+    required bool typing,
+  }) {
+    final entries = _typing.putIfAbsent(threadKey, () => {});
+    if (typing) {
+      entries[uid] = _now();
+    } else {
+      entries.remove(uid);
+    }
+    _typingController.add(threadKey);
+  }
+
   /// Creates a service and starts the simulated dispatch cascade.
   Service createService({
     required String clientId,
@@ -1340,6 +1534,9 @@ class DemoBackend {
     unawaited(_appOpenController.close());
     unawaited(_messagesController.close());
     unawaited(_trackingController.close());
+    unawaited(_chatRequestsController.close());
+    unawaited(_chatRequestMessagesController.close());
+    unawaited(_typingController.close());
   }
 }
 

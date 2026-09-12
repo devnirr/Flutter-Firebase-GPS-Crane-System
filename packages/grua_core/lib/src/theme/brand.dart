@@ -49,6 +49,10 @@ abstract final class BrandColors {
   static const Color driverIdle = success;
   static const Color driverOnService = Color(0xFFE08A00);
   static const Color driverStale = grey400;
+
+  /// The double tick on a message the other side has read. Light on purpose:
+  /// it always sits on the red bubble of something you sent.
+  static const Color readTick = Color(0xFF8AD5FF);
 }
 
 /// The 4-pt spacing scale. Use these instead of loose numbers so the three

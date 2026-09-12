@@ -34,6 +34,11 @@ setGlobalOptions({
 
 export { quoteService, requestService } from './callables/request.js';
 export { nearbyTrucks } from './callables/nearby.js';
+export {
+  requestChat,
+  respondChatRequest,
+  closeChatRequest,
+} from './callables/chatRequests.js';
 export { ensureProfile } from './callables/profile.js';
 export { rateService, publishEta } from './callables/feedback.js';
 export {
@@ -70,6 +75,8 @@ export {
   mirrorLivePosition,
   recordEarnings,
   notifyOnMessage,
+  notifyOnChatRequestMessage,
+  backfillChatRequestPhoto,
 } from './triggers/index.js';
 
 export {

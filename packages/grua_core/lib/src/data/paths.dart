@@ -4,6 +4,7 @@ import 'package:firebase_database/firebase_database.dart';
 import '../domain/enums.dart';
 import '../domain/models/app_user.dart';
 import '../domain/models/billing.dart';
+import '../domain/models/chat_request.dart';
 import '../domain/models/dispatch_models.dart';
 import '../domain/models/driver.dart';
 import '../domain/models/remote_config_models.dart';
@@ -35,6 +36,7 @@ abstract final class Paths {
   static const String configCollection = 'config';
   static const String reportsCollection = 'reports';
   static const String auditCollection = 'audit';
+  static const String chatRequestsCollection = 'chatRequests';
 
   static const String offersSubcollection = 'offers';
   static const String messagesSubcollection = 'messages';
@@ -160,6 +162,57 @@ abstract final class Paths {
         toFirestore: (value, _) => _strip(value.toJson(), const ['id']),
       );
 
+  // -------------------------------------------------------------------------
+  // Chat requests — talking to a nearby chofer before any job
+  // -------------------------------------------------------------------------
+
+  static CollectionReference<ChatRequest> chatRequests() =>
+      _db.collection(chatRequestsCollection).withConverter<ChatRequest>(
+            fromFirestore: (snap, _) =>
+                ChatRequest.fromJson({...?snap.data(), 'id': snap.id}),
+            toFirestore: (value, _) => _strip(value.toJson(), const ['id']),
+          );
+
+  static DocumentReference<ChatRequest> chatRequest(String id) =>
+      chatRequests().doc(id);
+
+  /// Untyped, for writing a message. See [messageWrites].
+  static CollectionReference<Map<String, dynamic>> chatRequestMessageWrites(
+    String requestId,
+  ) =>
+      _db
+          .collection(chatRequestsCollection)
+          .doc(requestId)
+          .collection(messagesSubcollection);
+
+  static CollectionReference<ChatMessage> chatRequestMessages(
+    String requestId,
+  ) =>
+      _db
+          .collection(chatRequestsCollection)
+          .doc(requestId)
+          .collection(messagesSubcollection)
+          .withConverter<ChatMessage>(
+            fromFirestore: (snap, _) =>
+                ChatMessage.fromJson({...?snap.data(), 'id': snap.id}),
+            toFirestore: (value, _) => _strip(value.toJson(), const ['id']),
+          );
+
+  /// Untyped, for writing a message.
+  ///
+  /// `sentAt` has to be `FieldValue.serverTimestamp()`: the phone's clock does
+  /// not order a conversation, and a `ChatMessage` cannot carry a sentinel.
+  /// It also has to be *present* — the model's JSON drops null fields, and a
+  /// document with no `sentAt` is invisible to the `orderBy('sentAt')` the
+  /// readers use, so the message would be saved and never seen.
+  static CollectionReference<Map<String, dynamic>> messageWrites(
+    String serviceId,
+  ) =>
+      _db
+          .collection(servicesCollection)
+          .doc(serviceId)
+          .collection(messagesSubcollection);
+
   static CollectionReference<ServiceEvent> events(String serviceId) => _db
       .collection(servicesCollection)
       .doc(serviceId)
@@ -265,6 +318,17 @@ abstract final class Paths {
 
   static DatabaseReference presence(String driverId) =>
       _rtdb.ref('presence/$driverId');
+
+  /// Who is typing in one conversation, at `typing/{threadKey}/{uid}`.
+  ///
+  /// The value is the epoch millisecond of the last keystroke, so a flag left
+  /// behind by a phone that lost signal ages out instead of saying somebody is
+  /// typing forever.
+  static DatabaseReference typing(String threadKey) =>
+      _rtdb.ref('typing/$threadKey');
+
+  static DatabaseReference typingBy(String threadKey, String uid) =>
+      _rtdb.ref('typing/$threadKey/$uid');
 
   /// True while this client holds a connection to RTDB.
   static DatabaseReference connectionState() => _rtdb.ref('.info/connected');

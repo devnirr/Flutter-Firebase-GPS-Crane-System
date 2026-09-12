@@ -9,12 +9,13 @@ import '../../router.dart';
 import 'truck_search.dart';
 import 'truck_search_widgets.dart';
 
-/// The customer's home.
+/// The customer's home, and the Inicio tab.
 ///
-/// A live map fills the screen, the mark sits at the top, a short menu of the
-/// four things anyone comes here to do sits over it, and the request button
-/// owns the bottom. One decision per screen: somebody opening this app has just
-/// broken down, and the fastest path to a grúa is the only thing that matters.
+/// A live map fills the screen, the mark sits at the top, and the bottom
+/// carries the only two things somebody who has just broken down needs: the
+/// search for grúas nearby, and the button that asks for one. Everything else
+/// a customer might want — their services, their conversations, their account
+/// — moved to the tabs under it, so this screen stays one decision deep.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -78,10 +79,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     position: truck.position,
                     kind: MapMarkerKind.truckIdle,
                     heading: truck.heading,
-                    onTap: () => unawaited(showNearbyTruckSheet(context, truck)),
+                    onTap: () =>
+                        unawaited(showNearbyTruckSheet(context, truck)),
                   ),
                 if (me != null)
-                  MapMarker(position: me.position, kind: MapMarkerKind.me, label: 'Tú'),
+                  MapMarker(
+                    position: me.position,
+                    kind: MapMarkerKind.me,
+                    label: 'Tú',
+                  ),
               ],
             ),
           ),
@@ -89,10 +95,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Column(
               children: [
                 _TopBar(
-                  greeting: user == null
-                      ? 'Hola'
-                      : 'Hola, ${user.shortName}',
-                  onProfile: () => context.push(Routes.profile),
+                  greeting: user == null ? 'Hola' : 'Hola, ${user.shortName}',
+                  onProfile: () => context.go(Routes.profile),
                 ),
                 const SizedBox(height: Insets.sm),
                 const GruaLogo(size: 120),
@@ -132,13 +136,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           ),
                         ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: Insets.gutter,
-                  ),
-                  child: _QuickMenu(
-                    onHistory: () => context.push(Routes.history),
-                    onProfile: () => context.push(Routes.profile),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: Insets.gutter),
+                  child: FloatingCard(
+                    padding: EdgeInsets.symmetric(vertical: Insets.xs),
+                    child: NearbyTrucksRow(),
                   ),
                 ),
                 const SizedBox(height: Insets.lg),
@@ -178,7 +180,11 @@ class _TopBar extends StatelessWidget {
               borderRadius: Corners.brMd,
               child: Row(
                 children: [
-                  const Icon(Icons.location_on, size: 18, color: BrandColors.red),
+                  const Icon(
+                    Icons.location_on,
+                    size: 18,
+                    color: BrandColors.red,
+                  ),
                   const SizedBox(width: Insets.sm),
                   Expanded(
                     child: Text(
@@ -201,72 +207,6 @@ class _TopBar extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// The four-item list from the mockup, over the map.
-class _QuickMenu extends StatelessWidget {
-  const _QuickMenu({
-    required this.onHistory,
-    required this.onProfile,
-  });
-
-  final VoidCallback onHistory;
-  final VoidCallback onProfile;
-
-  @override
-  Widget build(BuildContext context) {
-    return FloatingCard(
-      padding: const EdgeInsets.symmetric(vertical: Insets.sm),
-      child: Column(
-        children: [
-          const NearbyTrucksRow(),
-          const Divider(indent: Insets.huge, endIndent: Insets.lg),
-          _MenuRow(
-            icon: Icons.receipt_long_outlined,
-            label: 'Mis servicios y facturas',
-            onTap: onHistory,
-          ),
-          const Divider(indent: Insets.huge, endIndent: Insets.lg),
-          _MenuRow(
-            icon: Icons.credit_card_outlined,
-            label: 'Métodos de pago',
-            onTap: onProfile,
-          ),
-          const Divider(indent: Insets.huge, endIndent: Insets.lg),
-          _MenuRow(
-            icon: Icons.support_agent_outlined,
-            label: 'Soporte 24/7',
-            onTap: onProfile,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MenuRow extends StatelessWidget {
-  const _MenuRow({
-    required this.icon,
-    required this.label,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      onTap: onTap,
-      leading: Icon(icon, color: BrandColors.grey800),
-      title: Text(label, style: Theme.of(context).textTheme.titleSmall),
-      trailing: onTap == null
-          ? null
-          : const Icon(Icons.chevron_right, color: BrandColors.grey400),
-      dense: true,
     );
   }
 }

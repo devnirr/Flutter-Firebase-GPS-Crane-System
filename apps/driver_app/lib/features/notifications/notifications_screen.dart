@@ -47,7 +47,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         // An offer lives for 25 seconds; one that has gone would lead to a
         // map with nothing on it, so say so instead.
         final open = ref.read(openOfferProvider);
-        if (open?.serviceId != notification.serviceId) {
+        if (open?.serviceId != notification.targetId) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Esta solicitud ya no está disponible.'),
@@ -59,7 +59,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       case DriverNotificationKind.order:
         context.go(Routes.orders);
       case DriverNotificationKind.chat:
-        unawaited(context.push(Routes.chatFor(notification.serviceId)));
+        unawaited(context.push(Routes.chatFor(notification.targetId)));
+      case DriverNotificationKind.chatRequest ||
+          DriverNotificationKind.requestMessage:
+        unawaited(context.push(Routes.chatRequestFor(notification.targetId)));
     }
   }
 

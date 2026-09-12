@@ -8,12 +8,14 @@ import 'features/auth/phone_screen.dart';
 import 'features/auth/profile_setup_screen.dart';
 import 'features/auth/register_screen.dart';
 import 'features/auth/welcome_screen.dart';
+import 'features/chat/chat_list_screen.dart';
 import 'features/history/history_screen.dart';
 import 'features/history/service_detail_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/profile/profile_screen.dart';
 import 'features/request/request_controller.dart';
 import 'features/request/request_screen.dart';
+import 'features/shell/client_shell.dart';
 import 'features/tracking/tracking_screen.dart';
 
 abstract final class Routes {
@@ -22,23 +24,35 @@ abstract final class Routes {
   static const register = '/registro';
   static const otp = '/codigo';
   static const profileSetup = '/completar-perfil';
+
+  // The four tabs.
   static const home = '/';
-  static const request = '/solicitar';
-  static const tracking = '/servicio';
-  static const chat = '/servicio/:id/chat';
   static const history = '/historial';
-  static const serviceDetail = '/historial/:id';
+  static const chats = '/chat';
   static const profile = '/perfil';
+
+  /// The tow in flight. Lives in the Inicio tab, in place of the map.
+  static const tracking = '/servicio';
+
+  // Full-screen pages opened over the tabs.
+  static const request = '/solicitar';
+  static const chat = '/servicio/:id/chat';
+  static const serviceDetail = '/historial/:id';
+
+  /// A chat opened from a nearby truck, before any job.
+  static const chatRequest = '/chat-solicitud/:id';
 
   static String trackingFor(String id) => '/servicio?id=$id';
 
   static String chatFor(String id) => '/servicio/$id/chat';
 
+  static String chatRequestFor(String id) => '/chat-solicitud/$id';
+
   /// The request form, with a truck from the home map to offer the job first.
   static String requestTruck(NearbyTruck truck) => Uri(
-        path: request,
-        queryParameters: {'grua': truck.ref, 'tipo': truck.truckType.wire},
-      ).toString();
+    path: request,
+    queryParameters: {'grua': truck.ref, 'tipo': truck.truckType.wire},
+  ).toString();
 
   static String detailFor(String id) => '/historial/$id';
 }
@@ -54,6 +68,10 @@ abstract final class Routes {
 ///    were headed. This is what makes a cold start after a force-quit land on
 ///    the tow that is actually happening, rather than on a request button that
 ///    would be refused.
+///
+/// Signed in, everything lives in four tabs under a bottom bar (see
+/// [ClientShell]). The request form, a conversation and an invoice open over
+/// them, full-screen: each is one job to finish, not a place to browse from.
 final routerProvider = Provider<GoRouter>((ref) {
   final refresh = _RouterRefresh(ref);
   ref.onDispose(refresh.dispose);
@@ -69,7 +87,8 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       final signedIn = auth.value != null;
       final location = state.matchedLocation;
-      final onAuthFlow = location == Routes.welcome ||
+      final onAuthFlow =
+          location == Routes.welcome ||
           location == Routes.phone ||
           location == Routes.register ||
           location == Routes.otp;
@@ -90,22 +109,14 @@ final routerProvider = Provider<GoRouter>((ref) {
           (location == Routes.home || location == Routes.request)) {
         return Routes.trackingFor(active.id);
       }
+      if (active == null && location == Routes.tracking) return Routes.home;
 
       return null;
     },
     routes: [
-      GoRoute(
-        path: Routes.welcome,
-        builder: (_, _) => const WelcomeScreen(),
-      ),
-      GoRoute(
-        path: Routes.phone,
-        builder: (_, _) => const PhoneScreen(),
-      ),
-      GoRoute(
-        path: Routes.register,
-        builder: (_, _) => const RegisterScreen(),
-      ),
+      GoRoute(path: Routes.welcome, builder: (_, _) => const WelcomeScreen()),
+      GoRoute(path: Routes.phone, builder: (_, _) => const PhoneScreen()),
+      GoRoute(path: Routes.register, builder: (_, _) => const RegisterScreen()),
       GoRoute(
         path: Routes.otp,
         builder: (_, state) => OtpScreen(
@@ -117,9 +128,55 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Routes.profileSetup,
         builder: (_, _) => const ProfileSetupScreen(),
       ),
-      GoRoute(
-        path: Routes.home,
-        builder: (_, _) => const HomeScreen(),
+      StatefulShellRoute.indexedStack(
+        builder: (_, _, shell) => ClientShell(navigationShell: shell),
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(path: Routes.home, builder: (_, _) => const HomeScreen()),
+              GoRoute(
+                path: Routes.tracking,
+                builder: (_, state) => TrackingScreen(
+                  serviceId: state.uri.queryParameters['id'] ?? '',
+                ),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: Routes.history,
+                builder: (_, _) => const HistoryScreen(),
+                routes: [
+                  // Inside the tab, so closing an invoice comes back to the
+                  // list with the bar still there.
+                  GoRoute(
+                    path: ':id',
+                    builder: (_, state) => ServiceDetailScreen(
+                      serviceId: state.pathParameters['id'] ?? '',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: Routes.chats,
+                builder: (_, _) => const ChatListScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: Routes.profile,
+                builder: (_, _) => const ProfileScreen(),
+              ),
+            ],
+          ),
+        ],
       ),
       GoRoute(
         path: Routes.request,
@@ -130,15 +187,12 @@ final routerProvider = Provider<GoRouter>((ref) {
                 ? null
                 : PreferredTruck(
                     ref: ref,
-                    truckType: TruckType.fromWire(state.uri.queryParameters['tipo']),
+                    truckType: TruckType.fromWire(
+                      state.uri.queryParameters['tipo'],
+                    ),
                   ),
           );
         },
-      ),
-      GoRoute(
-        path: Routes.tracking,
-        builder: (_, state) =>
-            TrackingScreen(serviceId: state.uri.queryParameters['id'] ?? ''),
       ),
       GoRoute(
         path: Routes.chat,
@@ -148,17 +202,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
-        path: Routes.history,
-        builder: (_, _) => const HistoryScreen(),
-      ),
-      GoRoute(
-        path: Routes.serviceDetail,
-        builder: (_, state) =>
-            ServiceDetailScreen(serviceId: state.pathParameters['id'] ?? ''),
-      ),
-      GoRoute(
-        path: Routes.profile,
-        builder: (_, _) => const ProfileScreen(),
+        path: Routes.chatRequest,
+        builder: (_, state) => RequestChatScreen(
+          requestId: state.pathParameters['id'] ?? '',
+          role: UserRole.client,
+        ),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

@@ -138,6 +138,27 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
       });
 
   @override
+  Future<Result<String>> requestChat(String truckRef) => _call(
+        'requestChat',
+        {'truckRef': truckRef},
+        (data) => data['requestId'] as String? ?? '',
+      );
+
+  @override
+  Future<Result<void>> respondChatRequest(
+    String requestId, {
+    required bool accept,
+  }) =>
+      _callVoid('respondChatRequest', {
+        'requestId': requestId,
+        'accept': accept,
+      });
+
+  @override
+  Future<Result<void>> closeChatRequest(String requestId) =>
+      _callVoid('closeChatRequest', {'requestId': requestId});
+
+  @override
   Future<Result<QuoteResult>> quoteService({
     required ServiceLocation pickup,
     required ServiceLocation dropoff,

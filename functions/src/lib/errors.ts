@@ -24,6 +24,10 @@ export const Code = {
   driverInactive: 'DRIVER_INACTIVE',
   noDriversAvailable: 'no_drivers_available',
 
+  // Chat requests
+  chatRequestUnavailable: 'chat_request_unavailable',
+  chatRequestExpired: 'chat_request_expired',
+
   // Transitions
   outOfRange: 'OUT_OF_RANGE',
   blockedPayment: 'BLOCKED_PAYMENT',

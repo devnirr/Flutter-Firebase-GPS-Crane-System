@@ -29,6 +29,10 @@ enum FailureCode {
   driverInactive('DRIVER_INACTIVE'),
   noDriversAvailable('no_drivers_available'),
 
+  // Chat requests
+  chatRequestUnavailable('chat_request_unavailable'),
+  chatRequestExpired('chat_request_expired'),
+
   // Service transitions
   outOfRange('OUT_OF_RANGE'),
   blockedPayment('BLOCKED_PAYMENT'),
@@ -118,6 +122,10 @@ class Failure implements Exception {
         'Tu cuenta no está activa. Comunícate con la oficina.',
       FailureCode.noDriversAvailable =>
         'No hay grúas disponibles ahora mismo. Ya estamos buscando una para ti.',
+      FailureCode.chatRequestUnavailable =>
+        'Este chofer no puede chatear ahora. Prueba con otra grúa.',
+      FailureCode.chatRequestExpired =>
+        'Esta solicitud de chat ya venció o fue respondida.',
       FailureCode.outOfRange =>
         'Estás muy lejos del punto. Acércate e intenta de nuevo.',
       FailureCode.blockedPayment =>

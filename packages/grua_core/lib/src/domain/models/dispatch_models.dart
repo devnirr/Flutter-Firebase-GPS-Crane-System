@@ -129,6 +129,11 @@ abstract class ChatMessage with _$ChatMessage {
     @Default(UserRole.unknown) UserRole senderRole,
     @Default('') String text,
 
+    /// A photo shared in the conversation, if any: the download URL of an
+    /// object under `chat/{threadId}/` in Storage. A message carries words, a
+    /// photo, or both — never neither.
+    @Default('') String imageUrl,
+
     /// Client-generated id, so an optimistic bubble can be reconciled with the
     /// server echo and a retry cannot duplicate the message.
     @Default('') String clientMsgId,
@@ -142,6 +147,8 @@ abstract class ChatMessage with _$ChatMessage {
       _$ChatMessageFromJson(json);
 
   bool get isRead => readAt != null;
+
+  bool get hasImage => imageUrl.isNotEmpty;
 
   /// True while the server has not yet stamped [sentAt] — the message is on
   /// screen but not confirmed.

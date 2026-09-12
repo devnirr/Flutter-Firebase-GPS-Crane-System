@@ -10,6 +10,7 @@ import 'features/chat/chat_list_screen.dart';
 import 'features/earnings/earnings_screen.dart';
 import 'features/home/driver_home_screen.dart';
 import 'features/notifications/notifications_screen.dart';
+import 'features/notifications/thread_read.dart';
 import 'features/orders/orders_screen.dart';
 import 'features/profile/driver_profile_screen.dart';
 import 'features/service/active_service_screen.dart';
@@ -33,6 +34,11 @@ abstract final class Routes {
   static const chat = '/servicio/:id/chat';
   static const earnings = '/ganancias';
   static const notifications = '/notificaciones';
+
+  /// A conversation a customer opened from the map, before any job.
+  static const chatRequest = '/chat-solicitud/:id';
+
+  static String chatRequestFor(String id) => '/chat-solicitud/$id';
 
   static String chatFor(String id) => '/servicio/$id/chat';
 }
@@ -137,15 +143,28 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: Routes.chat,
-        builder: (_, state) => ServiceChatScreen(
-          serviceId: state.pathParameters['id'] ?? '',
-          role: UserRole.driver,
-        ),
+        builder: (_, state) {
+          final id = state.pathParameters['id'] ?? '';
+          return MarkThreadRead(
+            targetId: id,
+            child: ServiceChatScreen(serviceId: id, role: UserRole.driver),
+          );
+        },
       ),
       GoRoute(path: Routes.earnings, builder: (_, _) => const EarningsScreen()),
       GoRoute(
         path: Routes.notifications,
         builder: (_, _) => const NotificationsScreen(),
+      ),
+      GoRoute(
+        path: Routes.chatRequest,
+        builder: (_, state) {
+          final id = state.pathParameters['id'] ?? '';
+          return MarkThreadRead(
+            targetId: id,
+            child: RequestChatScreen(requestId: id, role: UserRole.driver),
+          );
+        },
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

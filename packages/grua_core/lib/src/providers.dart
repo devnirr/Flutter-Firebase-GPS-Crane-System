@@ -10,6 +10,7 @@ import 'data/demo/demo_repositories.dart';
 import 'domain/enums.dart';
 import 'domain/models/app_user.dart';
 import 'domain/models/billing.dart';
+import 'domain/models/chat_request.dart';
 import 'domain/models/dispatch_models.dart';
 import 'domain/models/driver.dart';
 import 'domain/models/remote_config_models.dart';
@@ -75,6 +76,17 @@ final chatRepositoryProvider = Provider<ChatRepository>(
   (ref) => throw UnimplementedError('chatRepositoryProvider must be overridden'),
 );
 
+final chatRequestRepositoryProvider = Provider<ChatRequestRepository>(
+  (ref) => throw UnimplementedError(
+    'chatRequestRepositoryProvider must be overridden',
+  ),
+);
+
+final typingRepositoryProvider = Provider<TypingRepository>(
+  (ref) =>
+      throw UnimplementedError('typingRepositoryProvider must be overridden'),
+);
+
 final earningsRepositoryProvider = Provider<EarningsRepository>(
   (ref) =>
       throw UnimplementedError('earningsRepositoryProvider must be overridden'),
@@ -116,6 +128,9 @@ List<Override> demoOverrides({
     serviceRepositoryProvider.overrideWithValue(DemoServiceRepository(instance)),
     offerRepositoryProvider.overrideWithValue(const DemoOfferRepository()),
     chatRepositoryProvider.overrideWithValue(DemoChatRepository(instance)),
+    chatRequestRepositoryProvider
+        .overrideWithValue(DemoChatRequestRepository(instance)),
+    typingRepositoryProvider.overrideWithValue(DemoTypingRepository(instance)),
     earningsRepositoryProvider
         .overrideWithValue(DemoEarningsRepository(instance)),
     invoiceRepositoryProvider.overrideWithValue(DemoInvoiceRepository(instance)),
@@ -294,6 +309,55 @@ final ProviderFamily<int, String> unreadMessageCountProvider =
   if (uid == null) return 0;
   final messages = ref.watch(serviceMessagesProvider(id)).value ?? const [];
   return messages.where((m) => !m.isMine(uid) && !m.isRead).length;
+});
+
+// ---------------------------------------------------------------------------
+// Chat requests — talking to a nearby chofer before any job
+// ---------------------------------------------------------------------------
+
+/// Chat requests addressed to the signed-in chofer, newest first.
+final driverChatRequestsProvider = StreamProvider<List<ChatRequest>>((ref) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return Stream.value(const []);
+  return ref.watch(chatRequestRepositoryProvider).watchForDriver(uid);
+});
+
+/// Chat requests the signed-in customer has sent, newest first.
+final clientChatRequestsProvider = StreamProvider<List<ChatRequest>>((ref) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return Stream.value(const []);
+  return ref.watch(chatRequestRepositoryProvider).watchForClient(uid);
+});
+
+final StreamProviderFamily<ChatRequest?, String> chatRequestProvider =
+    StreamProvider.family<ChatRequest?, String>(
+  (ref, id) => ref.watch(chatRequestRepositoryProvider).watchRequest(id),
+);
+
+final StreamProviderFamily<List<ChatMessage>, String>
+    chatRequestMessagesProvider = StreamProvider.family<List<ChatMessage>, String>(
+  (ref, id) => ref.watch(chatRequestRepositoryProvider).watchMessages(id),
+);
+
+/// The other side's unread messages in one chat request's conversation.
+final ProviderFamily<int, String> unreadChatRequestMessageCountProvider =
+    Provider.family<int, String>((ref, id) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return 0;
+  final messages = ref.watch(chatRequestMessagesProvider(id)).value ?? const [];
+  return messages.where((m) => !m.isMine(uid) && !m.isRead).length;
+});
+
+/// Whether the *other* side is typing in one conversation, keyed by
+/// [jobThreadKey] or [requestThreadKey]. Your own keystrokes never count.
+final StreamProviderFamily<bool, String> otherTypingProvider =
+    StreamProvider.family<bool, String>((ref, threadKey) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return Stream.value(false);
+  return ref
+      .watch(typingRepositoryProvider)
+      .watchTyping(threadKey)
+      .map((uids) => uids.any((typist) => typist != uid));
 });
 
 // ---------------------------------------------------------------------------

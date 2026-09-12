@@ -10,6 +10,7 @@ import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
 import '../../domain/models/billing.dart';
+import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
 import '../../domain/models/remote_config_models.dart';
@@ -460,9 +461,10 @@ class DemoChatRepository implements ChatRepository {
     required UserRole senderRole,
     required String text,
     required String clientMsgId,
+    String imageUrl = '',
   }) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || trimmed.length > 1000) {
+    if ((trimmed.isEmpty && imageUrl.isEmpty) || trimmed.length > 1000) {
       return const Result.err(Failure(FailureCode.invalidInput));
     }
     _backend.addMessage(
@@ -472,6 +474,7 @@ class DemoChatRepository implements ChatRepository {
         senderId: senderId,
         senderRole: senderRole,
         text: trimmed,
+        imageUrl: imageUrl,
         clientMsgId: clientMsgId,
         sentAt: DateTime.now().toUtc(),
       ),
@@ -480,10 +483,124 @@ class DemoChatRepository implements ChatRepository {
   }
 
   @override
+  // No bucket in demo mode, so the photo travels as a data URI — the same
+  // trick the chofer's profile photo uses.
+  Future<Result<String>> uploadImage({
+    required String serviceId,
+    required Uint8List bytes,
+    required String contentType,
+  }) =>
+      _delayed(
+        Result.ok(UriData.fromBytes(bytes, mimeType: contentType).toString()),
+      );
+
+  @override
   Future<Result<void>> markRead(String serviceId, String readerId) async {
     _backend.markMessagesRead(serviceId, readerId);
     return const Result.ok(null);
   }
+}
+
+class DemoChatRequestRepository implements ChatRequestRepository {
+  DemoChatRequestRepository(this._backend);
+
+  final DemoBackend _backend;
+
+  @override
+  Stream<List<ChatRequest>> watchForDriver(String driverId, {int limit = 20}) =>
+      _backend
+          .chatRequestsWhere((r) => r.driverId == driverId)
+          .map((all) => all.take(limit).toList());
+
+  @override
+  Stream<List<ChatRequest>> watchForClient(String clientId, {int limit = 10}) =>
+      _backend
+          .chatRequestsWhere((r) => r.clientId == clientId)
+          .map((all) => all.take(limit).toList());
+
+  @override
+  Stream<ChatRequest?> watchRequest(String requestId) =>
+      _backend.chatRequestUpdates(requestId);
+
+  @override
+  Stream<List<ChatMessage>> watchMessages(String requestId, {int limit = 100}) =>
+      _backend.chatRequestMessagesFor(requestId);
+
+  @override
+  Future<Result<void>> sendMessage({
+    required String requestId,
+    required String senderId,
+    required UserRole senderRole,
+    required String text,
+    required String clientMsgId,
+    String imageUrl = '',
+  }) async {
+    final trimmed = text.trim();
+    if ((trimmed.isEmpty && imageUrl.isEmpty) || trimmed.length > 1000) {
+      return const Result.err(Failure(FailureCode.invalidInput));
+    }
+    // What the rules enforce: a party, while the chofer has it open.
+    final request = _backend.chatRequest(requestId);
+    final open = request != null &&
+        (request.clientId == senderId || request.driverId == senderId) &&
+        request.phaseAt(DateTime.now().toUtc()) == ChatRequestPhase.open;
+    if (!open) {
+      return const Result.err(
+        Failure(
+          FailureCode.permissionDenied,
+          message: 'Esta conversación está cerrada.',
+        ),
+      );
+    }
+
+    _backend.addChatRequestMessage(
+      requestId,
+      ChatMessage(
+        id: clientMsgId,
+        senderId: senderId,
+        senderRole: senderRole,
+        text: trimmed,
+        imageUrl: imageUrl,
+        clientMsgId: clientMsgId,
+        sentAt: DateTime.now().toUtc(),
+      ),
+    );
+    return const Result.ok(null);
+  }
+
+  @override
+  Future<Result<String>> uploadImage({
+    required String requestId,
+    required Uint8List bytes,
+    required String contentType,
+  }) =>
+      _delayed(
+        Result.ok(UriData.fromBytes(bytes, mimeType: contentType).toString()),
+      );
+
+  @override
+  Future<Result<void>> markRead(String requestId, String readerId) async {
+    _backend.markChatRequestMessagesRead(requestId, readerId);
+    return const Result.ok(null);
+  }
+}
+
+class DemoTypingRepository implements TypingRepository {
+  DemoTypingRepository(this._backend);
+
+  final DemoBackend _backend;
+
+  @override
+  Stream<Set<String>> watchTyping(String threadKey) =>
+      _backend.typingFor(threadKey);
+
+  @override
+  Future<void> setTyping({
+    required String threadKey,
+    required String uid,
+    required bool typing,
+  }) async =>
+      _backend.setTyping(threadKey: threadKey, uid: uid, typing: typing);
 }
 
 class DemoEarningsRepository implements EarningsRepository {
@@ -602,6 +719,40 @@ class DemoFunctionsGateway implements FunctionsGateway {
     ]..sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
     return _delayed(Result.ok(trucks.take(30).toList()));
   }
+
+  @override
+  // Mirrors `requestChat`: the ref names the chofer, unsealed in the demo.
+  Future<Result<String>> requestChat(String truckRef) async {
+    if (!truckRef.startsWith(_demoRefPrefix)) {
+      return _delayed(
+        const Result.err(Failure(FailureCode.chatRequestUnavailable)),
+      );
+    }
+    return _delayed(
+      _backend.createChatRequest(
+        clientId: _backend.currentUserId,
+        driverId: truckRef.substring(_demoRefPrefix.length),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<void>> respondChatRequest(
+    String requestId, {
+    required bool accept,
+  }) async =>
+      _delayed(
+        _backend.respondChatRequest(
+          requestId,
+          _backend.currentUserId,
+          accept: accept,
+        ),
+      );
+
+  @override
+  Future<Result<void>> closeChatRequest(String requestId) async => _delayed(
+        _backend.closeChatRequest(requestId, _backend.currentUserId),
+      );
 
   @override
   Future<Result<QuoteResult>> quoteService({

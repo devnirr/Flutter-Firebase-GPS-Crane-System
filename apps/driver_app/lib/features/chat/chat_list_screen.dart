@@ -1,3 +1,4 @@
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -23,6 +24,25 @@ final recentDriverServicesProvider = FutureProvider<List<Service>>((ref) async {
   return result.valueOrNull?.items ?? const [];
 });
 
+/// What chat requests add to the Chat tab's count: each one still waiting for
+/// an answer, and each unread message in a conversation that is open.
+final chatRequestAttentionProvider = Provider<int>((ref) {
+  final now = clock.now().toUtc();
+  final requests = ref.watch(driverChatRequestsProvider).value ?? const [];
+  var count = 0;
+  for (final request in requests) {
+    switch (request.phaseAt(now)) {
+      case ChatRequestPhase.waiting:
+        count++;
+      case ChatRequestPhase.open:
+        count += ref.watch(unreadChatRequestMessageCountProvider(request.id));
+      case ChatRequestPhase.over:
+        break;
+    }
+  }
+  return count;
+});
+
 /// The Chat tab.
 ///
 /// The conversation that matters is the one with the customer of the job in
@@ -36,6 +56,14 @@ class ChatListScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final active = ref.watch(activeDriverServiceProvider).value;
     final recent = ref.watch(recentDriverServicesProvider);
+    // Customers near the truck who asked to talk — waiting for an answer, or
+    // already talking. Finished ones drop off.
+    final now = clock.now().toUtc();
+    final requests = [
+      for (final request
+          in ref.watch(driverChatRequestsProvider).value ?? const <ChatRequest>[])
+        if (request.phaseAt(now) != ChatRequestPhase.over) request,
+    ];
 
     return Scaffold(
       backgroundColor: BrandColors.offWhite,
@@ -53,6 +81,16 @@ class ChatListScreen extends ConsumerWidget {
             Insets.xxl,
           ),
           children: [
+            if (requests.isNotEmpty) ...[
+              const FieldLabel('Solicitudes de chat'),
+              const SizedBox(height: Insets.sm),
+              for (final request in requests)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: Insets.sm),
+                  child: _RequestConversation(request: request),
+                ),
+              const SizedBox(height: Insets.lg),
+            ],
             const FieldLabel('Servicio en curso'),
             const SizedBox(height: Insets.sm),
             if (active != null && active.canChat)
@@ -258,6 +296,90 @@ class _NoConversationCard extends StatelessWidget {
             textAlign: TextAlign.center,
             style: text.bodySmall?.copyWith(color: BrandColors.grey600),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A customer who asked from the map: waiting for an answer, or talking.
+class _RequestConversation extends ConsumerWidget {
+  const _RequestConversation({required this.request});
+
+  final ChatRequest request;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    final waiting =
+        request.phaseAt(clock.now().toUtc()) == ChatRequestPhase.waiting;
+    final uid = ref.watch(currentUserIdProvider);
+    final messages =
+        ref.watch(chatRequestMessagesProvider(request.id)).value ?? const [];
+    final unread = ref.watch(unreadChatRequestMessageCountProvider(request.id));
+    final last = messages.isEmpty ? null : messages.last;
+
+    final subtitle = waiting
+        ? 'Quiere hablar contigo · todavía no pide la grúa'
+        : last == null
+        ? 'Conversación abierta'
+        : '${uid != null && last.isMine(uid) ? 'Tú: ' : ''}${last.text}';
+
+    return FloatingCard(
+      key: Key('chat-request-${request.id}'),
+      onTap: () => context.push(Routes.chatRequestFor(request.id)),
+      child: Row(
+        children: [
+          _Initial(name: request.clientName, highlighted: true),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  request.clientName.isEmpty ? 'Cliente' : request.clientName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.titleSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.bodySmall?.copyWith(
+                    color: waiting || unread > 0
+                        ? BrandColors.ink
+                        : BrandColors.grey600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: Insets.sm),
+          if (waiting)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Insets.sm,
+                vertical: Insets.xxs,
+              ),
+              decoration: const BoxDecoration(
+                color: BrandColors.red,
+                borderRadius: Corners.brSm,
+              ),
+              child: Text(
+                'Nueva',
+                style: text.labelSmall?.copyWith(color: BrandColors.white),
+              ),
+            )
+          else if (unread > 0)
+            Badge.count(
+              count: unread,
+              backgroundColor: BrandColors.red,
+              textColor: BrandColors.white,
+            )
+          else
+            const Icon(Icons.chevron_right, color: BrandColors.grey400),
         ],
       ),
     );

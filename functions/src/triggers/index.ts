@@ -2,6 +2,8 @@ import { onValueWritten } from 'firebase-functions/v2/database';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 
+import { needsDriverPhoto } from '../lib/chatRequests.js';
+
 import {
   DriverLiveState,
   PaymentMethod,
@@ -226,3 +228,74 @@ export const notifyOnMessage = onDocumentCreated(
   },
 );
 
+/**
+ * The same, for a conversation opened from a nearby truck before any job.
+ * The request document says who the two sides are.
+ */
+export const notifyOnChatRequestMessage = onDocumentCreated(
+  { document: 'chatRequests/{requestId}/messages/{messageId}', region },
+  async (event) => {
+    const message = event.data?.data();
+    if (!message) return;
+
+    const requestId = event.params['requestId'];
+    const chat = (await Paths.chatRequest(requestId).get()).data();
+    if (!chat) return;
+
+    // A conversation accepted before the answer carried the chofer's photo
+    // never gets its document written again, so the customer would go on
+    // seeing a grey initial for as long as they talked. The first message
+    // through here fills it in.
+    if (needsDriverPhoto(chat)) {
+      const driver = (await Paths.driver(chat['driverId'] as string).get()).data();
+      const photoUrl = (driver?.['photoUrl'] as string | undefined) ?? '';
+      if (photoUrl) {
+        await Paths.chatRequest(requestId).update({ driverPhotoUrl: photoUrl });
+        logger.info('chatRequest.photoBackfilled', { requestId });
+      }
+    }
+
+    const isFromClient = message['senderId'] === chat['clientId'];
+    const recipientId = (isFromClient ? chat['driverId'] : chat['clientId']) as
+      | string
+      | undefined;
+    if (!recipientId) return;
+
+    await notify({
+      uid: recipientId,
+      audience: isFromClient ? 'driver' : 'client',
+      title: isFromClient
+        ? (chat['clientName'] as string) || 'Cliente'
+        : (chat['driverName'] as string) || 'Chofer',
+      body: (message['text'] as string) ?? '',
+      data: { requestId, type: 'chat_request_message' },
+      channel: 'chat',
+    });
+  },
+);
+
+/**
+ * Fills in the chofer's photo on an accepted conversation that has none.
+ *
+ * The answer itself copies the photo across, so this only ever fires for a
+ * conversation accepted before that existed, or one whose chofer set their
+ * photo afterwards. Writing back to the same document re-runs this trigger
+ * once, and the second pass sees the photo and stops.
+ */
+export const backfillChatRequestPhoto = onDocumentWritten(
+  { document: 'chatRequests/{requestId}', region },
+  async (event) => {
+    const after = event.data?.after;
+    const request = after?.data();
+    if (!after || !request || !needsDriverPhoto(request)) return;
+
+    const driver = (await Paths.driver(request['driverId'] as string).get()).data();
+    const photoUrl = (driver?.['photoUrl'] as string | undefined) ?? '';
+    if (!photoUrl) return;
+
+    await after.ref.update({ driverPhotoUrl: photoUrl });
+    logger.info('chatRequest.photoBackfilled', {
+      requestId: event.params['requestId'],
+    });
+  },
+);

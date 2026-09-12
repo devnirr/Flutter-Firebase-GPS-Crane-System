@@ -60,6 +60,9 @@ class NotificationBell extends ConsumerWidget {
 }
 
 /// The banner that drops in over any tab when something arrives.
+///
+/// The look is shared with the customer app, so a message announces itself the
+/// same way on both sides; what differs is only the glyph and where it leads.
 class NotificationToast extends StatelessWidget {
   const NotificationToast({
     required this.notification,
@@ -74,69 +77,13 @@ class NotificationToast extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-
-    return Dismissible(
-      key: ValueKey('toast-${notification.id}'),
-      direction: DismissDirection.up,
-      onDismissed: (_) => onClose(),
-      child: Material(
-        key: const Key('notification-toast'),
-        color: BrandColors.white,
-        elevation: 8,
-        shadowColor: Colors.black38,
-        borderRadius: Corners.brMd,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onOpen,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              Insets.md,
-              Insets.md,
-              Insets.xs,
-              Insets.md,
-            ),
-            child: Row(
-              children: [
-                NotificationKindIcon(kind: notification.kind),
-                const SizedBox(width: Insets.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        notification.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.titleSmall,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        notification.body,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.bodySmall?.copyWith(
-                          color: BrandColors.grey600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Cerrar',
-                  onPressed: onClose,
-                  icon: const Icon(
-                    Icons.close,
-                    size: 20,
-                    color: BrandColors.grey400,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return NotificationBanner(
+      id: notification.id,
+      title: notification.title,
+      body: notification.body,
+      leading: NotificationKindIcon(kind: notification.kind),
+      onOpen: onOpen,
+      onClose: onClose,
     );
   }
 }
@@ -160,6 +107,16 @@ class NotificationKindIcon extends StatelessWidget {
         BrandColors.warning,
         BrandColors.warningTint,
       ),
+      DriverNotificationKind.chatRequest => (
+        Icons.forum,
+        BrandColors.success,
+        BrandColors.successTint,
+      ),
+      DriverNotificationKind.requestMessage => (
+        Icons.chat_bubble,
+        BrandColors.info,
+        BrandColors.infoTint,
+      ),
       DriverNotificationKind.chat => (
         Icons.chat_bubble,
         BrandColors.info,
@@ -167,11 +124,10 @@ class NotificationKindIcon extends StatelessWidget {
       ),
     };
 
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(color: background, shape: BoxShape.circle),
-      child: Icon(icon, size: 20, color: color),
+    return NotificationGlyph(
+      icon: icon,
+      color: color,
+      background: background,
     );
   }
 }

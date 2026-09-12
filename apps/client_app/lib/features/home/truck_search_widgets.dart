@@ -135,8 +135,9 @@ Future<void> showNearbyTruckSheet(BuildContext context, NearbyTruck truck) =>
 ///
 /// Anonymous on purpose — no name, no plate, no phone: a customer searching
 /// must not be able to collect the fleet. "Pedir esta grúa" opens the request
-/// with this truck offered the job first; chat opens once a chofer has taken
-/// the customer's request, which is when there is someone to talk to.
+/// with this truck offered the job first; "Chatear" asks this truck's chofer
+/// to talk before any job, through the same sealed ref, so the chofer stays
+/// anonymous until they choose to answer.
 class NearbyTruckSheet extends ConsumerStatefulWidget {
   const NearbyTruckSheet({required this.truck, super.key});
 
@@ -147,16 +148,41 @@ class NearbyTruckSheet extends ConsumerStatefulWidget {
 }
 
 class _NearbyTruckSheetState extends ConsumerState<NearbyTruckSheet> {
-  var _explainChat = false;
+  var _requestingChat = false;
+  String? _chatError;
 
-  void _chat() {
+  /// With a job under way, straight to that job's chat. Otherwise the chofer
+  /// of this truck is asked to talk, and the customer waits for the answer on
+  /// the conversation screen.
+  Future<void> _chat() async {
     final active = ref.read(activeClientServiceProvider).value;
     if (active != null && active.canChat) {
       Navigator.of(context).pop();
       unawaited(context.push(Routes.chatFor(active.id)));
       return;
     }
-    setState(() => _explainChat = true);
+    if (_requestingChat) return;
+
+    setState(() {
+      _requestingChat = true;
+      _chatError = null;
+    });
+    final result =
+        await ref.read(functionsGatewayProvider).requestChat(widget.truck.ref);
+    if (!mounted) return;
+
+    final requestId = result.valueOrNull;
+    if (requestId == null || requestId.isEmpty) {
+      setState(() {
+        _requestingChat = false;
+        _chatError =
+            (result.failureOrNull ?? const Failure(FailureCode.unknown))
+                .userMessage;
+      });
+      return;
+    }
+    Navigator.of(context).pop();
+    unawaited(context.push(Routes.chatRequestFor(requestId)));
   }
 
   void _request() {
@@ -200,14 +226,13 @@ class _NearbyTruckSheetState extends ConsumerState<NearbyTruckSheet> {
               ),
             ],
           ),
-          if (_explainChat) ...[
+          if (_chatError != null) ...[
             const SizedBox(height: Insets.md),
-            const InlineNotice(
-              key: Key('chat-explainer'),
+            InlineNotice(
+              key: const Key('chat-error'),
               icon: Icons.chat_bubble_outline,
-              tone: NoticeTone.info,
-              message: 'Podrás chatear con el chofer en cuanto acepte tu '
-                  'solicitud. Pide esta grúa y te avisamos.',
+              tone: NoticeTone.error,
+              message: _chatError!,
             ),
           ],
           const SizedBox(height: Insets.lg),
@@ -215,9 +240,15 @@ class _NearbyTruckSheetState extends ConsumerState<NearbyTruckSheet> {
             children: [
               OutlinedButton.icon(
                 key: const Key('truck-chat'),
-                onPressed: _chat,
+                onPressed: _requestingChat ? null : _chat,
                 style: OutlinedButton.styleFrom(minimumSize: const Size(0, 52)),
-                icon: const Icon(Icons.chat_bubble_outline, size: 20),
+                icon: _requestingChat
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.chat_bubble_outline, size: 20),
                 label: const Text('Chatear'),
               ),
               const SizedBox(width: Insets.md),

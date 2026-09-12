@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
 import 'package:driver_app/app.dart';
@@ -31,6 +32,7 @@ Future<void> main() async {
   Widget harness(
     DemoBackend backend, {
     Stream<Offer?>? offers,
+    PhotoPicker? picker,
   }) => ProviderScope(
     overrides: [
       appConfigProvider.overrideWithValue(config),
@@ -38,6 +40,8 @@ Future<void> main() async {
       // A widget test has no GPS plugin to publish from.
       locationPublisherProvider.overrideWith((ref) => null),
       if (offers != null) incomingOfferProvider.overrideWith((ref) => offers),
+      // Nor a camera: the test hands the chat its photo.
+      if (picker != null) photoPickerProvider.overrideWithValue(picker),
     ],
     child: const DriverApp(),
   );
@@ -188,7 +192,7 @@ Future<void> main() async {
     // And the entry opens the conversation.
     await tester.tap(find.text('Estoy frente a la farmacia'));
     await frames(tester);
-    expect(find.text('Voy en camino'), findsOneWidget);
+    expect(find.text('Escribe un mensaje…'), findsOneWidget);
     expect(find.text('Estoy frente a la farmacia'), findsOneWidget);
 
     await tester.tap(find.byType(BackButton));
@@ -197,6 +201,123 @@ Future<void> main() async {
     await frames(tester);
     expect(find.text('EN SERVICIO'), findsOneWidget);
     expect(bellCount('1'), findsNothing);
+  });
+
+  testWidgets('reading the message in the chat clears the bell, without going '
+      'through the notification page', (tester) async {
+    useTallPhone(tester);
+    final backend = DemoBackend(dispatchDelay: const Duration(milliseconds: 20))
+      ..seed();
+    addTearDown(backend.dispose);
+
+    final service = (await tester.runAsync(() => _dispatchedService(backend)))!;
+    backend.currentUserId = service.driverId!;
+
+    await tester.pumpWidget(harness(backend));
+    await tester.pump();
+    await signIn(tester);
+
+    backend.addMessage(
+      service.id,
+      ChatMessage(
+        id: 'm-client-2',
+        senderId: service.clientId,
+        senderRole: UserRole.client,
+        text: '¿Ya vienes?',
+        sentAt: DateTime.now().toUtc(),
+      ),
+    );
+    await frames(tester);
+    expect(bellCount('1'), findsOneWidget);
+
+    // Straight into the conversation from the customer card, which is what a
+    // chofer actually does with a message.
+    await tester.tap(find.byKey(const Key('client-chat')));
+    await frames(tester);
+    expect(find.text('¿Ya vienes?'), findsOneWidget);
+
+    await tester.tap(find.byType(BackButton));
+    await frames(tester);
+
+    // Read is read: nothing left counting under the bell.
+    expect(find.text('EN SERVICIO'), findsOneWidget);
+    expect(bellCount('1'), findsNothing);
+  });
+
+  testWidgets('a customer near the truck asks to chat: the request pops up, '
+      'and accepting it opens the conversation', (tester) async {
+    useTallPhone(tester);
+    final backend = DemoBackend()
+      ..seed()
+      ..currentUserId = 'driver-1';
+    await tester.pumpWidget(
+      harness(
+        backend,
+        picker: (_) async => PickedPhoto(
+          name: 'grua.jpg',
+          bytes: Uint8List.fromList(List.filled(32, 9)),
+        ),
+      ),
+    );
+    await tester.pump();
+    await signIn(tester);
+
+    // "Chatear" on this chofer's truck, from the customer app.
+    backend.setDriverOnline('driver-1', online: true);
+    final requestId = backend
+        .createChatRequest(clientId: 'demo-client-1', driverId: 'driver-1')
+        .valueOrNull!;
+    await frames(tester);
+
+    expect(find.byKey(const Key('notification-toast')), findsOneWidget);
+    expect(find.text('Solicitud de chat'), findsOneWidget);
+    expect(bellCount('1'), findsOneWidget);
+    // It counts on the Chat tab until answered.
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('chat-badge')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
+
+    // Banner → notification page → the request.
+    await tester.tap(find.byKey(const Key('notification-toast')));
+    await frames(tester);
+    await tester.tap(find.text('Solicitud de chat'));
+    await frames(tester);
+    expect(find.byKey(const Key('chat-request-answer')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('chat-request-accept')));
+    await frames(tester);
+    expect(backend.chatRequest(requestId)?.status, ChatRequestStatus.accepted);
+    expect(find.byKey(const Key('chat-request-answer')), findsNothing);
+
+    await tester.enterText(
+      find.byType(TextField).last,
+      'Hola, ¿en qué te ayudo?',
+    );
+    await tester.tap(find.byIcon(Icons.send));
+    await frames(tester);
+    final sent = (await tester.runAsync(
+      () => backend.chatRequestMessagesFor(requestId).first,
+    ))!;
+    expect(sent.single.text, 'Hola, ¿en qué te ayudo?');
+    expect(sent.single.senderId, 'driver-1');
+
+    // A photo goes the same way: clip, gallery, and it is in the conversation.
+    await tester.tap(find.byKey(const Key('chat-attach')));
+    await frames(tester);
+    await tester.tap(find.text('Elegir de la galería'));
+    await frames(tester);
+
+    final withPhoto = (await tester.runAsync(
+      () => backend.chatRequestMessagesFor(requestId).first,
+    ))!;
+    expect(withPhoto.length, 2);
+    expect(withPhoto.last.hasImage, isTrue);
+    expect(withPhoto.last.imageUrl, startsWith('data:image/jpeg'));
+    expect(withPhoto.last.text, isEmpty);
   });
 }
 

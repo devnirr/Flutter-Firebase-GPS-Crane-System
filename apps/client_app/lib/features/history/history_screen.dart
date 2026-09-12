@@ -65,8 +65,8 @@ class HistoryScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: BrandColors.offWhite,
       appBar: AppBar(
-        leading: BackButton(onPressed: () => context.pop()),
-        title: const Text('Mis servicios'),
+        automaticallyImplyLeading: false,
+        title: const Text('Mis servicios y facturas'),
       ),
       body: history.when(
         loading: () => const BrandLoader(),

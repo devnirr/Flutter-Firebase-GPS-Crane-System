@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:clock/clock.dart';
 import 'package:driver_app/app.dart';
 import 'package:driver_app/features/home/driver_map.dart';
+import 'package:driver_app/features/home/location_publisher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -61,6 +62,8 @@ Future<void> main() async {
           ),
           incomingOfferProvider.overrideWith((ref) => Stream.value(offer)),
           myPositionProvider.overrideWith((ref) => Stream.value(position)),
+          // No GPS plugin in a widget test, so nothing to publish from.
+          locationPublisherProvider.overrideWith((ref) => null),
         ],
         child: const DriverApp(),
       );
