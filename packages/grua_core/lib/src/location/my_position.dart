@@ -26,12 +26,18 @@ final myPositionProvider = StreamProvider<MyFix?>((ref) {
   // One quick fix first, so the pin is on the map without waiting for the
   // holder to move 10 m.
   unawaited(
-    location.currentPlace(geocode: false).then((result) {
-      final place = result.valueOrNull;
-      if (place != null && !controller.isClosed) {
-        controller.add((position: place.position, heading: 0));
-      }
-    }),
+    location.currentPlace(geocode: false).then(
+      (result) {
+        final place = result.valueOrNull;
+        if (place != null && !controller.isClosed) {
+          controller.add((position: place.position, heading: 0));
+        }
+      },
+      // Nobody is watching this future, so an error on it would surface as an
+      // unhandled zone error and take the app down in debug. The stream stays
+      // null and the map draws with nobody on it.
+      onError: (Object _) {},
+    ),
   );
 
   final subscription = location.watchPosition(distanceFilter: 10).listen(

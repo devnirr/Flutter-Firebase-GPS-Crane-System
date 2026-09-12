@@ -19,7 +19,8 @@ Future<void> main() async {
   const gazcue = LatLng(18.4795, -69.9420);
   const phone = Size(430, 900);
 
-  Widget harness(DemoBackend backend) => ProviderScope(
+  Widget harness(DemoBackend backend, {LocationService? location}) =>
+      ProviderScope(
     overrides: [
       appConfigProvider.overrideWithValue(
         const AppConfig(
@@ -39,7 +40,7 @@ Future<void> main() async {
       ),
       // No GPS and no geocoder in a widget test; the picker asks for both the
       // moment it opens.
-      locationServiceProvider.overrideWithValue(_FakeLocation()),
+      locationServiceProvider.overrideWithValue(location ?? _FakeLocation()),
       // No network either: the suggestions come from here.
       placesServiceProvider.overrideWithValue(_FakePlaces()),
     ],
@@ -53,13 +54,15 @@ Future<void> main() async {
     }
   }
 
-  Future<void> signIn(WidgetTester tester) async {
+  Future<void> signIn(WidgetTester tester, {LocationService? location}) async {
     tester.view
       ..devicePixelRatio = 1
       ..physicalSize = phone;
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(harness(DemoBackend()..seed()));
+    await tester.pumpWidget(
+      harness(DemoBackend()..seed(), location: location),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Entrar con Teléfono'));
     await tester.pumpAndSettle();
@@ -147,6 +150,79 @@ Future<void> main() async {
     expect(map.center.longitude, closeTo(gazcue.longitude, 0.0001));
   });
 
+  testWidgets('a phone that cannot locate itself stops the spinner', (
+    tester,
+  ) async {
+    // The bug: the picker asks for a fix the moment it opens, and every path
+    // that stopped its spinner was a happy one. On the web the fallback to a
+    // last known position throws `UnsupportedError` — an `Error`, so the
+    // service's `on Exception` never saw it — and the button span until the
+    // screen was closed, over a map the customer could otherwise have used.
+    await signIn(tester, location: _BrokenLocation());
+    await openPicker(tester, 'DESTINO');
+    await advance(tester, const Duration(seconds: 3));
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byIcon(Icons.pin_drop_outlined), findsOneWidget);
+
+    // And it says so, rather than failing silently.
+    expect(find.textContaining('Márcala en el mapa'), findsOneWidget);
+
+    // The map still works: the point is confirmable by hand.
+    expectMapFillsWidth(tester);
+    expect(find.text('CONFIRMAR UBICACIÓN'), findsOneWidget);
+  });
+
+  testWidgets('moving the map costs nothing; the pin button names the point', (
+    tester,
+  ) async {
+    // The bug: every pause of the camera reverse-geocoded, so dragging across
+    // town billed a lookup per street it rested on and rewrote the field under
+    // the customer — usually with a Plus Code, which is what Google answers
+    // for a corner with no number. Naming a point is now one deliberate tap.
+    final phone = _CountingLocation();
+    await signIn(tester, location: phone);
+    await openPicker(tester, 'DESTINO');
+
+    // Opening the picker moves the map to where the phone is. That is a
+    // camera move, not a question about an address, and the field stays as
+    // the customer found it.
+    expect(find.text('Escribe, elige un lugar o usa el pin del mapa'),
+        findsOneWidget);
+
+    // The form behind the picker names its own pickup; what this test is
+    // about is what the picker asks for from here on.
+    phone.described.clear();
+
+    Future<void> panTo(LatLng point) async {
+      tester.widget<GruaMap>(find.byType(GruaMap)).onCameraIdle!(point);
+      await advance(tester, const Duration(seconds: 1));
+    }
+
+    // Three stops on the way somewhere, the way a real drag lands.
+    await panTo(const LatLng(19.1180, -70.6320));
+    await panTo(const LatLng(19.1200, -70.6340));
+    await panTo(const LatLng(19.1221, -70.6367));
+
+    expect(phone.described, isEmpty);
+    expect(find.text(_CountingLocation.name), findsNothing);
+
+    // The tap is what asks.
+    await tester.tap(find.byKey(const Key('name-this-point')));
+    await advance(tester, const Duration(seconds: 1));
+
+    expect(phone.described, hasLength(1));
+    expect(phone.described.single.latitude, closeTo(19.1221, 0.0001));
+    expect(find.text(_CountingLocation.name), findsOneWidget);
+
+    // Pan off it and the address on screen no longer describes the pin, so it
+    // says so rather than letting the wrong one be confirmed.
+    expect(find.textContaining('Moviste el mapa'), findsNothing);
+    await panTo(const LatLng(19.1300, -70.6400));
+    expect(find.textContaining('Moviste el mapa'), findsOneWidget);
+    expect(phone.described, hasLength(1));
+  });
+
   testWidgets('typing a destination offers matches above the field', (
     tester,
   ) async {
@@ -186,6 +262,65 @@ Future<void> main() async {
     await advance(tester, const Duration(seconds: 1));
     expect(find.text('Av. Winston Churchill, Piantini'), findsWidgets);
   });
+}
+
+/// A phone that counts the reverse geocodes asked of it.
+///
+/// [described] is cleared once the picker is open: the form behind it names
+/// its own pickup, and counting that would say nothing about what moving the
+/// map costs.
+class _CountingLocation extends LocationService {
+  static const name = 'C/ Duarte 42, Jarabacoa';
+
+  final described = <LatLng>[];
+
+  @override
+  Future<LocationBlocker> check({bool requireAlways = false}) async =>
+      LocationBlocker.none;
+
+  @override
+  Future<LocationBlocker> request({bool requireAlways = false}) async =>
+      LocationBlocker.none;
+
+  @override
+  Future<Result<ResolvedPlace>> currentPlace({
+    Duration timeout = const Duration(seconds: 10),
+    bool geocode = true,
+  }) async => const Result.ok(
+        ResolvedPlace(position: LatLng(18.4795, -69.9420), address: name),
+      );
+
+  @override
+  Future<ResolvedPlace> describe(LatLng point) async {
+    described.add(point);
+    return const ResolvedPlace(
+      position: LatLng(19.1221, -70.6367),
+      address: name,
+    );
+  }
+}
+
+/// A phone whose platform throws an `Error` rather than answering — the web,
+/// where `getLastKnownPosition` and the settings screens are all unsupported.
+class _BrokenLocation extends LocationService {
+  @override
+  Future<LocationBlocker> check({bool requireAlways = false}) async =>
+      LocationBlocker.none;
+
+  @override
+  Future<LocationBlocker> request({bool requireAlways = false}) async =>
+      LocationBlocker.none;
+
+  @override
+  Future<Result<ResolvedPlace>> currentPlace({
+    Duration timeout = const Duration(seconds: 10),
+    bool geocode = true,
+  }) async =>
+      throw UnsupportedError('getLastKnownPosition is not supported here');
+
+  @override
+  Future<ResolvedPlace> describe(LatLng point) async =>
+      ResolvedPlace(position: point);
 }
 
 /// Suggestions without a network: the same two answers for anything typed.

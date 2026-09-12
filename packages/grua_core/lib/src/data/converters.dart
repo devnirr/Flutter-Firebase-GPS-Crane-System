@@ -100,3 +100,54 @@ class CentsConverter implements JsonConverter<int, Object?> {
   @override
   Object toJson(int object) => object;
 }
+
+/// Rewrites a value from Firestore's dialect into plain JSON, for the payload
+/// of a Cloud Functions callable.
+///
+/// Every model here serialises for Firestore: a coordinate leaves `toJson` as
+/// a [GeoPoint], an instant as a [Timestamp]. Firestore understands both. A
+/// callable does not — the platform-channel codec has no entry for either, and
+/// on the web `jsify` refuses them outright — so a payload built from
+/// `model.toJson()` failed *before it left the phone*, with an error no server
+/// ever saw. It reached the customer as "Algo salió mal", which is why pressing
+/// VER PRECIO could never work.
+///
+/// Dates become ISO-8601 in UTC because that is what the callables validate
+/// against (`z.string().datetime()`), and `GeoPoint` becomes the
+/// `{latitude, longitude}` pair their `point` schema expects.
+Object? callableJson(Object? value) => switch (value) {
+      final GeoPoint g => {'latitude': g.latitude, 'longitude': g.longitude},
+      final Timestamp t => t.toDate().toUtc().toIso8601String(),
+      final DateTime d => d.toUtc().toIso8601String(),
+      final Map<Object?, Object?> map => {
+          for (final entry in map.entries)
+            '${entry.key}': callableJson(entry.value),
+        },
+      // Strings are Iterable-adjacent in spirit but not in type; this catches
+      // lists and sets, which is all a payload ever holds.
+      final Iterable<Object?> items => [
+          for (final item in items) callableJson(item),
+        ],
+      _ => value,
+    };
+
+/// [callableJson] over a whole payload, keeping the map type a callable wants.
+Map<String, dynamic> callablePayload(Map<String, dynamic> payload) => {
+      for (final entry in payload.entries)
+        entry.key: callableJson(entry.value),
+    };
+
+/// The mirror image, for what a callable sends back.
+///
+/// The web plugin hands back `Map<String, dynamic>` all the way down, but the
+/// Android and iOS ones decode the channel into `Map<Object?, Object?>`, and
+/// `json_serializable` casts nested objects to `Map<String, dynamic>` without
+/// asking. One surcharge on a quote was enough to throw there — the same
+/// generic error, on the platforms most customers use.
+Object? plainJson(Object? value) => switch (value) {
+      final Map<Object?, Object?> map => {
+          for (final entry in map.entries) '${entry.key}': plainJson(entry.value),
+        },
+      final Iterable<Object?> items => [for (final item in items) plainJson(item)],
+      _ => value,
+    };

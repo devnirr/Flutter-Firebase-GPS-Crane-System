@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show Locale;
 import 'package:geocoding/geocoding.dart' as geocoding;
@@ -120,21 +118,41 @@ class LocationService {
   /// than "Street".
   static const Locale _locale = Locale('es', 'DO');
 
-  /// Checks what, if anything, is stopping us — without prompting.
-  Future<LocationBlocker> check({bool requireAlways = false}) async {
-    if (!await _geolocator.isLocationServiceEnabled()) {
-      return LocationBlocker.serviceDisabled;
-    }
+  /// How long a name is worth waiting for. The pin is already on the map by
+  /// then, and the customer types a landmark reference regardless.
+  static const Duration _geocodeLimit = Duration(seconds: 8);
 
-    final permission = await _geolocator.checkPermission();
-    return switch (permission) {
-      LocationPermission.denied => LocationBlocker.notRequested,
-      LocationPermission.deniedForever => LocationBlocker.deniedForever,
-      LocationPermission.whileInUse =>
-        requireAlways ? LocationBlocker.needsAlways : LocationBlocker.none,
-      LocationPermission.always => LocationBlocker.none,
-      LocationPermission.unableToDetermine => LocationBlocker.notRequested,
-    };
+  /// How long a permission prompt may stay open before we go and read the
+  /// permission state ourselves.
+  static const Duration _promptLimit = Duration(minutes: 2);
+
+  /// Checks what, if anything, is stopping us — without prompting.
+  ///
+  /// Answers even when the platform will not. A browser with no Permissions
+  /// API, or a host where the plugin never registered, throws out of
+  /// `checkPermission`; letting that escape left every caller awaiting a
+  /// future that never completed, which on the picker is a spinner that turns
+  /// for ever. "Not asked yet" is the honest reading of a question the
+  /// platform refused to answer, and it is the one that still lets the caller
+  /// prompt.
+  Future<LocationBlocker> check({bool requireAlways = false}) async {
+    try {
+      if (!await _geolocator.isLocationServiceEnabled()) {
+        return LocationBlocker.serviceDisabled;
+      }
+
+      final permission = await _geolocator.checkPermission();
+      return switch (permission) {
+        LocationPermission.denied => LocationBlocker.notRequested,
+        LocationPermission.deniedForever => LocationBlocker.deniedForever,
+        LocationPermission.whileInUse =>
+          requireAlways ? LocationBlocker.needsAlways : LocationBlocker.none,
+        LocationPermission.always => LocationBlocker.none,
+        LocationPermission.unableToDetermine => LocationBlocker.notRequested,
+      };
+    } on Object {
+      return LocationBlocker.notRequested;
+    }
   }
 
   /// Prompts, and reports what we ended up with.
@@ -143,29 +161,59 @@ class LocationService {
   /// platforms a denied prompt is close to unrecoverable, so spending it
   /// without explaining why is a permanent loss.
   Future<LocationBlocker> request({bool requireAlways = false}) async {
-    if (!await _geolocator.isLocationServiceEnabled()) {
-      return LocationBlocker.serviceDisabled;
-    }
+    try {
+      if (!await _geolocator.isLocationServiceEnabled()) {
+        return LocationBlocker.serviceDisabled;
+      }
 
-    var permission = await _geolocator.checkPermission();
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.unableToDetermine) {
-      permission = await _geolocator.requestPermission();
-    }
+      var permission = await _geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.unableToDetermine) {
+        // On the web this prompt *is* a position request, so a phone that
+        // grants it and then never gets a fix leaves it pending — the browser
+        // gives up after a day. Long enough for anyone to read the dialog and
+        // decide, then we ask the permission state itself, which answers
+        // whether or not a fix ever arrived.
+        permission = await _geolocator.requestPermission().timeout(
+              _promptLimit,
+              onTimeout: _geolocator.checkPermission,
+            );
+      }
 
-    return switch (permission) {
-      LocationPermission.denied => LocationBlocker.denied,
-      LocationPermission.deniedForever => LocationBlocker.deniedForever,
-      LocationPermission.whileInUse =>
-        requireAlways ? LocationBlocker.needsAlways : LocationBlocker.none,
-      LocationPermission.always => LocationBlocker.none,
-      LocationPermission.unableToDetermine => LocationBlocker.denied,
-    };
+      return switch (permission) {
+        LocationPermission.denied => LocationBlocker.denied,
+        LocationPermission.deniedForever => LocationBlocker.deniedForever,
+        LocationPermission.whileInUse =>
+          requireAlways ? LocationBlocker.needsAlways : LocationBlocker.none,
+        LocationPermission.always => LocationBlocker.none,
+        LocationPermission.unableToDetermine => LocationBlocker.denied,
+      };
+    } on Object {
+      return LocationBlocker.denied;
+    }
   }
 
-  Future<void> openLocationSettings() => _geolocator.openLocationSettings();
+  /// Opens the OS location settings, where there are any to open.
+  ///
+  /// Both of these throw `UnsupportedError` on the web — an `Error`, not an
+  /// `Exception`, so a caller's `on Exception` would not have caught it. There
+  /// is nothing to open in a browser, and a button that does nothing beats one
+  /// that takes the screen down with it.
+  Future<void> openLocationSettings() async {
+    try {
+      await _geolocator.openLocationSettings();
+    } on Object {
+      // No settings screen on this platform.
+    }
+  }
 
-  Future<void> openAppSettings() => _geolocator.openAppSettings();
+  Future<void> openAppSettings() async {
+    try {
+      await _geolocator.openAppSettings();
+    } on Object {
+      // No settings screen on this platform.
+    }
+  }
 
   /// A single fix.
   ///
@@ -183,25 +231,8 @@ class LocationService {
       );
     }
 
-    Position? position;
-    var approximate = false;
-
-    try {
-      position = await _geolocator.getCurrentPosition(
-        locationSettings: LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: timeout,
-        ),
-      );
-    } on TimeoutException {
-      position = await _geolocator.getLastKnownPosition();
-      approximate = true;
-    } on Exception {
-      position = await _geolocator.getLastKnownPosition();
-      approximate = true;
-    }
-
-    if (position == null) {
+    final fix = await _fix(timeout);
+    if (fix == null) {
       return const Result.err(
         Failure(
           FailureCode.timeout,
@@ -210,10 +241,10 @@ class LocationService {
       );
     }
 
-    final point = LatLng(position.latitude, position.longitude);
+    final point = LatLng(fix.position.latitude, fix.position.longitude);
     if (!geocode) {
       return Result.ok(
-        ResolvedPlace(position: point, isApproximate: approximate),
+        ResolvedPlace(position: point, isApproximate: fix.approximate),
       );
     }
 
@@ -223,9 +254,47 @@ class LocationService {
         position: point,
         address: place.address,
         locality: place.locality,
-        isApproximate: approximate,
+        isApproximate: fix.approximate,
       ),
     );
+  }
+
+  /// One fix, or null, and never anything else — not an exception, not a
+  /// future that stays pending.
+  ///
+  /// Two web-only traps live here, and both showed up as a spinner that never
+  /// stopped. `getLastKnownPosition` throws `UnsupportedError` in a browser,
+  /// and an `Error` is not an `Exception`, so the fallback took the whole call
+  /// down with it rather than being caught. And `timeLimit` is never applied
+  /// there: geolocator_web hands the browser a timeout in the wrong unit, so
+  /// ten seconds becomes the best part of three hours. Hence a Dart-side
+  /// deadline, and `on Object` around every step.
+  Future<({Position position, bool approximate})?> _fix(Duration timeout) async {
+    try {
+      final position = await _geolocator
+          .getCurrentPosition(
+            locationSettings: LocationSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: timeout,
+            ),
+          )
+          // A moment behind the platform's own limit, so where that one works
+          // its TimeoutException — and its last-known fallback — still win.
+          .timeout(timeout + const Duration(seconds: 2));
+      return (position: position, approximate: false);
+    } on Object {
+      final last = await _lastKnown();
+      return last == null ? null : (position: last, approximate: true);
+    }
+  }
+
+  /// The last fix the platform kept, or null where it keeps none.
+  Future<Position?> _lastKnown() async {
+    try {
+      return await _geolocator.getLastKnownPosition();
+    } on Object {
+      return null;
+    }
   }
 
   /// One fix now, with no name attached.
@@ -240,22 +309,8 @@ class LocationService {
   /// roughly right place beats a truck nowhere.
   Future<Position?> currentPosition({
     Duration timeout = const Duration(seconds: 10),
-  }) async {
-    try {
-      return await _geolocator.getCurrentPosition(
-        locationSettings: LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: timeout,
-        ),
-      );
-    } on Object {
-      try {
-        return await _geolocator.getLastKnownPosition();
-      } on Object {
-        return null;
-      }
-    }
-  }
+  }) async =>
+      (await _fix(timeout))?.position;
 
   /// Reverse-geocodes a point. Never throws — an unnamed pin is still usable,
   /// and the customer types a landmark reference anyway.
@@ -264,15 +319,20 @@ class LocationService {
       final geocoder = _geocoder;
       if (geocoder == null) {
         // No plugin: the web, where the page's own Maps script can answer.
-        final named = await scriptReverseGeocode(point.latitude, point.longitude);
+        final named = await scriptReverseGeocode(
+          point.latitude,
+          point.longitude,
+        ).timeout(_geocodeLimit);
         return ResolvedPlace(position: point, address: named ?? '');
       }
 
-      final results = await geocoder.placemarkFromCoordinates(
-        point.latitude,
-        point.longitude,
-        locale: _locale,
-      );
+      final results = await geocoder
+          .placemarkFromCoordinates(
+            point.latitude,
+            point.longitude,
+            locale: _locale,
+          )
+          .timeout(_geocodeLimit);
       if (results.isEmpty) return ResolvedPlace(position: point);
 
       final mark = results.first;
@@ -288,7 +348,9 @@ class LocationService {
         address: parts.join(', '),
         locality: mark.locality ?? '',
       );
-    } on Exception {
+    } on Object {
+      // Including an `Error`: a plugin that is not there on this platform
+      // throws one, and an unnamed pin is still a usable pin.
       return ResolvedPlace(position: point);
     }
   }

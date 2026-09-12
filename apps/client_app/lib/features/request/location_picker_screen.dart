@@ -12,9 +12,16 @@ import 'package:grua_core/grua_core.dart';
 /// ends up under the thumb that is placing it, and the target is always the
 /// same spot on screen.
 ///
-/// The resolved address is shown as *editable* text and paired with a mandatory
-/// landmark reference at pickup, because Dominican street addressing is
-/// unreliable enough that a reverse-geocoded string is a hint, not an answer.
+/// The address is never fetched by moving the map. Panning used to
+/// reverse-geocode on a debounce, which billed a lookup for every place the
+/// map paused over on the way to the one the customer wanted, and rewrote the
+/// field under them while they were reading it — often with a Plus Code, which
+/// is what Google returns for a corner with no street number. Naming the point
+/// is one deliberate tap on the map's own button.
+///
+/// The result is shown as *editable* text and paired with a mandatory landmark
+/// reference at pickup, because Dominican street addressing is unreliable
+/// enough that a reverse-geocoded string is a hint, not an answer.
 class LocationPickerScreen extends ConsumerStatefulWidget {
   const LocationPickerScreen({
     required this.title,
@@ -39,11 +46,15 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
   final _reference = TextEditingController();
 
   late LatLng _center;
-  Timer? _debounce;
   Timer? _suggestDebounce;
   var _resolving = false;
   var _locating = false;
   String? _error;
+
+  /// The point the address on screen describes, when it came from the map or
+  /// from a chosen suggestion. Null while the field holds what the customer
+  /// typed themselves — their own words are never stale.
+  LatLng? _namedPoint;
 
   /// What the typed text matches, newest answer only.
   var _suggestions = <PlaceSuggestion>[];
@@ -51,11 +62,6 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
   /// Bumped per keystroke, so a slow answer to an older query is dropped
   /// rather than replacing the list under the customer's finger.
   var _suggestQuery = 0;
-
-  /// The address came from a suggestion the customer chose. The camera move
-  /// that follows must not have it overwritten by the reverse geocoder, whose
-  /// answer for the same point is usually a street number.
-  var _addressIsChosen = false;
 
   @override
   void initState() {
@@ -68,6 +74,7 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
     _center = widget.initial?.geo ?? _positionAlreadyKnown() ??
         DoLocations.defaultCenter;
     _address.text = widget.initial?.address ?? '';
+    if (widget.initial != null) _namedPoint = widget.initial!.geo;
     _reference.text = widget.initial?.reference ?? '';
     if (widget.initial == null) unawaited(_useCurrentLocation());
   }
@@ -79,42 +86,67 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _suggestDebounce?.cancel();
     _address.dispose();
     _reference.dispose();
     super.dispose();
   }
 
-  /// Reverse-geocodes after the camera settles.
+  /// Records where the map is looking. It does **not** fetch an address.
   ///
-  /// Debounced because a pan fires many idle events and each one is a
-  /// platform-channel round trip; without it a slow drag hammers the geocoder
-  /// and the address field flickers through a dozen intermediate streets.
+  /// Only the "that address is not this pin any more" hint can change here, and
+  /// only a rebuild when it actually flips — a drag fires idle events by the
+  /// dozen, and each one used to cost a geocode.
   void _onCameraIdle(LatLng center) {
+    final wasStale = _pinMoved;
     _center = center;
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), _resolveAddress);
+    if (_pinMoved != wasStale) setState(() {});
   }
 
-  Future<void> _resolveAddress() async {
-    if (!mounted) return;
-    // The customer picked this place by name; naming it again by street would
-    // replace what they chose with something they did not.
-    if (_addressIsChosen) {
-      _addressIsChosen = false;
-      return;
-    }
+  /// True when the address on screen was resolved for a point the pin has
+  /// since left. Fifteen metres is about one house: inside that, the same
+  /// address still describes where the pin is.
+  bool get _pinMoved {
+    final named = _namedPoint;
+    return named != null && named.distanceTo(_center) > 15;
+  }
 
-    setState(() => _resolving = true);
+  /// Names the point the pin is on — the screen's only reverse geocode, and it
+  /// happens because the customer asked for it.
+  Future<void> _nameThisPoint() async {
+    FocusScope.of(context).unfocus();
 
-    final place = await ref.read(locationServiceProvider).describe(_center);
-    if (!mounted) return;
-
+    // The point as it was when the button was pressed: the answer belongs to
+    // it, not to wherever the map has drifted to by the time it lands.
+    final asked = _center;
     setState(() {
-      _resolving = false;
-      if (place.address.isNotEmpty) _address.text = place.address;
+      _resolving = true;
+      _error = null;
+      _suggestions = const [];
     });
+
+    try {
+      final place = await ref.read(locationServiceProvider).describe(asked);
+      if (!mounted) return;
+
+      if (place.address.isEmpty) {
+        setState(
+          () => _error = 'No pudimos encontrar el nombre de este punto. '
+              'Escribe la dirección o una referencia.',
+        );
+        return;
+      }
+
+      setState(() {
+        _address.text = place.address;
+        _namedPoint = asked;
+      });
+    } finally {
+      // In a `finally` because a spinner is a promise that something is
+      // happening: if the geocoder throws, nothing is, and the customer must
+      // be able to type the address themselves.
+      if (mounted) setState(() => _resolving = false);
+    }
   }
 
   /// Asks for suggestions a moment after the typing stops.
@@ -123,7 +155,9 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
   /// otherwise cost five of them; biased to where the map is looking, so
   /// "Duarte" offers the one in this city first.
   void _onAddressTyped(String value) {
-    _addressIsChosen = false;
+    // Typed words describe whatever the customer means by them, so there is
+    // no point they can drift away from.
+    if (_namedPoint != null) setState(() => _namedPoint = null);
     _suggestDebounce?.cancel();
 
     if (value.trim().length < 2) {
@@ -133,9 +167,13 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
 
     _suggestDebounce = Timer(const Duration(milliseconds: 250), () async {
       final query = ++_suggestQuery;
-      final found = await ref
-          .read(placesServiceProvider)
-          .suggest(value, near: _center);
+      List<PlaceSuggestion> found;
+      try {
+        found = await ref.read(placesServiceProvider).suggest(value, near: _center);
+      } on Object {
+        // No network, no key, no matches — the customer types the address.
+        found = const [];
+      }
       if (!mounted || query != _suggestQuery) return;
       setState(() => _suggestions = found);
     });
@@ -150,7 +188,14 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
       _resolving = true;
     });
 
-    final place = await ref.read(placesServiceProvider).details(suggestion.placeId);
+    ResolvedPlace? place;
+    try {
+      place = await ref.read(placesServiceProvider).details(suggestion.placeId);
+    } on Object {
+      // A lookup that failed is not worth an error over the map: the name the
+      // customer tapped is below, and the pin is still draggable.
+      place = null;
+    }
     if (!mounted) return;
 
     setState(() {
@@ -161,8 +206,8 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
         _address.text = suggestion.title;
         return;
       }
-      _addressIsChosen = true;
       _center = place.position;
+      _namedPoint = place.position;
       _address.text = place.address.isNotEmpty ? place.address : suggestion.title;
     });
   }
@@ -173,37 +218,50 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
       _error = null;
     });
 
-    final service = ref.read(locationServiceProvider);
-    var blocker = await service.check();
-    if (blocker == LocationBlocker.notRequested) {
-      blocker = await service.request();
+    try {
+      final service = ref.read(locationServiceProvider);
+      var blocker = await service.check();
+      if (blocker == LocationBlocker.notRequested) {
+        blocker = await service.request();
+      }
+
+      if (!mounted) return;
+
+      if (blocker.isBlocking) {
+        setState(() => _error = blocker.message);
+        return;
+      }
+
+      // No geocode: opening the picker moves the map to where the phone is,
+      // and naming a point is the button's job, not the camera's.
+      final result = await service.currentPlace(geocode: false);
+      if (!mounted) return;
+
+      result.fold(
+        (place) => setState(() => _center = place.position),
+        (failure) => setState(() => _error = failure.userMessage),
+      );
+    } on Object {
+      // Nothing in LocationService throws any more, but this button owns the
+      // only spinner on the screen and it has no other way to stop. A vague
+      // error the customer can act on beats one that never arrives.
+      if (mounted) {
+        setState(() => _error = 'No pudimos obtener tu ubicación. Márcala en '
+            'el mapa.');
+      }
+    } finally {
+      // The bug this replaces: every path that stopped the spinner was a
+      // happy one. A permission check that threw — `getLastKnownPosition`
+      // throws `UnsupportedError` on the web — or a browser that never
+      // answered `getCurrentPosition` skipped all of them, and the button span
+      // until the screen was closed.
+      if (mounted) setState(() => _locating = false);
     }
-
-    if (!mounted) return;
-
-    if (blocker.isBlocking) {
-      setState(() {
-        _locating = false;
-        _error = blocker.message;
-      });
-      return;
-    }
-
-    final result = await service.currentPlace();
-    if (!mounted) return;
-
-    result.fold(
-      (place) => setState(() {
-        _locating = false;
-        _center = place.position;
-        if (place.address.isNotEmpty) _address.text = place.address;
-      }),
-      (failure) => setState(() {
-        _locating = false;
-        _error = failure.userMessage;
-      }),
-    );
   }
+
+  /// The button carries the only spinner on the screen: the opening fix and
+  /// the geocode both run behind it.
+  bool get _busy => _locating || _resolving;
 
   Future<void> _openSettings() async {
     final service = ref.read(locationServiceProvider);
@@ -260,20 +318,31 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
                   ),
                 ),
                 const Positioned.fill(child: Center(child: _CentrePin())),
+                // Bottom *left*, above the attribution: on the web Google
+                // draws its own pan and zoom cluster in the bottom-right
+                // corner the moment the map takes focus, and it sat squarely
+                // on top of this button.
                 Positioned(
-                  right: Insets.lg,
-                  bottom: Insets.lg,
-                  child: FloatingCard(
-                    padding: const EdgeInsets.all(Insets.md),
-                    borderRadius: Corners.brMd,
-                    onTap: _locating ? null : _useCurrentLocation,
-                    child: _locating
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2.2),
-                          )
-                        : const Icon(Icons.my_location, color: BrandColors.red),
+                  left: Insets.lg,
+                  bottom: Insets.huge,
+                  child: Tooltip(
+                    message: 'Usar este punto',
+                    child: FloatingCard(
+                      key: const Key('name-this-point'),
+                      padding: const EdgeInsets.all(Insets.md),
+                      borderRadius: Corners.brMd,
+                      onTap: _busy ? null : _nameThisPoint,
+                      child: _busy
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2.2),
+                            )
+                          : const Icon(
+                              Icons.pin_drop_outlined,
+                              color: BrandColors.red,
+                            ),
+                    ),
                   ),
                 ),
                 // The matches sit directly above the address field, over the
@@ -316,20 +385,34 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
                   controller: _address,
                   textInputAction: TextInputAction.search,
                   onChanged: _onAddressTyped,
-                  decoration: InputDecoration(
-                    hintText: 'Escribe o elige un lugar',
-                    suffixIcon: _resolving
-                        ? const Padding(
-                            padding: EdgeInsets.all(Insets.md),
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : null,
+                  decoration: const InputDecoration(
+                    hintText: 'Escribe, elige un lugar o usa el pin del mapa',
                   ),
                 ),
+                if (_pinMoved) ...[
+                  const SizedBox(height: Insets.sm),
+                  // Otherwise the customer confirms an address that names
+                  // somewhere they have already panned away from.
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.pin_drop_outlined,
+                        size: 16,
+                        color: BrandColors.grey600,
+                      ),
+                      const SizedBox(width: Insets.xs),
+                      Expanded(
+                        child: Text(
+                          'Moviste el mapa. Toca el pin para obtener la '
+                          'dirección de este punto.',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: BrandColors.grey600,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: Insets.md),
                 FieldLabel(
                   widget.requireReference

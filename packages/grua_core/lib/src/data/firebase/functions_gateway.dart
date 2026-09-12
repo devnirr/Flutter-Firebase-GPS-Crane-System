@@ -3,12 +3,14 @@ import 'dart:async';
 // cloud_functions exports its own `Result`, which would shadow the domain one
 // this whole layer returns.
 import 'package:cloud_functions/cloud_functions.dart' hide Result;
+import 'package:flutter/foundation.dart';
 
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/service.dart';
 import '../../domain/repositories.dart';
 import '../../domain/value_objects.dart';
+import '../converters.dart';
 
 /// Calls the Cloud Functions that move a service between states.
 ///
@@ -36,17 +38,30 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
     try {
       final result = await _functions
           .httpsCallable(name, options: HttpsCallableOptions(timeout: _timeout))
-          .call<Object?>(payload);
+          // Firestore's dialect does not travel: see [callablePayload].
+          .call<Object?>(callablePayload(payload));
 
-      final data = result.data;
-      return Result.ok(parse(data is Map ? Map<String, dynamic>.from(data) : {}));
+      // Deep, not `Map<String, dynamic>.from`: that fixes the top level only,
+      // and the generated parsers cast every nested object.
+      final data = plainJson(result.data);
+      return Result.ok(parse(data is Map<String, dynamic> ? data : {}));
     } on FirebaseFunctionsException catch (error) {
-      return Result.err(_mapCallableError(error));
+      return Result.err(_mapCallableError(error, name));
     } on TimeoutException {
       return const Result.err(Failure(FailureCode.timeout));
-    } on Object catch (error) {
+    } on Object catch (error, stack) {
+      // Never silently: a bare `unknown` reaches the customer as "Algo salió
+      // mal" and tells whoever has to fix it nothing at all.
+      _log(name, error, stack);
       return Result.err(Failure(FailureCode.unknown, cause: error));
     }
+  }
+
+  /// Prints what the customer's generic error was actually about.
+  static void _log(String name, Object error, [StackTrace? stack]) {
+    if (!kDebugMode) return;
+    debugPrint('[grua] $name failed: ${error.runtimeType}: $error');
+    if (stack != null) debugPrintStack(stackTrace: stack, maxFrames: 8);
   }
 
   Future<Result<void>> _callVoid(String name, Map<String, dynamic> payload) =>
@@ -57,7 +72,8 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   /// The server puts a machine-readable code in `details.code`; the message it
   /// sends alongside is already written for a Dominican user, so it is used
   /// verbatim when present rather than replaced with a generic one.
-  Failure _mapCallableError(FirebaseFunctionsException error) {
+  Failure _mapCallableError(FirebaseFunctionsException error, String name) {
+    _log(name, error);
     final details = error.details;
     final code = details is Map ? details['code'] as String? : null;
     final serverMessage = error.message;
@@ -73,7 +89,9 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         message: (serverMessage != null && serverMessage.contains(' '))
             ? serverMessage
             : null,
-        details: details is Map ? details['data'] : null,
+        // Normalised like any other reply: whatever reads this should not
+        // have to know which platform decoded it.
+        details: details is Map ? plainJson(details['data']) : null,
       );
     }
 
@@ -95,7 +113,23 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         ),
       'deadline-exceeded' => const Failure(FailureCode.timeout),
       'unavailable' => const Failure(FailureCode.network),
-      _ => Failure(FailureCode.unknown, cause: error),
+      // A callable this build knows about and this project does not deploy.
+      'unimplemented' => const Failure(
+          FailureCode.unknown,
+          message: 'Este servicio no está disponible ahora mismo. '
+              'Intenta de nuevo o llámanos.',
+        ),
+      _ => Failure(
+          FailureCode.unknown,
+          // The server writes for a Dominican customer, so when it said
+          // something, that beats the generic line.
+          message: (serverMessage != null &&
+                  serverMessage.contains(' ') &&
+                  serverMessage != 'INTERNAL')
+              ? serverMessage
+              : null,
+          cause: error,
+        ),
     };
   }
 
