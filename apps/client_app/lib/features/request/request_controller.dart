@@ -194,16 +194,6 @@ class RequestController extends Notifier<RequestDraft> {
       '${point.latitude.toStringAsFixed(5)}, '
       '${point.longitude.toStringAsFixed(5)}';
 
-  /// The landmark the customer types: "frente al colmado, portón azul".
-  void setPickupReference(String reference) {
-    final current = state.pickup;
-    if (current == null || current.reference == reference) return;
-    state = state.copyWith(
-      pickup: current.copyWith(reference: reference),
-      clearQuote: true,
-    );
-  }
-
   /// Any change to what is being priced invalidates the quote. Letting a stale
   /// price survive an edit is how a customer gets charged for a different tow
   /// than the one they agreed to.

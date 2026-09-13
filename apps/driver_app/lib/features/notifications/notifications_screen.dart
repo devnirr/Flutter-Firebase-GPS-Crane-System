@@ -44,7 +44,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
     switch (notification.kind) {
       case DriverNotificationKind.offer:
-        // An offer lives for 25 seconds; one that has gone would lead to a
+        // An offer is short-lived; one that has gone would lead to a
         // map with nothing on it, so say so instead.
         final open = ref.read(openOfferProvider);
         if (open?.serviceId != notification.targetId) {

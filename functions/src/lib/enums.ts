@@ -226,3 +226,29 @@ export function inferTruckType(
   if (vehicleType === VehicleType.camion) return TruckType.pesada;
   return TruckType.gancho;
 }
+
+/**
+ * Which trucks can actually do a job that asks for `required`, best first.
+ *
+ * Dispatch used to demand an exact match, and that is not how a yard works. A
+ * plataforma carries the whole vehicle, so it can do anything a gancho can —
+ * refusing it meant a customer with a car that would not start watched
+ * "Buscando grúa" for six minutes while an idle flatbed sat two streets away,
+ * and the job ended up on a dispatcher's desk as `needs_manual`.
+ *
+ * Not the other way round: a gancho tows on the vehicle's own wheels, which is
+ * exactly what a flipped or wheel-locked car cannot do. And a pesada is for
+ * trucks and buses; nothing substitutes for it and it substitutes for nothing,
+ * because sending a heavy wrecker to a sedan is the wrong truck at the wrong
+ * price.
+ */
+export function trucksThatCanServe(required: TruckType): readonly TruckType[] {
+  switch (required) {
+    case TruckType.gancho:
+      return [TruckType.gancho, TruckType.plataforma];
+    case TruckType.plataforma:
+      return [TruckType.plataforma];
+    default:
+      return [required];
+  }
+}

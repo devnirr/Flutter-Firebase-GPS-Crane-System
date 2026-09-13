@@ -98,6 +98,16 @@ Failure _mapError(Object error) {
       'unauthenticated' => const Failure(FailureCode.unauthenticated),
       'not-found' => const Failure(FailureCode.notFound),
       'unavailable' || 'deadline-exceeded' => const Failure(FailureCode.network),
+      // Firestore's answer when a query needs a composite index that is not
+      // published. That is a deployment problem, not the user's, and saying so
+      // beats "algo salió mal" — the debug log above carries Google's own
+      // message, which includes the link that creates the index.
+      'failed-precondition' => const Failure(
+          FailureCode.unknown,
+          message: 'Falta un índice de la base de datos para esta consulta. '
+              'Publica los índices con: firebase deploy --only '
+              'firestore:indexes',
+        ),
       _ => Failure(FailureCode.unknown, cause: error),
     };
   }
@@ -345,9 +355,11 @@ class FirebaseDriverRepository implements DriverRepository {
     if (status != null) query = query.where('status', isEqualTo: status.wire);
     // A tow company's fleet is tens of trucks, not thousands; the cap is here
     // so a data-entry accident cannot turn the roster into an unbounded read.
-    return query.limit(500).snapshots().map(
-          (snap) => snap.docs.map((d) => d.data()).toList(),
-        );
+    return query
+        .limit(500)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList())
+        .guarded();
   }
 
   @override
@@ -596,12 +608,21 @@ class FirestoreServiceRepository implements ServiceRepository {
   @override
   Stream<List<Service>> watchActiveServices() => Paths.services()
       .where('status', whereIn: _activeWire)
-      .orderBy('createdAt')
+      // Newest first, because that is the *deployed* index — `status ASC,
+      // createdAt DESC`, the same one the customer's own "do I have a job in
+      // flight" query uses. Ascending needs a second composite index nobody
+      // published, so this listener failed on every project: the dispatcher's
+      // panel drew an empty roster while a customer sat on the shoulder
+      // watching "Buscando grúa". The order here only decides which jobs the
+      // limit keeps; the panel sorts what it gets, needs_manual first and then
+      // oldest.
+      .orderBy('createdAt', descending: true)
       // A dispatcher who genuinely has 200 open jobs has a staffing problem,
       // not a pagination problem — but the cap keeps the listener bounded.
       .limit(200)
       .snapshots()
-      .map((snap) => snap.docs.map((d) => d.data()).toList());
+      .map((snap) => snap.docs.map((d) => d.data()).toList())
+      .guarded();
 
   @override
   Stream<List<ServiceEvent>> watchEvents(String serviceId) =>
@@ -714,11 +735,19 @@ class FirestoreOfferRepository implements OfferRepository {
           // services/{serviceId}/offers/{driverId}
           'serviceId': doc.reference.parent.parent?.id ?? '',
         });
-      });
+      })
+          // A chofer who believes they are online and is quietly receiving
+          // nothing is the worst state this app has. A refused or unindexed
+          // collection-group query used to arrive here as an opaque error and
+          // read as "no offers" — indistinguishable from a quiet night.
+          .guarded();
 
   @override
-  Stream<Offer?> watchOffer(String serviceId, String driverId) =>
-      Paths.offer(serviceId, driverId).snapshots().map((snap) => snap.data());
+  Stream<Offer?> watchOffer(String serviceId, String driverId) => Paths
+      .offer(serviceId, driverId)
+      .snapshots()
+      .map((snap) => snap.data())
+      .guarded();
 }
 
 class FirestoreChatRepository implements ChatRepository {

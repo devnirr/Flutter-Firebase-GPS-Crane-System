@@ -1311,55 +1311,116 @@ class DemoBackend {
         return;
       }
 
-      final truck = _trucks[candidate.assignedTruckId ?? ''];
-      final live = _live[candidate.id];
-      final etaSeconds = live == null
-          ? 600
-          : (live.position.distanceKmTo(service.pickup.geo) / 28 * 3600).round();
-
-      _services[serviceId] = service.copyWith(
-        status: ServiceStatus.accepted,
-        driverId: candidate.id,
-        driverName: candidate.name,
-        driverPhone: candidate.phone,
-        driverRating: candidate.rating,
-        truckId: truck?.id,
-        truckPlate: truck?.displayPlate ?? '',
-        truckLabel: truck?.displayName ?? '',
-        assignedAt: _now(),
-        timeline: service.timeline.copyWith(
-          dispatchedAt: _now(),
-          acceptedAt: _now(),
-        ),
-      );
-      _drivers[candidate.id] = candidate.copyWith(currentServiceId: serviceId);
-      if (live != null) {
-        _live[candidate.id] = live.copyWith(
-          state: DriverLiveState.onService,
-          serviceId: serviceId,
-        );
-      }
-      _tracking[serviceId] = ServiceTracking(
+      _commitAssignment(
         serviceId: serviceId,
-        position: live?.position ?? service.pickup.geo,
-        driverId: candidate.id,
-        etaSeconds: etaSeconds,
-        updatedAt: _now(),
+        driver: candidate,
+        event: ServiceEventName.acceptService,
+        actorRole: UserRole.driver,
+        actorId: candidate.id,
       );
-
-      _appendEvent(serviceId, ServiceEventName.acceptService,
-          ServiceStatus.pendingDispatch, ServiceStatus.accepted,
-          candidate.id, UserRole.driver);
-      _emitServices();
-      _emitDrivers();
-      _emitLive();
-      _trackingController.add(serviceId);
-
-      _driveToward(serviceId, service.pickup.geo, onArrive: () {
-        _transition(serviceId, ServiceStatus.arrived,
-            ServiceEventName.markArrived, candidate.id, UserRole.driver);
-      });
     });
+  }
+
+  /// Puts [driver] on the job and starts them moving, the one way it happens.
+  ///
+  /// Shared by the cascade and by a dispatcher assigning by hand: two copies of
+  /// this drifted apart is how a manually assigned job ends up without a
+  /// tracking document and a customer watches an empty map.
+  void _commitAssignment({
+    required String serviceId,
+    required Driver driver,
+    required ServiceEventName event,
+    required UserRole actorRole,
+    required String actorId,
+  }) {
+    final service = _services[serviceId];
+    if (service == null) return;
+
+    final truck = _trucks[driver.assignedTruckId ?? ''];
+    final live = _live[driver.id];
+    final etaSeconds = live == null
+        ? 600
+        : (live.position.distanceKmTo(service.pickup.geo) / 28 * 3600).round();
+
+    _services[serviceId] = service.copyWith(
+      status: ServiceStatus.accepted,
+      driverId: driver.id,
+      driverName: driver.name,
+      driverPhone: driver.phone,
+      driverRating: driver.rating,
+      truckId: truck?.id,
+      truckPlate: truck?.displayPlate ?? '',
+      truckLabel: truck?.displayName ?? '',
+      assignedAt: _now(),
+      assignmentMode: actorRole == UserRole.driver
+          ? AssignmentMode.auto
+          : AssignmentMode.manual,
+      timeline: service.timeline.copyWith(
+        dispatchedAt: _now(),
+        acceptedAt: _now(),
+      ),
+    );
+    _drivers[driver.id] = driver.copyWith(currentServiceId: serviceId);
+    if (live != null) {
+      _live[driver.id] = live.copyWith(
+        state: DriverLiveState.onService,
+        serviceId: serviceId,
+      );
+    }
+    _tracking[serviceId] = ServiceTracking(
+      serviceId: serviceId,
+      position: live?.position ?? service.pickup.geo,
+      driverId: driver.id,
+      etaSeconds: etaSeconds,
+      updatedAt: _now(),
+    );
+
+    _appendEvent(serviceId, event, service.status, ServiceStatus.accepted,
+        actorId, actorRole);
+    _emitServices();
+    _emitDrivers();
+    _emitLive();
+    _trackingController.add(serviceId);
+
+    _driveToward(serviceId, service.pickup.geo, onArrive: () {
+      _transition(serviceId, ServiceStatus.arrived,
+          ServiceEventName.markArrived, driver.id, UserRole.driver);
+    });
+  }
+
+  /// A dispatcher hands the job to a chofer. Returns the refusal, or null.
+  ///
+  /// Mirrors `assignServiceManually`: the chofer has to be able to take it, and
+  /// the service has to still be waiting for one. A dispatcher acting on a list
+  /// that is a few seconds stale must be told no, not quietly given a chofer
+  /// who is already towing something else.
+  String? assignServiceManually({
+    required String serviceId,
+    required String driverId,
+  }) {
+    final service = _services[serviceId];
+    if (service == null) return 'Este servicio ya no existe.';
+    if (!service.status.isAwaitingDriver) {
+      return 'Este servicio ya no está esperando chofer.';
+    }
+
+    final driver = _drivers[driverId];
+    if (driver == null) return 'Chofer no encontrado.';
+    if (!driver.status.canWork) return 'Ese chofer no está activo.';
+    if (driver.isBusy) return 'Ese chofer ya tiene un servicio.';
+    if (!driver.truckType.canServe(service.truckTypeRequired)) {
+      return 'Ese chofer no tiene una grúa de '
+          '${service.truckTypeRequired.label}.';
+    }
+
+    _commitAssignment(
+      serviceId: serviceId,
+      driver: driver,
+      event: ServiceEventName.assignServiceManually,
+      actorRole: UserRole.admin,
+      actorId: currentUserId,
+    );
+    return null;
   }
 
   /// Glides the tracked position toward a target, emitting updates the way the
@@ -1418,7 +1479,8 @@ class DemoBackend {
     return d.status.canWork &&
         d.isOnline &&
         !d.isBusy &&
-        d.truckType == type &&
+        // Capable, not identical — the same rule the real cascade uses.
+        d.truckType.canServe(type) &&
         live != null &&
         live.isOnline;
   }
@@ -1434,6 +1496,10 @@ class DemoBackend {
 
     if (candidates.isEmpty) return null;
     candidates.sort((a, b) {
+      // The right truck before the bigger one, the same tie-break the real
+      // cascade applies as a score penalty.
+      final exact = (a.truckType == type ? 0 : 1) - (b.truckType == type ? 0 : 1);
+      if (exact != 0) return exact;
       final da = _live[a.id]!.position.distanceTo(pickup);
       final db = _live[b.id]!.position.distanceTo(pickup);
       return da.compareTo(db);

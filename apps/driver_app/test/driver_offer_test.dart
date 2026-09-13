@@ -52,7 +52,8 @@ Future<void> main() async {
         expiresAt: clock.now().toUtc().add(left),
       );
 
-  Widget harness({Offer? offer, MyFix? position}) => ProviderScope(
+  Widget harness({Offer? offer, MyFix? position, Stream<Offer?>? offers}) =>
+      ProviderScope(
         overrides: [
           appConfigProvider.overrideWithValue(config),
           ...demoOverrides(
@@ -60,7 +61,8 @@ Future<void> main() async {
             role: UserRole.driver,
             actingAs: 'driver-1',
           ),
-          incomingOfferProvider.overrideWith((ref) => Stream.value(offer)),
+          incomingOfferProvider
+              .overrideWith((ref) => offers ?? Stream.value(offer)),
           myPositionProvider.overrideWith((ref) => Stream.value(position)),
           // No GPS plugin in a widget test, so nothing to publish from.
           locationPublisherProvider.overrideWith((ref) => null),
@@ -144,6 +146,49 @@ Future<void> main() async {
     expect(find.text('Taller Hermanos Pérez'), findsOneWidget);
     expect(find.text('ACEPTAR'), findsOneWidget);
     expect(find.text('RECHAZAR'), findsOneWidget);
+  });
+
+  testWidgets('a refused ACEPTAR says why, even after the card is gone',
+      (tester) async {
+    // The bug: `_respond` bailed on `!mounted` before showing the refusal, and
+    // the card is pulled the instant the offer lapses. A chofer who tapped
+    // ACEPTAR a moment too late saw the card vanish and was told nothing — the
+    // button looked broken. At a 25-second TTL that was most of a slow tap.
+    tester.view
+      ..devicePixelRatio = 1
+      ..physicalSize = const Size(430, 1400);
+    addTearDown(tester.view.reset);
+
+    final offers = StreamController<Offer?>.broadcast();
+    addTearDown(offers.close);
+
+    await tester.pumpWidget(
+      harness(offers: offers.stream, position: (position: here, heading: 0)),
+    );
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    // This service is not in the demo backend, so accepting it is refused —
+    // which is the shape of every real refusal: taken, expired, or gone.
+    offers.add(offerFor());
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('ACEPTAR'), findsOneWidget);
+
+    await tester.tap(find.text('ACEPTAR'));
+    await tester.pump();
+
+    // The offer lapses while the call is still out, and the card goes with it.
+    offers.add(null);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('ACEPTAR'), findsNothing);
+
+    // The answer lands on a card that no longer exists. It still has to reach
+    // the chofer, or the button simply looks broken.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.text('No encontramos lo que buscas.'), findsOneWidget);
   });
 
   testWidgets('a request that lapses leaves on its own', (tester) async {

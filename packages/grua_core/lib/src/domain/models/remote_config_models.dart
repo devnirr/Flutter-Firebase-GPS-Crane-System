@@ -84,7 +84,7 @@ abstract class DispatchConfig with _$DispatchConfig {
   const factory DispatchConfig({
     /// How long a chofer has to answer. Long enough to look up from the wheel,
     /// short enough that a client is not waiting three minutes on a cascade.
-    @Default(25000) int offerTtlMs,
+    @Default(60000) int offerTtlMs,
     @Default(5) double startRadiusKm,
     @Default(40) double maxRadiusKm,
     @Default(8) int maxRounds,

@@ -9,7 +9,14 @@ import {
   VehicleCondition,
   VehicleType,
   inferTruckType,
+  trucksThatCanServe,
 } from '../src/lib/enums.js';
+import {
+  DEFAULT_DISPATCH,
+  type ScanTally,
+  scanReason,
+  scoreCandidates,
+} from '../src/dispatch/dispatchNext.js';
 import {
   DEFAULT_PRICING,
   authorizationAmountCents,
@@ -414,6 +421,140 @@ describe('truck type inference', () => {
     expect(inferTruckType(VehicleType.camion, VehicleCondition.volcado)).toBe(
       TruckType.plataforma,
     );
+  });
+});
+
+describe('which truck can take which job', () => {
+  it('lets a flatbed take a hook job', () => {
+    // The bug: dispatch demanded an exact match, so a customer whose car would
+    // not start watched "Buscando grúa" for six minutes with an idle
+    // plataforma two streets away, and the job landed on a dispatcher's desk.
+    expect(trucksThatCanServe(TruckType.gancho)).toContain(TruckType.plataforma);
+    expect(trucksThatCanServe(TruckType.gancho)).toContain(TruckType.gancho);
+  });
+
+  it('never sends a hook to something that cannot roll', () => {
+    // A gancho tows on the vehicle's own wheels, which is the one thing a
+    // flipped or wheel-locked car cannot do.
+    expect(trucksThatCanServe(TruckType.plataforma)).toEqual([TruckType.plataforma]);
+  });
+
+  it('keeps heavy recovery to itself, in both directions', () => {
+    expect(trucksThatCanServe(TruckType.pesada)).toEqual([TruckType.pesada]);
+    expect(trucksThatCanServe(TruckType.gancho)).not.toContain(TruckType.pesada);
+  });
+});
+
+describe('how long a chofer gets to answer', () => {
+  it('is a minute, and the expiry task waits out the whole of it', () => {
+    // 25 seconds was not enough to read the card and decide, so a chofer who
+    // tapped ACEPTAR was often refused by a clock that had already run out.
+    expect(DEFAULT_DISPATCH.offerTtlMs).toBe(60000);
+    // The sweeper's task fires after the offer, never before it.
+    expect(DEFAULT_DISPATCH.offerTtlMs + 2000).toBeGreaterThan(
+      DEFAULT_DISPATCH.offerTtlMs,
+    );
+  });
+});
+
+describe('why nobody got the job', () => {
+  const tally = (over: Partial<ScanTally>): ScanTally => ({
+    inRadius: 0,
+    wrongTruck: 0,
+    alreadyAsked: 0,
+    unavailable: 0,
+    inactive: 0,
+    busy: 0,
+    cashCapped: 0,
+    eligible: 0,
+    ...over,
+  });
+
+  it('says so when the yard is empty', () => {
+    expect(scanReason(tally({}), TruckType.gancho, 40)).toBe(
+      'Ninguna grúa en línea a 40 km del punto de recogida.',
+    );
+  });
+
+  it('separates "no trucks" from "no trucks of that kind"', () => {
+    // The real case: a plataforma and a grúa pesada online, and a customer
+    // whose car will not start, which asks for a gancho. Two trucks on the
+    // dispatcher's map, neither of them able to take it — and the panel used
+    // to show that as a request quietly sitting there.
+    const reason = scanReason(
+      tally({ inRadius: 2, wrongTruck: 2 }),
+      TruckType.gancho,
+      40,
+    );
+
+    expect(reason).toContain('gancho');
+    expect(reason).toContain('2 de otro tipo');
+  });
+
+  it('says when the right trucks are simply busy', () => {
+    expect(scanReason(tally({ inRadius: 3, busy: 3 }), TruckType.plataforma, 10))
+      .toBe('Las grúas de plataforma cerca ya están en servicio.');
+  });
+
+  it('says when everyone nearby has already been asked', () => {
+    expect(
+      scanReason(tally({ inRadius: 2, alreadyAsked: 2 }), TruckType.gancho, 20),
+    ).toContain('Ya se le ofreció');
+  });
+
+  it('names the cash cap, which looks like nothing else', () => {
+    expect(
+      scanReason(tally({ inRadius: 1, cashCapped: 1 }), TruckType.gancho, 5),
+    ).toContain('efectivo pendiente');
+  });
+});
+
+describe('candidate scoring', () => {
+  const candidate = (
+    driverId: string,
+    distanceM: number,
+    isSubstitute: boolean,
+  ) => ({
+    driverId,
+    position: { latitude: 18.4795, longitude: -69.942 },
+    distanceM,
+    rating: 4.5,
+    idleMinutes: 0,
+    name: driverId,
+    phone: '',
+    isSubstitute,
+  });
+
+  it('sends the right truck when both are equally close', () => {
+    const ranked = scoreCandidates(
+      [candidate('flatbed', 1000, true), candidate('hook', 1000, false)],
+      5,
+      DEFAULT_DISPATCH,
+    );
+
+    expect(ranked[0]!.driverId).toBe('hook');
+  });
+
+  it('sends the bigger truck when it is much closer', () => {
+    // Otherwise the customer waits for a hook truck crossing the whole search
+    // circle while a capable flatbed sits at the corner.
+    const ranked = scoreCandidates(
+      [candidate('flatbed', 200, true), candidate('hook', 4800, false)],
+      5,
+      DEFAULT_DISPATCH,
+    );
+
+    expect(ranked[0]!.driverId).toBe('flatbed');
+  });
+
+  it('still ranks two substitutes by distance', () => {
+    const ranked = scoreCandidates(
+      [candidate('far', 4000, true), candidate('near', 500, true)],
+      5,
+      DEFAULT_DISPATCH,
+    );
+
+    expect(ranked.map((c) => c.driverId)).toEqual(['near', 'far']);
   });
 });
 

@@ -1182,6 +1182,21 @@ class DemoFunctionsGateway implements FunctionsGateway {
       _delayed(_refusedOr(_backend.archiveDriver(driverId)));
 
   @override
+  Future<Result<void>> assignServiceManually({
+    required String serviceId,
+    required String driverId,
+    String note = '',
+  }) =>
+      _delayed(
+        _refusedOr(
+          _backend.assignServiceManually(
+            serviceId: serviceId,
+            driverId: driverId,
+          ),
+        ),
+      );
+
+  @override
   Future<Result<String>> createTruck(TruckDetails details) =>
       _delayed(_backend.createTruck(details));
 

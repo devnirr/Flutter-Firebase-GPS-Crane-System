@@ -10,7 +10,7 @@ import { Paths } from './firestore.js';
  * Two things here are not defaults and matter a lot:
  *
  * * **An offer is a data-only message.** No `notification` block, high priority,
- *   a 25-second TTL and a collapse key. The chofer app draws its own full-screen
+ *   a TTL matching the offer and a collapse key. The chofer app draws its own
  *   ringing UI from the data; a system notification would be a banner the chofer
  *   misses at 70 km/h. The short TTL means a phone that comes back online after
  *   the offer expired is not woken by a job somebody else already took.

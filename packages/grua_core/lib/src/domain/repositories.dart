@@ -829,6 +829,19 @@ abstract interface class FunctionsGateway {
     String reason = '',
   });
 
+  /// Hands a service to a chofer by hand, when the cascade could not.
+  ///
+  /// The same invariants as an automatic accept apply server-side — the chofer
+  /// must be active, free, and driving a truck that can do the job — because a
+  /// manual assignment that ignores them strands the same customer, just later.
+  /// A refusal comes back as a [Failure] the panel shows; the dispatcher has to
+  /// know their pick was not taken.
+  Future<Result<void>> assignServiceManually({
+    required String serviceId,
+    required String driverId,
+    String note = '',
+  });
+
   /// Adds a grúa to the fleet, unassigned, and returns its id. Refused when
   /// the plate is malformed or already belongs to another grúa.
   Future<Result<String>> createTruck(TruckDetails details);

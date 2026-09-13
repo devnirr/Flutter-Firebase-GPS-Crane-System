@@ -25,8 +25,8 @@ final openOfferProvider = Provider<Offer?>((ref) {
   return offer;
 });
 
-/// The request the server is offering this chofer, and nobody else, for 25
-/// seconds.
+/// The request the server is offering this chofer, and nobody else, until
+/// `expiresAt`.
 ///
 /// Everything needed to decide is on the card: what they take home, how far
 /// the customer is by road, what is wrong with the vehicle and where it goes.
@@ -65,19 +65,31 @@ class _OfferCardState extends ConsumerState<OfferCard> {
     if (_busy) return;
     setState(() => _busy = true);
 
+    // Taken *before* the call, and used whether or not this card is still on
+    // screen afterwards. The card is pulled the moment the offer lapses —
+    // `openOfferProvider` drops it on its own clock — so a `mounted` check
+    // here swallowed exactly the answer the chofer needed: they tapped
+    // ACEPTAR, the card vanished, and nothing ever said why.
+    final messenger = ScaffoldMessenger.of(context);
+
     final gateway = ref.read(functionsGatewayProvider);
     final serviceId = widget.offer.serviceId;
     final result = accept
         ? await gateway.acceptService(serviceId)
         : await gateway.rejectService(serviceId, reason: DriverCancelReason.other);
-    if (!mounted) return;
-    setState(() => _busy = false);
 
-    // On success there is nothing to do here: an accepted job moves the
-    // router to the service screen, and a rejected offer disappears.
+    if (mounted) setState(() => _busy = false);
+
+    // On success there is nothing to say: an accepted job moves the router to
+    // the service screen, and a rejected offer disappears.
     if (result case Err(:final failure)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(failure.userMessage)),
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(failure.userMessage),
+          backgroundColor: BrandColors.danger,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+        ),
       );
     }
   }

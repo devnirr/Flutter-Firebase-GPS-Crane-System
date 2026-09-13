@@ -39,7 +39,15 @@ const point = z.object({
 
 const serviceOnly = z.object({ serviceId: z.string().min(1).max(64) });
 
-const withPosition = serviceOnly.extend({ position: point });
+/**
+ * Exported so a test can check it against the payload the apps actually send.
+ *
+ * The apps had this as a flat `lat`/`lng` pair for `markArrived` and
+ * `completeService`, which parses as "no position at all". Nothing on either
+ * side of the wire could see the mismatch: both halves were valid, and only a
+ * chofer standing at the customer's car found out.
+ */
+export const withPosition = serviceOnly.extend({ position: point });
 
 const toLatLng = (p: z.infer<typeof point>): LatLng => ({
   latitude: p.latitude,

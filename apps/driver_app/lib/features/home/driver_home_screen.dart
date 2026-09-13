@@ -17,7 +17,7 @@ import 'offer_card.dart';
 /// Everything else a chofer looks at — the open orders, the conversation, the
 /// account — has its own tab, so this screen stays one decision deep: am I
 /// taking work, and is there a request for me right now. An offer takes the
-/// place of the online card, because for its 25 seconds nothing else matters.
+/// place of the online card, because while it is up nothing else matters.
 ///
 /// Going online is a checklist, not a boolean. A chofer who flips the switch
 /// and then silently misses every offer because notifications are off is worse
@@ -124,7 +124,13 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                     ),
                     child: SingleChildScrollView(
                       child: offer == null
-                          ? _OnlineCard(driver: driver)
+                          ? Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const _OfferStreamNotice(),
+                                _OnlineCard(driver: driver),
+                              ],
+                            )
                           : OfferCard(
                               key: ValueKey(offer.serviceId),
                               offer: offer,
@@ -261,6 +267,37 @@ class _TodayPill extends StatelessWidget {
 }
 
 /// The online switch plus the reason it is unavailable, if it is.
+/// Says so when the offers listener is broken.
+///
+/// "En línea · Estás recibiendo pedidos" over a stream that is failing is the
+/// worst thing this app can tell somebody: they sit there believing the night
+/// is quiet while dispatch offers their jobs to other people. A refused or
+/// unindexed query reads as "no offers" and looks exactly like silence, so it
+/// has to be said out loud.
+class _OfferStreamNotice extends ConsumerWidget {
+  const _OfferStreamNotice();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offers = ref.watch(incomingOfferProvider);
+    if (!offers.hasError) return const SizedBox.shrink();
+
+    final error = offers.error;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Insets.md),
+      child: InlineNotice(
+        message: error is Failure
+            ? 'No estamos recibiendo pedidos: ${error.userMessage}'
+            : 'No estamos recibiendo pedidos. Revisa tu conexión.',
+        icon: Icons.notifications_off_outlined,
+        tone: NoticeTone.error,
+        actionLabel: 'Reintentar',
+        onAction: () => ref.invalidate(incomingOfferProvider),
+      ),
+    );
+  }
+}
+
 class _OnlineCard extends ConsumerStatefulWidget {
   const _OnlineCard({required this.driver});
 

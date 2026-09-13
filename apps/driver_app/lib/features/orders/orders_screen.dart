@@ -180,18 +180,28 @@ class _OrderCardState extends ConsumerState<_OrderCard> {
     if (_busy) return;
     setState(() => _busy = true);
 
+    // Before the call: this row disappears as soon as the offer is taken or
+    // lapses, and a `mounted` check after the await threw the refusal away
+    // along with the card.
+    final messenger = ScaffoldMessenger.of(context);
+
     final result = await ref
         .read(functionsGatewayProvider)
         .acceptService(widget.service.id);
-    if (!mounted) return;
-    setState(() => _busy = false);
+    if (mounted) setState(() => _busy = false);
 
     // Each failure code gets its own message: "otro chofer lo tomó" and "la
     // oferta expiró" are the same HTTP status and completely different news.
     // On success the shell moves the chofer to the service screen.
     if (result case Err(:final failure)) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(failure.userMessage)));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(failure.userMessage),
+          backgroundColor: BrandColors.danger,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+        ),
+      );
     }
   }
 

@@ -9,7 +9,7 @@ import 'package:grua_core/grua_core.dart';
 /// Alone, it follows the chofer, drawn as a red drop. With an [offer], it frames the
 /// whole job — the truck, the customer and the destination — and draws the
 /// road to the customer in red and the tow itself dashed after it, because
-/// "how far is it and which way" is the decision the chofer has 25 seconds
+/// "how far is it and which way" is the decision the chofer has a minute
 /// to make.
 ///
 /// With no [height] it fills its parent edge to edge, as the home screen uses

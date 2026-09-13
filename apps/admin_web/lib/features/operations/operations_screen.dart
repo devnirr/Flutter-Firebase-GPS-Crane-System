@@ -21,10 +21,12 @@ class OperationsScreen extends ConsumerStatefulWidget {
 }
 
 /// Which roster the left panel is showing.
-enum _Panel { services, drivers }
+enum _Panel { requests, services, drivers }
 
 class _OperationsScreenState extends ConsumerState<OperationsScreen> {
-  _Panel _panel = _Panel.services;
+  // Opens on the queue: a request nobody has taken is the only thing on this
+  // screen with a customer sitting on the shoulder behind it.
+  _Panel _panel = _Panel.requests;
   String? _selectedId;
   String? _selectedDriverId;
   String _driverQuery = '';
@@ -52,7 +54,9 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   // Only one thing is inspected at a time: a service and a chofer would fight
   // over the map's camera and over the right-hand drawer.
   void _selectService(String id) => setState(() {
-        _panel = _Panel.services;
+        // Whichever list of jobs they were reading, they stay in it. Only the
+        // fleet tab has to give way, since the job is not in it.
+        if (_panel == _Panel.drivers) _panel = _Panel.services;
         _selectedId = id;
         _selectedDriverId = null;
       });
@@ -65,7 +69,12 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final services = ref.watch(activeServicesProvider).value ?? const [];
+    // The AsyncValue, not just its value: a query that fails — a missing
+    // index, a caller without the staff claim — used to collapse to `[]` and
+    // render as "Todo tranquilo", which is the most dangerous thing this
+    // screen can say. A dispatcher has to be told the list is broken.
+    final servicesAsync = ref.watch(activeServicesProvider);
+    final services = servicesAsync.value ?? const <Service>[];
     final roster = ref.watch(allDriversProvider);
     final live = ref.watch(liveDriverPositionsProvider).value ?? const [];
     // Empty until `/presence` answers: everyone reads as disconnected for a
@@ -95,8 +104,30 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
 
+    // What a client has sent and no chofer has taken yet.
+    final requests =
+        ordered.where((s) => s.status.isAwaitingDriver).toList(growable: false);
+
     final positions = {for (final p in live) p.driverId: p};
     final selected = ordered.where((s) => s.id == _selectedId).firstOrNull;
+
+    // With a request open, the map answers one question — who could take this
+    // one — so it stops drawing every truck in the fleet. The filters are the
+    // cascade's own, in the same order, so what the dispatcher sees is what
+    // dispatch is choosing between.
+    final byId = {for (final d in drivers) d.id: d};
+    final eligible = selected == null || !selected.status.isAwaitingDriver
+        ? null
+        : <String>{
+            for (final p in live)
+              if (p.isOnline &&
+                  !p.isStale(now) &&
+                  p.state == DriverLiveState.idle &&
+                  p.truckType.canServe(selected.truckTypeRequired) &&
+                  (byId[p.driverId]?.status.canWork ?? false) &&
+                  (byId[p.driverId]?.currentServiceId ?? '').isEmpty)
+                p.driverId,
+          };
     final selectedDriver =
         drivers.where((d) => d.id == _selectedDriverId).firstOrNull;
     final driverPosition =
@@ -113,6 +144,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
               children: [
                 _PanelTabs(
                   panel: _panel,
+                  requestCount: requests.length,
                   serviceCount: ordered.length,
                   driverCount: drivers.length,
                   onSelect: (panel) => setState(() => _panel = panel),
@@ -120,11 +152,21 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 const Divider(height: 1),
                 Expanded(
                   child: switch (_panel) {
+                    _Panel.requests => _RequestList(
+                        stream: servicesAsync,
+                        requests: requests,
+                        selectedId: _selectedId,
+                        now: now,
+                        onSelect: _selectService,
+                        onRetry: () => ref.invalidate(activeServicesProvider),
+                      ),
                     _Panel.services => _ServiceList(
+                        stream: servicesAsync,
                         services: ordered,
                         selectedId: _selectedId,
                         now: now,
                         onSelect: _selectService,
+                        onRetry: () => ref.invalidate(activeServicesProvider),
                       ),
                     _Panel.drivers => _DriverList(
                         roster: roster,
@@ -149,6 +191,11 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
         Expanded(
           child: _LiveMap(
             services: ordered,
+            eligible: eligible,
+            // On the queue tab every request draws its whole trip, so the
+            // dispatcher can see where each one is going without clicking
+            // through them one at a time.
+            routed: _panel == _Panel.requests ? requests : const [],
             live: live,
             selected: selected,
             selectedDriver: selectedDriver,
@@ -195,16 +242,19 @@ int _presenceRank(Driver driver, Set<String> appOpen) =>
       DriverPresence.offline => 3,
     };
 
-/// The left panel's two rosters: the open jobs, and the whole fleet.
+/// The left panel's three rosters: what has just come in, what is in flight,
+/// and the whole fleet.
 class _PanelTabs extends StatelessWidget {
   const _PanelTabs({
     required this.panel,
+    required this.requestCount,
     required this.serviceCount,
     required this.driverCount,
     required this.onSelect,
   });
 
   final _Panel panel;
+  final int requestCount;
   final int serviceCount;
   final int driverCount;
   final ValueChanged<_Panel> onSelect;
@@ -215,7 +265,18 @@ class _PanelTabs extends StatelessWidget {
       children: [
         Expanded(
           child: _PanelTab(
-            label: 'Servicios activos',
+            label: 'Solicitudes',
+            count: requestCount,
+            // The one count on this screen worth colouring: it is a customer
+            // waiting, and it is the dispatcher's to clear.
+            urgent: requestCount > 0,
+            selected: panel == _Panel.requests,
+            onTap: () => onSelect(_Panel.requests),
+          ),
+        ),
+        Expanded(
+          child: _PanelTab(
+            label: 'Activos',
             count: serviceCount,
             selected: panel == _Panel.services,
             onTap: () => onSelect(_Panel.services),
@@ -242,12 +303,16 @@ class _PanelTab extends StatelessWidget {
     required this.count,
     required this.selected,
     required this.onTap,
+    this.urgent = false,
   });
 
   final String label;
   final int count;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Draws the count as something to act on rather than a statistic.
+  final bool urgent;
 
   @override
   Widget build(BuildContext context) {
@@ -267,12 +332,13 @@ class _PanelTab extends StatelessWidget {
             ),
           ),
           padding: const EdgeInsets.fromLTRB(
+            Insets.md,
             Insets.lg,
-            Insets.lg,
-            Insets.lg,
+            Insets.md,
             Insets.lg - 2,
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Flexible(
                 child: Text(
@@ -285,10 +351,30 @@ class _PanelTab extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: Insets.sm),
-              Text(
-                '$count',
-                style: text.labelMedium?.copyWith(color: BrandColors.grey600),
-              ),
+              if (urgent)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Insets.sm,
+                    vertical: 1,
+                  ),
+                  decoration: const BoxDecoration(
+                    color: BrandColors.red,
+                    borderRadius: BorderRadius.all(
+                      Radius.circular(Corners.pill),
+                    ),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: text.labelMedium?.copyWith(
+                      color: BrandColors.white,
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  '$count',
+                  style: text.labelMedium?.copyWith(color: BrandColors.grey600),
+                ),
             ],
           ),
         ),
@@ -297,21 +383,308 @@ class _PanelTab extends StatelessWidget {
   }
 }
 
+/// A stream that has not arrived, or never will.
+///
+/// Returns null when there is something to render. Loading and error only take
+/// over before the first answer: once a list has arrived, a dropped stream
+/// should not blank it out from under whoever is reading it.
+Widget? _streamTrouble(
+  AsyncValue<Object?> stream,
+  VoidCallback onRetry,
+  String what,
+) {
+  if (stream.hasValue) return null;
+  if (stream.hasError) {
+    final error = stream.error;
+    return EmptyState(
+      title: 'No se pudo cargar',
+      message: error is Failure
+          ? error.userMessage
+          : 'La lista de $what no está disponible ahora mismo.',
+      icon: Icons.cloud_off_outlined,
+      tone: EmptyStateTone.error,
+      actionLabel: 'Reintentar',
+      onAction: onRetry,
+    );
+  }
+  return BrandLoader(message: 'Cargando $what…');
+}
+
+/// What customers have asked for and no chofer has taken yet.
+///
+/// The cascade is already working on these, so this is not a to-do list so
+/// much as the dispatcher's view of the queue — with the one job the system
+/// has given up on, `needs_manual`, pinned to the top by the caller's sort.
+class _RequestList extends StatelessWidget {
+  const _RequestList({
+    required this.stream,
+    required this.requests,
+    required this.selectedId,
+    required this.now,
+    required this.onSelect,
+    required this.onRetry,
+  });
+
+  final AsyncValue<List<Service>> stream;
+  final List<Service> requests;
+  final String? selectedId;
+  final DateTime now;
+  final ValueChanged<String> onSelect;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final broken = _streamTrouble(stream, onRetry, 'solicitudes');
+    if (broken != null) return broken;
+
+    if (requests.isEmpty) {
+      return const EmptyState(
+        title: 'Sin solicitudes',
+        message: 'Cuando un cliente pida una grúa aparecerá aquí al instante.',
+        icon: Icons.inbox_outlined,
+        tone: EmptyStateTone.success,
+      );
+    }
+
+    return ListView.separated(
+      itemCount: requests.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) => _RequestRow(
+        request: requests[index],
+        selected: requests[index].id == selectedId,
+        now: now,
+        onTap: () => onSelect(requests[index].id),
+      ),
+    );
+  }
+}
+
+/// One request: who, what is wrong with the vehicle, from where, to where, and
+/// how long they have been waiting.
+class _RequestRow extends StatelessWidget {
+  const _RequestRow({
+    required this.request,
+    required this.selected,
+    required this.now,
+    required this.onTap,
+  });
+
+  final Service request;
+  final bool selected;
+  final DateTime now;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final urgent = request.status == ServiceStatus.needsManual;
+    final waiting = request.createdAt == null
+        ? Duration.zero
+        : now.difference(request.createdAt!);
+
+    return Material(
+      color: selected
+          ? BrandColors.redTint
+          : urgent
+              ? BrandColors.dangerTint
+              : BrandColors.white,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Insets.lg,
+            vertical: Insets.md,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      request.code,
+                      style: text.titleSmall?.copyWith(
+                        color: urgent ? BrandColors.danger : BrandColors.ink,
+                      ),
+                    ),
+                  ),
+                  // The office's words: a customer sees "Buscando grúa" for
+                  // both `pending_dispatch` and `offered`, and the difference
+                  // between "nobody has been asked" and "a chofer is deciding
+                  // right now" is the whole of this screen.
+                  StatusChip(
+                    request.status,
+                    compact: true,
+                    label: request.status.officeLabel,
+                  ),
+                ],
+              ),
+              const SizedBox(height: Insets.xs),
+              Text(
+                '${request.clientName} · ${request.vehicle.displayName}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+              ),
+              const SizedBox(height: Insets.sm),
+
+              // Both ends, always. Whoever decides which truck to send needs
+              // to know where the job goes as much as where it starts: a tow
+              // to the next town is a different job from one across the street.
+              _Endpoint(
+                icon: Icons.my_location,
+                color: BrandColors.red,
+                label: request.pickup.displayAddress,
+                note: request.pickup.reference,
+              ),
+              const SizedBox(height: Insets.xs),
+              _Endpoint(
+                icon: Icons.flag_outlined,
+                color: BrandColors.ink,
+                label: request.dropoff?.displayAddress ?? 'Sin destino',
+                note: request.dropoff?.reference ?? '',
+              ),
+
+              const SizedBox(height: Insets.sm),
+              Row(
+                children: [
+                  Icon(
+                    Icons.schedule,
+                    size: 13,
+                    color: urgent ? BrandColors.danger : BrandColors.grey400,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'esperando ${DoTime.stopwatch(waiting)}',
+                    style: text.bodySmall?.copyWith(
+                      color: urgent ? BrandColors.danger : BrandColors.grey600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Flexible(
+                    child: Text(
+                      request.truckTypeRequired.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          text.bodySmall?.copyWith(color: BrandColors.grey600),
+                    ),
+                  ),
+                ],
+              ),
+
+              // What the cascade found last time it looked. A request going
+              // nowhere now says why — no grúa online, none of the right kind,
+              // all of them already on a job — instead of sitting there.
+              if (request.dispatch.lastReason.isNotEmpty) ...[
+                const SizedBox(height: Insets.sm),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Icon(
+                        Icons.search_off,
+                        size: 14,
+                        color: BrandColors.warning,
+                      ),
+                    ),
+                    const SizedBox(width: Insets.sm),
+                    Expanded(
+                      child: Text(
+                        request.dispatch.lastReason,
+                        style: text.bodySmall?.copyWith(
+                          color: BrandColors.grey600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One end of a trip: an icon, the address, and the landmark under it.
+class _Endpoint extends StatelessWidget {
+  const _Endpoint({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.note,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String note;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 14, color: color),
+        ),
+        const SizedBox(width: Insets.sm),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: text.bodySmall,
+              ),
+              if (note.isNotEmpty)
+                Text(
+                  note,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.bodySmall?.copyWith(
+                    color: BrandColors.grey400,
+                    fontSize: 11,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ServiceList extends StatelessWidget {
   const _ServiceList({
+    required this.stream,
     required this.services,
     required this.selectedId,
     required this.now,
     required this.onSelect,
+    required this.onRetry,
   });
 
+  final AsyncValue<List<Service>> stream;
   final List<Service> services;
   final String? selectedId;
   final DateTime now;
   final ValueChanged<String> onSelect;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
+    final broken = _streamTrouble(stream, onRetry, 'servicios');
+    if (broken != null) return broken;
+
     if (services.isEmpty) {
       return const EmptyState(
         title: 'Todo tranquilo',
@@ -381,7 +754,11 @@ class _ServiceRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                  StatusChip(service.status, compact: true),
+                  StatusChip(
+                    service.status,
+                    compact: true,
+                    label: service.status.officeLabel,
+                  ),
                 ],
               ),
               const SizedBox(height: Insets.xs),
@@ -407,9 +784,16 @@ class _ServiceRow extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  Text(
-                    service.hasDriver ? service.driverName : 'Sin asignar',
-                    style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                  // Flexible: a chofer with a long name and a job that has
+                  // been waiting two hours overflowed a 340-pixel panel.
+                  Flexible(
+                    child: Text(
+                      service.hasDriver ? service.driverName : 'Sin asignar',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          text.bodySmall?.copyWith(color: BrandColors.grey600),
+                    ),
                   ),
                 ],
               ),
@@ -424,6 +808,8 @@ class _ServiceRow extends StatelessWidget {
 class _LiveMap extends StatelessWidget {
   const _LiveMap({
     required this.services,
+    required this.routed,
+    required this.eligible,
     required this.live,
     required this.selected,
     required this.selectedDriver,
@@ -434,6 +820,19 @@ class _LiveMap extends StatelessWidget {
   });
 
   final List<Service> services;
+
+  /// The choferes who could take the selected request, or null when no
+  /// request is open and the map shows the whole fleet.
+  ///
+  /// An empty set is not the same as null: it means the dispatcher asked and
+  /// the answer is nobody, which is the most important thing this screen can
+  /// say.
+  final Set<String>? eligible;
+
+  /// Services whose whole trip is drawn, not just their pickup — the queue,
+  /// while the dispatcher is looking at it.
+  final List<Service> routed;
+
   final List<DriverLivePosition> live;
   final Service? selected;
 
@@ -447,8 +846,51 @@ class _LiveMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final onlineDrivers = live.where((p) => p.isOnline).toList();
+    final filter = eligible;
+    final onlineDrivers = live
+        .where((p) => p.isOnline)
+        // A chofer picked from the roster stays on the map whatever else is
+        // filtered: the dispatcher is looking at them on purpose.
+        .where((p) =>
+            filter == null ||
+            filter.contains(p.driverId) ||
+            p.driverId == selectedDriver?.id)
+        .toList();
     final focus = driverPosition?.position ?? selected?.pickup.geo;
+
+    // One job at a time. With a request open the map is about that request:
+    // its two ends and the trucks that could take it. Every other pickup on
+    // screen is a different customer's problem and only makes this one harder
+    // to see.
+    final shown = selected == null
+        ? services
+        : services.where((s) => s.id == selected!.id).toList();
+
+    // A trip per queued request, plus the selected one wherever it came from.
+    // Dashed, because none of these is a route anybody is driving yet — it is
+    // the job, not a path.
+    final trips = [
+      if (selected == null)
+        for (final service in routed)
+          if (service.dropoff != null)
+            MapRoute(
+              points: [service.pickup.geo, service.dropoff!.geo],
+              color: BrandColors.grey400,
+              dashed: true,
+            ),
+    ];
+
+    // What the camera has to hold: the whole job, and everyone who could take
+    // it. A capable truck ninety kilometres away is worth seeing — that is the
+    // dispatcher's answer about whether to wait or to call somebody in.
+    final frame = <LatLng>[
+      if (selected != null) ...[
+        selected!.pickup.geo,
+        if (selected!.dropoff != null) selected!.dropoff!.geo,
+        for (final position in onlineDrivers)
+          if (filter?.contains(position.driverId) ?? false) position.position,
+      ],
+    ];
 
     return Stack(
       children: [
@@ -457,20 +899,33 @@ class _LiveMap extends StatelessWidget {
             center: focus ?? DoLocations.defaultCenter,
             hasApiKey: hasApiKey,
             zoom: focus == null ? 12.4 : 13.6,
+            // Framed rather than centred: a fixed zoom either cropped the
+            // destination out or sat so far back the pickup was a speck.
+            fitTo: frame,
             route: selected?.dropoff == null
                 ? const []
                 : [selected!.pickup.geo, selected!.dropoff!.geo],
+            routes: trips,
             markers: [
-              for (final service in services) ...[
+              for (final service in shown) ...[
                 MapMarker(
                   position: service.pickup.geo,
                   kind: MapMarkerKind.pickup,
                   label: service.id == selected?.id ? service.code : null,
                 ),
-                if (service.dropoff != null && service.id == selected?.id)
+                // The destination too, for anything whose trip is drawn —
+                // a line to nowhere is worse than no line.
+                if (service.dropoff != null &&
+                    (service.id == selected?.id ||
+                        (selected == null &&
+                            routed.any((r) => r.id == service.id))))
                   MapMarker(
+                    id: 'dropoff:${service.id}',
                     position: service.dropoff!.geo,
                     kind: MapMarkerKind.dropoff,
+                    label: service.id == selected?.id
+                        ? service.dropoff!.displayAddress
+                        : null,
                   ),
               ],
               for (final driver in onlineDrivers)
@@ -496,9 +951,72 @@ class _LiveMap extends StatelessWidget {
         Positioned(
           top: Insets.lg,
           right: Insets.lg,
-          child: _Legend(drivers: onlineDrivers, now: now),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (filter != null && selected != null) ...[
+                _EligibleBanner(
+                  service: selected!,
+                  count: filter.length,
+                ),
+                const SizedBox(height: Insets.sm),
+              ],
+              _Legend(drivers: onlineDrivers, now: now),
+            ],
+          ),
         ),
       ],
+    );
+  }
+}
+
+/// Says what the map has been narrowed to, and to what.
+///
+/// Without this the fleet appears to have vanished the moment a request is
+/// opened — which is exactly the kind of thing a dispatcher does not need to
+/// wonder about at two in the morning.
+class _EligibleBanner extends StatelessWidget {
+  const _EligibleBanner({required this.service, required this.count});
+
+  final Service service;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final none = count == 0;
+
+    return FloatingCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.md,
+        vertical: Insets.sm,
+      ),
+      borderRadius: Corners.brSm,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            none ? Icons.search_off : Icons.filter_alt_outlined,
+            size: 16,
+            color: none ? BrandColors.warning : BrandColors.grey600,
+          ),
+          const SizedBox(width: Insets.sm),
+          Text(
+            none
+                ? 'Ninguna grúa de ${service.truckTypeRequired.label} libre'
+                : '$count grúa${count == 1 ? '' : 's'} para '
+                    '${service.truckTypeRequired.label}',
+            style: text.labelMedium?.copyWith(
+              color: none ? BrandColors.warning : BrandColors.ink,
+            ),
+          ),
+          const SizedBox(width: Insets.sm),
+          Text(
+            service.code,
+            style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -612,14 +1130,25 @@ class _ServiceDrawer extends ConsumerWidget {
               IconButton(onPressed: onClose, icon: const Icon(Icons.close)),
             ],
           ),
-          StatusChip(service.status),
+          StatusChip(service.status, label: service.status.officeLabel),
           const SizedBox(height: Insets.lg),
 
           if (service.status == ServiceStatus.needsManual)
-            const InlineNotice(
-              message: 'La búsqueda automática no encontró chofer. Asigna uno '
-                  'manualmente.',
+            InlineNotice(
+              message: service.dispatch.lastReason.isEmpty
+                  ? 'La búsqueda automática no encontró chofer. Asigna uno '
+                      'manualmente.'
+                  : '${service.dispatch.lastReason} Asigna un chofer '
+                      'manualmente.',
               tone: NoticeTone.error,
+            )
+          else if (service.dispatch.lastReason.isNotEmpty)
+            // Still searching, but the last sweep came back empty. Saying so
+            // is the difference between "wait" and "do something".
+            InlineNotice(
+              message: service.dispatch.lastReason,
+              icon: Icons.search_off,
+              tone: NoticeTone.warning,
             ),
 
           const SizedBox(height: Insets.lg),
@@ -706,13 +1235,54 @@ class _ServiceDrawer extends ConsumerWidget {
 }
 
 /// Manual assignment, ordered by the same score the dispatcher uses.
-class _AssignPanel extends ConsumerWidget {
+class _AssignPanel extends ConsumerStatefulWidget {
   const _AssignPanel({required this.service});
 
   final Service service;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AssignPanel> createState() => _AssignPanelState();
+}
+
+class _AssignPanelState extends ConsumerState<_AssignPanel> {
+  /// The chofer an assignment is in flight for, if any. One at a time: a
+  /// dispatcher double-clicking through a list must not send two.
+  String? _sending;
+
+  Future<void> _assign(Driver driver) async {
+    if (_sending != null) return;
+    setState(() => _sending = driver.id);
+
+    // Taken before the call: a successful assignment moves the service out of
+    // the queue and this panel goes with it, and the refusal is exactly what
+    // the dispatcher needs when it does not.
+    final messenger = ScaffoldMessenger.of(context);
+
+    final result = await ref.read(functionsGatewayProvider).assignServiceManually(
+          serviceId: widget.service.id,
+          driverId: driver.id,
+        );
+
+    if (mounted) setState(() => _sending = null);
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          switch (result) {
+            Ok<void>() => '${driver.shortName} va en camino.',
+            Err<void>(:final failure) => failure.userMessage,
+          },
+        ),
+        backgroundColor: result.isOk ? BrandColors.success : BrandColors.danger,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: result.isOk ? 3 : 6),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final service = widget.service;
     final drivers = ref.watch(allDriversProvider).value ?? const [];
     final live = ref.watch(liveDriverPositionsProvider).value ?? const [];
     final now = DateTime.now().toUtc();
@@ -720,12 +1290,15 @@ class _AssignPanel extends ConsumerWidget {
 
     final positions = {for (final p in live) p.driverId: p};
 
+    // The same rule the cascade uses, and the same one the map filters by: a
+    // plataforma can do a gancho job. Exact-match here hid the very truck
+    // dispatch would have chosen.
     final candidates = drivers
         .where((d) =>
             d.status.canWork &&
             d.isOnline &&
             !d.isBusy &&
-            d.truckType == service.truckTypeRequired &&
+            d.truckType.canServe(service.truckTypeRequired) &&
             positions[d.id] != null &&
             !positions[d.id]!.isStale(now))
         .toList()
@@ -756,17 +1329,23 @@ class _AssignPanel extends ConsumerWidget {
               title: Text(driver.shortName, style: text.titleSmall),
               subtitle: Text(
                 '${positions[driver.id]!.position.distanceKmTo(service.pickup.geo).toStringAsFixed(1)} km · '
-                'acepta ${driver.acceptanceLabel} · ${driver.assignedTruckPlate}',
+                'acepta ${driver.acceptanceLabel} · ${driver.assignedTruckPlate}'
+                // Say so when it is not the truck the job asked for.
+                '${driver.truckType == service.truckTypeRequired ? '' : ' · ${driver.truckType.label}'}',
                 style: text.bodySmall,
               ),
-              trailing: TextButton(
-                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Asignando a ${driver.shortName}…'),
-                  ),
-                ),
-                child: const Text('Asignar'),
-              ),
+              trailing: _sending == driver.id
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2.2),
+                    )
+                  : TextButton(
+                      // Every row is disabled while one is in flight, so a
+                      // second chofer cannot be sent to the same job.
+                      onPressed: _sending == null ? () => _assign(driver) : null,
+                      child: const Text('Asignar'),
+                    ),
             ),
           ),
       ],
@@ -841,25 +1420,8 @@ class _DriverList extends StatelessWidget {
   }
 
   Widget _body(List<Driver> filtered) {
-    // Loading and error only take over before the first roster arrives: once
-    // it has, a dropped stream should not blank the list out from under
-    // whoever is reading it.
-    if (!roster.hasValue) {
-      if (roster.hasError) {
-        final error = roster.error;
-        return EmptyState(
-          title: 'No se pudo cargar',
-          message: error is Failure
-              ? error.userMessage
-              : 'La lista de choferes no está disponible ahora mismo.',
-          icon: Icons.cloud_off_outlined,
-          tone: EmptyStateTone.error,
-          actionLabel: 'Reintentar',
-          onAction: onRetry,
-        );
-      }
-      return const BrandLoader(message: 'Cargando choferes…');
-    }
+    final broken = _streamTrouble(roster, onRetry, 'choferes');
+    if (broken != null) return broken;
 
     if (drivers.isEmpty) {
       return const EmptyState(

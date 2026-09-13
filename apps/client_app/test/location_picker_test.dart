@@ -122,8 +122,9 @@ Future<void> main() async {
     // And it says where the phone is, geocoded — not a hardcoded avenue.
     expect(find.text('Av. 27 de Febrero, Santo Domingo'), findsOneWidget);
 
-    // The landmark is the part the customer fills in.
-    expect(find.byKey(const Key('pickup-reference')), findsOneWidget);
+    // No landmark field: the pickup row is the whole of it now.
+    expect(find.byKey(const Key('pickup-reference')), findsNothing);
+    expect(find.text('Referencia del punto de recogida'), findsNothing);
   });
 
   testWidgets('the destination picker shows a full-width map', (tester) async {

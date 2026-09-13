@@ -35,14 +35,11 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
   final _model = TextEditingController();
   final _plate = TextEditingController();
   final _pickup = TextEditingController();
-  final _reference = TextEditingController();
   final _dropoff = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    final draft = ref.read(requestControllerProvider);
-    _reference.text = draft.pickup?.reference ?? '';
     // After the first frame: a provider may not be changed mid-build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -61,7 +58,6 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
     _model.dispose();
     _plate.dispose();
     _pickup.dispose();
-    _reference.dispose();
     _dropoff.dispose();
     super.dispose();
   }
@@ -106,8 +102,6 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
     final controller = ref.read(requestControllerProvider.notifier);
     final draft = ref.read(requestControllerProvider);
 
-    controller.setPickupReference(_reference.text.trim());
-
     final dropoff = draft.dropoff;
     if (dropoff != null) {
       controller.setDropoff(dropoff.copyWith(address: _dropoff.text.trim()));
@@ -129,11 +123,6 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
       _showMissing('Marca a dónde llevamos el vehículo.');
       return;
     }
-    if (chosen.pickup!.reference.trim().isEmpty) {
-      _showMissing('Escribe una referencia del punto de recogida.');
-      return;
-    }
-
     _syncVehicle();
     _syncLocations();
 
@@ -326,8 +315,7 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                     Text('¿Dónde estás?', style: text.headlineSmall),
                     const SizedBox(height: Insets.lg),
                     // Read-only: this is the phone's own position, not a
-                    // field to fill in. What the customer can add is the
-                    // landmark below it.
+                    // field to fill in.
                     _LocationField(
                       icon: Icons.my_location,
                       iconColor: BrandColors.red,
@@ -354,22 +342,6 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                         onAction: () => ref.invalidate(currentPlaceProvider),
                       ),
                     ],
-                    const SizedBox(height: Insets.md),
-                    TextFormField(
-                      key: const Key('pickup-reference'),
-                      controller: _reference,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(
-                        labelText: 'Referencia del punto de recogida',
-                        hintText: 'Frente al colmado, portón azul…',
-                      ),
-                      onChanged: (value) => ref
-                          .read(requestControllerProvider.notifier)
-                          .setPickupReference(value.trim()),
-                      validator: (v) => (v?.trim().isEmpty ?? true)
-                          ? 'Escribe una referencia'
-                          : null,
-                    ),
                     const SizedBox(height: Insets.md),
                     _LocationField(
                       icon: Icons.flag_outlined,

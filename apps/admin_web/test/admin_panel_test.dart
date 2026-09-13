@@ -99,7 +99,8 @@ Future<void> main() async {
 
     expect(find.text('Operaciones'), findsOneWidget);
     expect(find.text('Choferes'), findsWidgets);
-    expect(find.text('Servicios activos'), findsOneWidget);
+    expect(find.text('Solicitudes'), findsOneWidget);
+    expect(find.text('Activos'), findsOneWidget);
     // FieldLabel uppercases, so the legend renders as 'FLOTA EN LÍNEA'.
     expect(find.text('FLOTA EN LÍNEA'), findsOneWidget);
   });
@@ -121,6 +122,261 @@ Future<void> main() async {
     expect(find.text('Luis Fernández'), findsOneWidget);
     expect(find.text('Pedro Aybar'), findsOneWidget);
     expect(find.text('Inactivo'), findsWidgets);
+  });
+
+  testWidgets('a request a customer just sent shows up with both its ends',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    // Nothing in flight: the queue says so, rather than saying nothing.
+    expect(find.text('Sin solicitudes'), findsOneWidget);
+
+    // A customer asks for a grúa. Nobody tells the panel — it is watching the
+    // same services stream the customer's own screen is.
+    backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(
+        geo: LatLng(19.1221, -70.6367),
+        address: 'Maria Auxiliadora, Jarabacoa',
+        reference: 'Frente a la Farmacia San Miguel',
+      ),
+      dropoff: const ServiceLocation(
+        geo: LatLng(19.1300, -70.6400),
+        address: 'Carr. Palo Blanco, Jarabacoa',
+      ),
+      vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
+      truckType: TruckType.gancho,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 4200),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // It is on the dispatcher's screen, and the row carries the whole job:
+    // who, what, from where, to where.
+    expect(find.text('Sin solicitudes'), findsNothing);
+    expect(find.textContaining('Ramón Peña'), findsWidgets);
+    expect(find.text('Maria Auxiliadora, Jarabacoa'), findsOneWidget);
+    expect(find.text('Carr. Palo Blanco, Jarabacoa'), findsOneWidget);
+    expect(find.text('Frente a la Farmacia San Miguel'), findsOneWidget);
+
+    // And the map draws the trip, not just the pin it starts from.
+    final map = tester.widget<GruaMap>(find.byType(GruaMap));
+    expect(
+      map.markers.where((m) => m.kind == MapMarkerKind.dropoff),
+      isNotEmpty,
+    );
+    expect(map.routes, isNotEmpty);
+
+    backend.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('opening a request shows the customer and the trip in the drawer',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(
+        geo: LatLng(19.1221, -70.6367),
+        address: 'Maria Auxiliadora, Jarabacoa',
+        reference: 'Frente a la Farmacia San Miguel',
+      ),
+      dropoff: const ServiceLocation(
+        geo: LatLng(19.1300, -70.6400),
+        address: 'Carr. Palo Blanco, Jarabacoa',
+      ),
+      vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
+      truckType: TruckType.gancho,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 4200),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text('Maria Auxiliadora, Jarabacoa'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The drawer: the customer's phone to call them back, and the vehicle the
+    // chofer is being sent to.
+    expect(find.text('+18095551234'), findsOneWidget);
+    expect(find.text('Toyota Corolla'), findsWidgets);
+    // Nobody has taken it, so the dispatcher gets the manual assignment panel.
+    expect(find.text('Asignar manualmente'), findsOneWidget);
+
+    backend.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('Asignar actually sends the chofer, and says so', (tester) async {
+    // The bug: this button showed "Asignando a …" and called nothing at all.
+    // No `assignServiceManually` existed in the app, so the chofer it named
+    // was never told and the request sat exactly where it was.
+    setDesktopSize(tester);
+    final backend = DemoBackend(dispatchDelay: const Duration(minutes: 5))
+      ..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    final service = backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(
+        geo: LatLng(18.4795, -69.9420),
+        address: 'Gazcue',
+      ),
+      dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
+      vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
+      truckType: TruckType.gancho,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 8000),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text('Gazcue'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Asignar manualmente'), findsOneWidget);
+    // The drawer is a long list; the panel sits well below the fold.
+    await tester.ensureVisible(find.text('Asignar').first);
+    await tester.pump();
+    await tester.tap(find.text('Asignar').first);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+
+    // The job now belongs to somebody, and the panel says who.
+    final assigned = backend.service(service.id)!;
+    expect(assigned.hasDriver, isTrue);
+    expect(assigned.status, ServiceStatus.accepted);
+    expect(assigned.assignmentMode, AssignmentMode.manual);
+    expect(find.textContaining('va en camino'), findsOneWidget);
+
+    // The panel is gone with the job it was for, and the drawer offers the
+    // chofer instead of a list of candidates.
+    expect(find.text('Asignar manualmente'), findsNothing);
+    expect(find.text('Contactar chofer'), findsOneWidget);
+
+    backend.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('the queue says whether a chofer has been asked yet',
+      (tester) async {
+    // A customer sees "Buscando grúa" for both `pending_dispatch` and
+    // `offered`. A dispatcher must not: "nobody has been asked" and "a chofer
+    // is deciding right now" are different problems, and the panel showed the
+    // customer's word for both.
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(
+        geo: LatLng(18.4795, -69.9420),
+        address: 'Gazcue',
+      ),
+      dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
+      vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
+      truckType: TruckType.gancho,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 8000),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Buscando chofer'), findsOneWidget);
+    expect(find.text('Buscando grúa'), findsNothing);
+
+    backend.dispose();
+    await tester.pump();
+  });
+
+  testWidgets('opening a request leaves only the trucks that could take it',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    // Every truck on the road is on the map while nothing is selected.
+    final wholeFleet = tester
+        .widget<GruaMap>(find.byType(GruaMap))
+        .markers
+        .where((m) => m.id?.startsWith('driver:') ?? false)
+        .length;
+    expect(wholeFleet, greaterThan(1));
+
+    backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(
+        geo: LatLng(18.4795, -69.9420),
+        address: 'Gazcue',
+      ),
+      dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
+      // A car that will not start: a gancho job, which a plataforma can also
+      // take and a grúa pesada cannot.
+      vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
+      truckType: TruckType.gancho,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 8000),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text('Gazcue'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final shown = tester
+        .widget<GruaMap>(find.byType(GruaMap))
+        .markers
+        .where((m) => m.id?.startsWith('driver:') ?? false)
+        .map((m) => m.id!.substring('driver:'.length))
+        .toSet();
+
+    // Only trucks that could actually do this job, and fewer than the fleet.
+    expect(shown, isNotEmpty);
+    expect(shown.length, lessThan(wholeFleet));
+    for (final id in shown) {
+      final driver = backend.driver(id)!;
+      expect(
+        driver.truckType.canServe(TruckType.gancho),
+        isTrue,
+        reason: '${driver.shortName} drives a ${driver.truckType.label}',
+      );
+      expect(driver.isBusy, isFalse);
+    }
+
+    // And the map says what it has been narrowed to, so the fleet does not
+    // look like it vanished.
+    expect(find.textContaining('para Gancho'), findsOneWidget);
+
+    // One job at a time: only this request's two ends are drawn, and the
+    // camera frames the job together with the trucks that could take it.
+    final map = tester.widget<GruaMap>(find.byType(GruaMap));
+    expect(
+      map.markers.where((m) => m.kind == MapMarkerKind.pickup),
+      hasLength(1),
+    );
+    expect(map.fitTo, contains(const LatLng(18.4795, -69.9420)));
+    expect(map.fitTo, contains(const LatLng(18.5001, -69.8800)));
+    expect(map.fitTo.length, greaterThanOrEqualTo(2 + shown.length));
+
+    backend.dispose();
+    await tester.pump();
   });
 
   testWidgets('picking a chofer from the flota opens their card',
@@ -842,7 +1098,7 @@ Future<void> main() async {
 
     expect(find.text('CÓDIGO'), findsOneWidget);
     // The map's panel is Operaciones', not this page's.
-    expect(find.text('Servicios activos'), findsNothing);
+    expect(find.text('Solicitudes'), findsNothing);
     // The four seeded jobs, all within the default 30 days, all closed — in
     // the office's words, not the customer's.
     expect(find.text('Cerrado'), findsNWidgets(4));

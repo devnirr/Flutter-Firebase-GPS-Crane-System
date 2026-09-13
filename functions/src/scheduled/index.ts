@@ -21,7 +21,7 @@ import { region } from '../callables/region.js';
  * Force-expires offers whose Cloud Task never fired.
  *
  * Every minute, which is why the task exists at all: a minute of slack on a
- * 25-second offer would triple the customer's wait. This only catches the cases
+ * offer would multiply the customer's wait. This only catches the cases
  * where the task was dropped, the enqueue failed, or the function crashed
  * mid-cascade.
  *

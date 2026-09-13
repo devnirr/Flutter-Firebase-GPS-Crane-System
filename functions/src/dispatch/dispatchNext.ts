@@ -6,6 +6,7 @@ import {
   ServiceEventName,
   ServiceStatus,
   TruckType,
+  trucksThatCanServe,
 } from '../lib/enums.js';
 import { FieldValue, Paths, Timestamp, db } from '../lib/firestore.js';
 import { distanceMeters, type LatLng } from '../lib/geo.js';
@@ -18,7 +19,7 @@ import { enqueueOfferExpiry } from '../lib/tasks.js';
 /**
  * The dispatch cascade.
  *
- * One chofer at a time gets one exclusive offer, for 25 seconds, with the search
+ * One chofer at a time gets one exclusive offer, for a minute, with the search
  * radius doubling each time nobody takes it. Broadcasting to everyone is much
  * simpler and it is the wrong design: two choferes accept the same job, one
  * drives out for nothing, and within a week they have all learned that the
@@ -43,10 +44,13 @@ export interface DispatchConfig {
   weightDistance: number;
   weightRating: number;
   weightIdleTime: number;
+
+  /** What it costs a candidate to be the bigger truck. See `scoreCandidates`. */
+  weightSubstitute: number;
 }
 
 export const DEFAULT_DISPATCH: DispatchConfig = {
-  offerTtlMs: 25000,
+  offerTtlMs: 60000,
   startRadiusKm: 5,
   maxRadiusKm: 40,
   maxRounds: 8,
@@ -58,12 +62,88 @@ export const DEFAULT_DISPATCH: DispatchConfig = {
   weightDistance: 0.7,
   weightRating: 0.2,
   weightIdleTime: 0.1,
+  weightSubstitute: 0.35,
 };
 
 export async function loadDispatchConfig(): Promise<DispatchConfig> {
   const snap = await Paths.dispatchConfig().get();
   return { ...DEFAULT_DISPATCH, ...(snap.data() as Partial<DispatchConfig> | undefined) };
 }
+
+/**
+ * Why the trucks that were looked at did not get the job.
+ *
+ * Dispatch used to answer "nobody" and nothing else, so a request that never
+ * reached a chofer could not be told apart from a request nobody had tried to
+ * send. Every counter here is one filter in `findCandidates`, in the order
+ * they are applied.
+ */
+export interface ScanTally {
+  /** Online trucks inside the circle, before any other filter. */
+  inRadius: number;
+  wrongTruck: number;
+  alreadyAsked: number;
+  /** Offline, mid-job, or a position too old to trust. */
+  unavailable: number;
+  /** Suspended, archived, or no chofer record at all. */
+  inactive: number;
+  /** Already committed to another service. */
+  busy: number;
+  cashCapped: number;
+  eligible: number;
+}
+
+const emptyTally = (): ScanTally => ({
+  inRadius: 0,
+  wrongTruck: 0,
+  alreadyAsked: 0,
+  unavailable: 0,
+  inactive: 0,
+  busy: 0,
+  cashCapped: 0,
+  eligible: 0,
+});
+
+/**
+ * The tally in words, for whoever is looking at the request wondering why it
+ * is still sitting there. Written for a dispatcher, in their own language.
+ */
+export function scanReason(
+  tally: ScanTally,
+  truckType: TruckType,
+  radiusKm: number,
+): string {
+  const truck = TRUCK_LABEL[truckType] ?? truckType;
+  if (tally.inRadius === 0) {
+    return `Ninguna grúa en línea a ${radiusKm} km del punto de recogida.`;
+  }
+  if (tally.wrongTruck === tally.inRadius) {
+    return `Ninguna grúa de ${truck} en línea a ${radiusKm} km. ` +
+      `Hay ${tally.inRadius} de otro tipo.`;
+  }
+  if (tally.busy > 0 && tally.eligible === 0) {
+    return `Las grúas de ${truck} cerca ya están en servicio.`;
+  }
+  if (tally.alreadyAsked > 0 && tally.eligible === 0) {
+    return `Ya se le ofreció a todas las grúas de ${truck} a ${radiusKm} km.`;
+  }
+  if (tally.cashCapped > 0 && tally.eligible === 0) {
+    return 'Las grúas cerca tienen demasiado efectivo pendiente de entregar.';
+  }
+  if (tally.unavailable > 0 && tally.eligible === 0) {
+    return `Las grúas de ${truck} cerca perdieron señal o no están libres.`;
+  }
+  if (tally.inactive > 0 && tally.eligible === 0) {
+    return `Las grúas de ${truck} cerca no tienen la cuenta activa.`;
+  }
+  return `Sin choferes disponibles a ${radiusKm} km.`;
+}
+
+const TRUCK_LABEL: Record<string, string> = {
+  [TruckType.gancho]: 'gancho',
+  [TruckType.plataforma]: 'plataforma',
+  [TruckType.pesada]: 'grúa pesada',
+};
 
 export interface Candidate {
   driverId: string;
@@ -75,6 +155,9 @@ export interface Candidate {
   truckId?: string;
   name: string;
   phone: string;
+
+  /** A bigger truck than the job asked for — capable, but not the first pick. */
+  isSubstitute: boolean;
 }
 
 /**
@@ -83,6 +166,12 @@ export interface Candidate {
  * Distance dominates because it is what the customer feels. Rating and idle
  * time only break ties: weighting them heavily would send the nearest truck
  * past a job to reward a better-rated one three kilometres further out.
+ *
+ * A substitute — a plataforma on a gancho job — is penalised rather than
+ * ranked below every exact match. A flat tier would send a hook truck from the
+ * far edge of a 40 km circle rather than the flatbed at the corner; the
+ * penalty instead means the bigger truck has to be meaningfully closer, which
+ * at the default weights is about half the search radius.
  */
 export function scoreCandidates(
   candidates: Omit<Candidate, 'score'>[],
@@ -98,7 +187,8 @@ export function scoreCandidates(
       score:
         config.weightDistance * norm(candidate.distanceM / 1000, 0, radiusKm) +
         config.weightRating * (1 - norm(candidate.rating, 3, 5)) +
-        config.weightIdleTime * (1 - norm(candidate.idleMinutes, 0, 30)),
+        config.weightIdleTime * (1 - norm(candidate.idleMinutes, 0, 30)) +
+        (candidate.isSubstitute ? config.weightSubstitute : 0),
     }))
     .sort((a, b) => a.score - b.score);
 }
@@ -119,23 +209,40 @@ async function findCandidates(options: {
   paymentMethod: string;
   config: DispatchConfig;
   now: number;
-}): Promise<Candidate[]> {
+}): Promise<{ candidates: Candidate[]; tally: ScanTally }> {
   const { pickup, radiusKm, truckType, excluded, config, now } = options;
 
   const positions = await positionsWithin(pickup, radiusKm);
 
+  const capable = trucksThatCanServe(truckType);
+  const tally = emptyTally();
+  tally.inRadius = positions.length;
+
   const nearby = positions.filter((position) => {
-    if (excluded.has(position.driverId)) return false;
-    if (position.truckType !== truckType) return false;
+    // Capable, not identical: a flatbed can do a hook job. `scoreCandidates`
+    // is what keeps it from being sent when a hook truck is just as close.
+    // A node with no `truckType` at all is an old build's write, and there is
+    // no safe guess about what it can tow.
+    const truck = position.truckType as TruckType | undefined;
+    if (truck === undefined || !capable.includes(truck)) {
+      tally.wrongTruck++;
+      return false;
+    }
+    if (excluded.has(position.driverId)) {
+      tally.alreadyAsked++;
+      return false;
+    }
     // Online, idle, fresh, and inside the real circle — geohash boxes
     // over-select.
-    return isAvailableWithin(position, pickup, radiusKm, {
+    const free = isAvailableWithin(position, pickup, radiusKm, {
       now,
       staleMs: config.stalePositionMs,
     });
+    if (!free) tally.unavailable++;
+    return free;
   });
 
-  if (nearby.length === 0) return [];
+  if (nearby.length === 0) return { candidates: [], tally };
 
   const pricing = await loadPricing();
 
@@ -150,12 +257,14 @@ async function findCandidates(options: {
   for (let i = 0; i < nearby.length; i++) {
     const position = nearby[i]!;
     const driver = drivers[i]?.data();
-    if (!driver) continue;
-    if (driver['status'] !== DriverStatus.active) continue;
-    if (driver['archived'] === true) continue;
+    if (!driver || driver['status'] !== DriverStatus.active || driver['archived'] === true) {
+      tally.inactive++;
+      continue;
+    }
     // Already towing something. The RTDB state should agree, but the Firestore
     // document is the authority on assignment.
     if (typeof driver['currentServiceId'] === 'string' && driver['currentServiceId']) {
+      tally.busy++;
       continue;
     }
 
@@ -165,6 +274,7 @@ async function findCandidates(options: {
       options.paymentMethod === 'cash' &&
       (driver['cashOwedCents'] as number | undefined ?? 0) >= pricing.maxCashOwedCents
     ) {
+      tally.cashCapped++;
       continue;
     }
 
@@ -181,10 +291,12 @@ async function findCandidates(options: {
       truckId: driver['assignedTruckId'] as string | undefined,
       name: (driver['name'] as string | undefined) ?? '',
       phone: (driver['phone'] as string | undefined) ?? '',
+      isSubstitute: position.truckType !== truckType,
     });
   }
 
-  return scoreCandidates(eligible, radiusKm, config);
+  tally.eligible = eligible.length;
+  return { candidates: scoreCandidates(eligible, radiusKm, config), tally };
 }
 
 /**
@@ -245,6 +357,8 @@ export async function dispatchNext(
   // The truck the customer asked for goes first, if it still can. Looked for
   // at the widest radius: the customer chose it knowing how far it was.
   const preferred = options.preferredDriverId;
+  let tally = emptyTally();
+
   if (preferred && !excluded.has(preferred)) {
     const wide = await findCandidates({
       pickup: center,
@@ -255,13 +369,13 @@ export async function dispatchNext(
       config,
       now,
     });
-    const match = wide.find((c) => c.driverId === preferred);
+    const match = wide.candidates.find((c) => c.driverId === preferred);
     if (match) candidates = [match];
     logger.info('dispatch.preferred', { serviceId, available: Boolean(match) });
   }
 
   while (candidates.length === 0 && radiusKm <= config.maxRadiusKm) {
-    candidates = await findCandidates({
+    const scan = await findCandidates({
       pickup: center,
       radiusKm,
       truckType,
@@ -270,23 +384,33 @@ export async function dispatchNext(
       config,
       now,
     });
+    candidates = scan.candidates;
+    tally = scan.tally;
     if (candidates.length === 0) radiusKm *= 2;
   }
 
+  // The whole scan, not just its verdict: "nobody" and "nobody with the right
+  // grúa" and "everybody is already on a job" are three different problems and
+  // only one of them is dispatch's to solve.
   logger.info('dispatch.round', {
     serviceId,
     round,
     radiusKm,
+    truckType,
     candidateCount: candidates.length,
     chosenDriverId: candidates[0]?.driverId,
     elapsedMs,
+    ...tally,
   });
 
   if (candidates.length === 0) {
     const exhausted = round >= config.maxRounds || elapsedMs > config.maxDispatchMs;
+    // Written where the dispatcher reads it, so a request that is going
+    // nowhere says why instead of spinning silently.
+    const reason = scanReason(tally, truckType, Math.min(radiusKm, config.maxRadiusKm));
 
     if (exhausted) {
-      await giveUp(serviceId, service, round, elapsedMs);
+      await giveUp(serviceId, service, round, elapsedMs, reason);
       return;
     }
 
@@ -294,6 +418,8 @@ export async function dispatchNext(
     await Paths.service(serviceId).update({
       'dispatch.radiusKm': config.maxRadiusKm,
       'dispatch.round': round + 1,
+      'dispatch.lastReason': reason,
+      'dispatch.lastCheckedAt': Timestamp.now(),
       updatedAt: FieldValue.serverTimestamp(),
     });
     await enqueueOfferExpiry({
@@ -426,17 +552,24 @@ async function giveUp(
   service: FirebaseFirestore.DocumentData,
   round: number,
   elapsedMs: number,
+  reason: string,
 ): Promise<void> {
   await applyTransition({
     serviceId,
     event: ServiceEventName.noDriversFound,
     actorId: 'system',
     actorRole: 'system',
-    meta: { round, elapsedMs },
+    meta: { round, elapsedMs, reason },
+    // On the service itself, not only in the log: the dispatcher picking this
+    // up needs to know whether to call a chofer in or widen the coverage.
+    patch: {
+      'dispatch.lastReason': reason,
+      'dispatch.lastCheckedAt': Timestamp.now(),
+    },
     afterCommit: async () => {
       await alertAdmins(
         'Servicio sin chofer',
-        `${service['code'] ?? serviceId} lleva ${Math.round(elapsedMs / 60000)} min sin asignar.`,
+        `${service['code'] ?? serviceId}: ${reason}`,
         { serviceId, type: 'needs_manual' },
       );
     },

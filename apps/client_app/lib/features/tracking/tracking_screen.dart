@@ -119,7 +119,7 @@ class _TrackingBody extends ConsumerWidget {
   }
 }
 
-class _MapCard extends StatelessWidget {
+class _MapCard extends StatefulWidget {
   const _MapCard({
     required this.service,
     required this.tracking,
@@ -133,22 +133,61 @@ class _MapCard extends StatelessWidget {
   final bool hasApiKey;
 
   @override
+  State<_MapCard> createState() => _MapCardState();
+}
+
+class _MapCardState extends State<_MapCard> {
+  /// While true the camera rides with the truck. The customer's own touch
+  /// turns it off — and only their touch, so a position update never steals
+  /// the map back mid-pinch.
+  ///
+  /// The map used to be `interactive: false` for exactly this reason: the
+  /// truck moves every few seconds, and a camera that follows it fights any
+  /// pan. Locking the map was the wrong half of that trade — somebody on the
+  /// shoulder wants to see which side of the river the grúa is on, and zoom in
+  /// on the street it is turning into.
+  var _following = true;
+
+  /// Where the camera was handed over. Held constant so [GruaMap] sees no
+  /// change of `center` and leaves the customer's camera alone.
+  LatLng? _held;
+
+  void _takeOver(LatLng from) {
+    if (!_following) return;
+    setState(() {
+      _following = false;
+      _held = from;
+    });
+  }
+
+  void _follow() => setState(() {
+        _following = true;
+        _held = null;
+      });
+
+  @override
   Widget build(BuildContext context) {
+    final service = widget.service;
+    final tracking = widget.tracking;
     final truckAt = tracking?.position;
-    final stale = tracking?.isStale(now) ?? true;
+    final stale = tracking?.isStale(widget.now) ?? true;
+    final followed = truckAt ?? service.pickup.geo;
 
     return ClipRRect(
       borderRadius: Corners.brLg,
       child: Stack(
         children: [
           Positioned.fill(
+            // Not a `Listener` around the map: on the web the map is a
+            // platform view and the browser takes the pointer events before
+            // Flutter sees them. The map itself reports the move, and says
+            // whether it was ours.
             child: GruaMap(
-              center: truckAt ?? service.pickup.geo,
-              hasApiKey: hasApiKey,
+              center: _following ? followed : (_held ?? followed),
+              hasApiKey: widget.hasApiKey,
               zoom: 14.2,
-              // The camera follows the truck, so panning would only fight it.
-              interactive: false,
               showAttribution: false,
+              onUserMove: () => _takeOver(followed),
               route: [
                 service.pickup.geo,
                 if (service.dropoff != null) service.dropoff!.geo,
@@ -179,7 +218,29 @@ class _MapCard extends StatelessWidget {
               top: Insets.lg,
               left: 0,
               right: 0,
-              child: Center(child: _EtaBubble(tracking: tracking!, stale: stale)),
+              child: Center(child: _EtaBubble(tracking: tracking, stale: stale)),
+            ),
+          // Only once they have taken the camera: a button that does nothing
+          // is noise over a map.
+          if (!_following)
+            Positioned(
+              // Bottom left, above Google's logo: the bottom-right corner is
+              // where the map draws its own controls on the web.
+              left: Insets.md,
+              bottom: Insets.huge,
+              child: Tooltip(
+                message: 'Seguir la grúa',
+                child: FloatingCard(
+                  key: const Key('follow-truck'),
+                  padding: const EdgeInsets.all(Insets.md),
+                  borderRadius: Corners.brMd,
+                  onTap: _follow,
+                  child: const Icon(
+                    Icons.my_location,
+                    color: BrandColors.red,
+                  ),
+                ),
+              ),
             ),
         ],
       ),

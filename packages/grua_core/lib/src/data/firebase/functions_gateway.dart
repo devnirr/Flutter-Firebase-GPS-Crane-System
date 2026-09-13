@@ -67,6 +67,18 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   Future<Result<void>> _callVoid(String name, Map<String, dynamic> payload) =>
       _call<void>(name, payload, (_) {});
 
+  /// A coordinate the way every callable's `point` schema wants it.
+  ///
+  /// One helper rather than two hand-written maps: `markArrived` and
+  /// `completeService` each spelled it out, and both spelled it wrong — a flat
+  /// `lat`/`lng` pair where the server expects a nested `position`. Zod refused
+  /// the payload, the callable answered `invalid-argument`, and a chofer who
+  /// had driven to the customer could not press LLEGUÉ.
+  static Map<String, double> _point(LatLng position) => {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+      };
+
   /// Turns a callable's status and details into a domain failure.
   ///
   /// The server puts a machine-readable code in `details.code`; the message it
@@ -297,8 +309,7 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   }) =>
       _callVoid('markArrived', {
         'serviceId': serviceId,
-        'lat': position.latitude,
-        'lng': position.longitude,
+        'position': _point(position),
       });
 
   @override
@@ -320,8 +331,7 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   }) =>
       _callVoid('completeService', {
         'serviceId': serviceId,
-        'lat': position.latitude,
-        'lng': position.longitude,
+        'position': _point(position),
         'photoPaths': photoPaths,
         'notes': ?notes,
       });
@@ -387,6 +397,18 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   @override
   Future<Result<void>> archiveDriver(String driverId) =>
       _callVoid('archiveDriver', {'driverId': driverId});
+
+  @override
+  Future<Result<void>> assignServiceManually({
+    required String serviceId,
+    required String driverId,
+    String note = '',
+  }) =>
+      _callVoid('assignServiceManually', {
+        'serviceId': serviceId,
+        'driverId': driverId,
+        if (note.isNotEmpty) 'note': note,
+      });
 
   @override
   Future<Result<String>> createTruck(TruckDetails details) => _call(

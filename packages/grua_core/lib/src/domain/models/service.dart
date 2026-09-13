@@ -223,6 +223,15 @@ abstract class DispatchState with _$DispatchState {
     @NullableTimestampConverter() DateTime? lastOfferAt,
     @NullableTimestampConverter() DateTime? offerExpiresAt,
 
+    /// Why the last scan found nobody, in words, for the dispatcher.
+    ///
+    /// "Nobody" covers three different problems — no truck online, no truck of
+    /// the right kind, every truck already on a job — and only one of them is
+    /// dispatch's to solve. The panel used to show a request sitting there
+    /// with no explanation at all.
+    @Default('') String lastReason,
+    @NullableTimestampConverter() DateTime? lastCheckedAt,
+
     /// Cloud Tasks name for the pending expiry, so accept can cancel it.
     String? taskName,
   }) = _DispatchState;

@@ -63,7 +63,7 @@ abstract class Offer with _$Offer {
       : '${distanceKm.toStringAsFixed(1)} km';
 
   /// Seconds left, computed from the server's [expiresAt] rather than a local
-  /// 25-second timer. Clock drift on a cheap Android otherwise silently eats
+  /// countdown. Clock drift on a cheap Android otherwise silently eats
   /// offers.
   int secondsRemaining(DateTime now) {
     final expiry = expiresAt;

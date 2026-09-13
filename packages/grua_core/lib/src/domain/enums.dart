@@ -127,6 +127,22 @@ enum TruckType {
       _resolve(TruckType.values, wire, (v) => v.wire, TruckType.unknown);
 
   bool get isDispatchable => this != TruckType.unknown;
+
+  /// Whether this truck can do a job that asks for [required].
+  ///
+  /// A plataforma carries the whole vehicle, so it can do anything a gancho
+  /// can. Not the reverse: a gancho tows on the vehicle's own wheels, which is
+  /// exactly what a flipped or wheel-locked car cannot do. A pesada is for
+  /// trucks and buses — nothing substitutes for it and it substitutes for
+  /// nothing, because sending a heavy wrecker to a sedan is the wrong truck at
+  /// the wrong price.
+  ///
+  /// Mirrors `trucksThatCanServe` in `functions/src/lib/enums.ts`. Dispatch
+  /// used to demand an exact match on both sides, which left a customer
+  /// watching "Buscando grúa" while an idle flatbed sat two streets away.
+  bool canServe(TruckType required) =>
+      this == required ||
+      (required == TruckType.gancho && this == TruckType.plataforma);
 }
 
 /// The customer's vehicle class, used to infer [TruckType].
@@ -246,7 +262,7 @@ enum ServiceStatus {
   @JsonValue('pending_dispatch')
   pendingDispatch('pending_dispatch', 'Buscando grúa'),
 
-  /// One chofer is holding an exclusive 25-second offer.
+  /// One chofer is holding an exclusive offer, a minute long.
   @JsonValue('offered')
   offered('offered', 'Buscando grúa'),
 
@@ -319,6 +335,16 @@ enum ServiceStatus {
     ServiceStatus.needsManual,
   };
 
+  /// Requested and still nobody's job: the dispatcher's queue.
+  ///
+  /// `offered` is in here because an offer is a minute long and can come
+  /// straight back — a service is not somebody's until a chofer accepts it.
+  static const Set<ServiceStatus> awaitingDriver = {
+    ServiceStatus.pendingDispatch,
+    ServiceStatus.offered,
+    ServiceStatus.needsManual,
+  };
+
   /// States where chat and calling between the two parties are open.
   static const Set<ServiceStatus> contactOpen = {
     ServiceStatus.accepted,
@@ -329,6 +355,8 @@ enum ServiceStatus {
   bool get isTerminal => terminal.contains(this);
 
   bool get isActive => active.contains(this);
+
+  bool get isAwaitingDriver => awaitingDriver.contains(this);
 
   /// The office's name for the state. [label] is written for the customer —
   /// "Tu grúa llegó", and `offered` hidden behind "Buscando grúa" — which is

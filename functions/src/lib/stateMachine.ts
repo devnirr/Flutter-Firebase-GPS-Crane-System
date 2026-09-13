@@ -305,6 +305,15 @@ export async function applyTransition(options: ApplyOptions): Promise<ApplyResul
 
     await transition.guard?.(ctx);
 
+    // Everything that reads runs before anything that writes. Firestore
+    // enforces that inside a transaction and throws outright when it is
+    // broken — as an `INTERNAL` to the caller, which is what a chofer saw when
+    // they pressed ACEPTAR: `acceptOffer` re-reads the offer and the chofer's
+    // own record from inside this callback, and both reads landed after the
+    // status update below had already been staged. The same fault took out the
+    // dispatcher's "Asignar manualmente".
+    await inTransaction?.(ctx);
+
     const update: Record<string, unknown> = {
       status: transition.to,
       updatedAt: FieldValue.serverTimestamp(),
@@ -312,6 +321,9 @@ export async function applyTransition(options: ApplyOptions): Promise<ApplyResul
       ...(extraPatch ?? {}),
     };
 
+    // Last, and deliberately so: where a callback and a transition touch the
+    // same field, the machine's own status wins. Nothing that runs inside a
+    // transition gets to decide what state it left the service in.
     transaction.update(serviceRef, update);
 
     transaction.create(Paths.events(serviceId).doc(), {
@@ -323,8 +335,6 @@ export async function applyTransition(options: ApplyOptions): Promise<ApplyResul
       meta,
       at: FieldValue.serverTimestamp(),
     });
-
-    await inTransaction?.(ctx);
 
     result = { from, to: transition.to, service };
   });

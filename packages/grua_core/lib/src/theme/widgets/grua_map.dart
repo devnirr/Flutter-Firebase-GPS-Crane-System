@@ -34,6 +34,7 @@ class GruaMap extends StatefulWidget {
     this.showAttribution = true,
     this.padding = EdgeInsets.zero,
     this.onCameraIdle,
+    this.onUserMove,
     this.onMapCreated,
     super.key,
   });
@@ -69,6 +70,15 @@ class GruaMap extends StatefulWidget {
   /// Fires with the centre once the camera settles — the "move the map, not
   /// the pin" address picker depends on it.
   final ValueChanged<LatLng>? onCameraIdle;
+
+  /// Fires when the *user* moves the camera, not us.
+  ///
+  /// A screen that follows something moving needs this to know when to stop:
+  /// the customer has grabbed the map and the truck no longer gets to decide
+  /// where it looks. Our own `animateCamera` calls are filtered out — Google
+  /// reports both through the same event, and on the web it is a bounds change
+  /// with no idea who caused it.
+  final VoidCallback? onUserMove;
   final ValueChanged<gmap.GoogleMapController>? onMapCreated;
 
   @override
@@ -79,6 +89,10 @@ class _GruaMapState extends State<GruaMap> {
   final _iconCache = <MapMarkerKind, gmap.BitmapDescriptor>{};
   gmap.GoogleMapController? _controller;
   var _iconsReady = false;
+
+  /// True from the moment we ask the camera to move until it settles again.
+  /// Everything Google reports in that window is our own doing.
+  var _weAreMoving = true;
 
   var _iconsRequested = false;
 
@@ -108,13 +122,24 @@ class _GruaMapState extends State<GruaMap> {
     // Follow the subject as it moves, rather than stranding the camera where
     // the truck used to be.
     if (widget.center != oldWidget.center || oldWidget.fitTo.isNotEmpty) {
-      unawaited(
-        controller.animateCamera(
-          gmap.CameraUpdate.newLatLng(
-            gmap.LatLng(widget.center.latitude, widget.center.longitude),
-          ),
-        ),
+      unawaited(_moveTo(controller, widget.center));
+    }
+  }
+
+  /// Slides the camera, and survives the map being torn down underneath it.
+  ///
+  /// Nobody awaits this: a screen closing, or a hot restart, disposes the
+  /// platform view while the animation is still in flight, and the rejection
+  /// then has no handler and surfaces as a bare zone error next to whatever
+  /// the engine is already complaining about.
+  Future<void> _moveTo(gmap.GoogleMapController controller, LatLng to) async {
+    _weAreMoving = true;
+    try {
+      await controller.animateCamera(
+        gmap.CameraUpdate.newLatLng(gmap.LatLng(to.latitude, to.longitude)),
       );
+    } on Object {
+      // Gone mid-animation; the next change of centre moves the new one.
     }
   }
 
@@ -138,6 +163,7 @@ class _GruaMapState extends State<GruaMap> {
   Future<void> _fit(gmap.GoogleMapController controller) async {
     final camera = cameraFitting(widget.fitTo, _size);
     if (camera == null) return;
+    _weAreMoving = true;
     try {
       await controller.animateCamera(
         gmap.CameraUpdate.newLatLngZoom(
@@ -153,6 +179,10 @@ class _GruaMapState extends State<GruaMap> {
   @override
   void dispose() {
     _controller?.dispose();
+    // Dropped as well as disposed: Google delivers a last idle or two after
+    // the view is gone, and a call on a disposed controller is an error
+    // nobody is waiting for.
+    _controller = null;
     super.dispose();
   }
 
@@ -213,18 +243,23 @@ class _GruaMapState extends State<GruaMap> {
         widget.onMapCreated?.call(controller);
         if (widget.fitTo.isNotEmpty) unawaited(_fit(controller));
       },
-      onCameraIdle: widget.onCameraIdle == null
+      // Any move that starts while we are not the ones moving is the user's.
+      // Cleared on idle rather than when `animateCamera` returns: on the web
+      // that future completes before the camera has finished travelling.
+      onCameraMoveStarted: widget.onUserMove == null
           ? null
-          : () async {
-              final region = await _controller?.getVisibleRegion();
-              if (region == null) return;
-              widget.onCameraIdle!(
-                LatLng(
-                  (region.northeast.latitude + region.southwest.latitude) / 2,
-                  (region.northeast.longitude + region.southwest.longitude) / 2,
-                ),
-              );
+          : () {
+              // Google keeps reporting for a moment after the widget is gone.
+              if (!mounted || _weAreMoving) return;
+              widget.onUserMove!();
             },
+      onCameraIdle: () {
+        if (!mounted) return;
+        _weAreMoving = false;
+        final report = widget.onCameraIdle;
+        if (report == null) return;
+        unawaited(_reportCentre(report));
+      },
       markers: _iconsReady ? _markers : const {},
       polylines: _polylines,
       circles: {
@@ -261,6 +296,27 @@ class _GruaMapState extends State<GruaMap> {
           : gmap.WebGestureHandling.none,
       rotateGesturesEnabled: false,
       tiltGesturesEnabled: false,
+    );
+  }
+
+  /// The centre of what is on screen, which is the only thing the pin picker
+  /// wants and the one figure the camera position does not carry directly.
+  Future<void> _reportCentre(ValueChanged<LatLng> report) async {
+    final gmap.LatLngBounds region;
+    try {
+      final bounds = await _controller?.getVisibleRegion();
+      if (bounds == null || !mounted) return;
+      region = bounds;
+    } on Object {
+      // Asked of a controller that has just been disposed. There is no centre
+      // to report and nothing to say about it.
+      return;
+    }
+    report(
+      LatLng(
+        (region.northeast.latitude + region.southwest.latitude) / 2,
+        (region.northeast.longitude + region.southwest.longitude) / 2,
+      ),
     );
   }
 
