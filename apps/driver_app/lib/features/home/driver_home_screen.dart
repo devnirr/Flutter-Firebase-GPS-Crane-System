@@ -298,13 +298,13 @@ class _OfferStreamNotice extends ConsumerWidget {
   }
 }
 
-/// Where the chofer stands with dispatch. A status, not a control.
+/// Only what the chofer has to know about, over the map — nothing otherwise.
 ///
-/// There used to be a switch here. A chofer who opened the app and forgot to
-/// flip it sat on the roadside invisible to dispatch; one who closed the app
-/// without flipping it back stayed "En línea" on the office map with nobody
-/// holding the phone. Being in the app is now being at work, and this card
-/// only says so — or says what is stopping it.
+/// Online is the normal state now that opening the app is being at work, so
+/// "En línea · Estás recibiendo pedidos" said nothing and covered the bottom of
+/// the map to say it. This shows up only when something is wrong or owed: an
+/// account that cannot work, no grúa, a refusal from the server, cash to hand
+/// in.
 class _OnlineCard extends ConsumerWidget {
   const _OnlineCard({required this.driver});
 
@@ -312,9 +312,7 @@ class _OnlineCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final text = Theme.of(context).textTheme;
     final auto = ref.watch(autoOnlineProvider);
-    final online = driver.isOnline;
 
     // Everything that must be true before dispatch can reach this chofer.
     final blockers = <String>[
@@ -322,75 +320,36 @@ class _OnlineCard extends ConsumerWidget {
       if (driver.assignedTruckId == null) 'No tienes una grúa asignada',
     ];
 
-    final connecting = !online && blockers.isEmpty && auto.failure == null;
+    final notices = <Widget>[
+      if (blockers.isNotEmpty)
+        InlineNotice(
+          key: const Key('online-blocked'),
+          message: 'No recibirás pedidos: ${blockers.join(' · ')}',
+          tone: NoticeTone.error,
+        )
+      else if (auto.failure != null && !driver.isOnline)
+        // The server's reason. The app keeps trying on its own, so there is
+        // nothing to press.
+        InlineNotice(
+          key: const Key('online-blocked'),
+          message: 'No recibirás pedidos: ${auto.failure!.userMessage}',
+          tone: NoticeTone.error,
+        ),
+      if (driver.cashOwedCents > 0)
+        InlineNotice(
+          message: 'Efectivo por entregar: ${driver.cashOwedCents.formatDOP}',
+          icon: Icons.payments_outlined,
+        ),
+    ];
 
-    final (Color dot, String title, String subtitle) = online
-        ? (BrandColors.success, 'En línea', 'Estás recibiendo pedidos.')
-        : connecting
-            ? (BrandColors.warning, 'Conectando…', 'Te ponemos en línea.')
-            : (
-                BrandColors.grey400,
-                'Fuera de línea',
-                'No recibirás pedidos.',
-              );
+    if (notices.isEmpty) return const SizedBox.shrink();
 
     return FloatingCard(
       child: Column(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: Insets.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      key: const Key('online-status'),
-                      style: text.titleMedium,
-                    ),
-                    Text(
-                      subtitle,
-                      style: text.bodySmall?.copyWith(
-                        color: BrandColors.grey600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (connecting || auto.connecting)
-                const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2.2),
-                ),
-            ],
-          ),
-          if (blockers.isNotEmpty) ...[
-            const SizedBox(height: Insets.md),
-            InlineNotice(message: blockers.join(' · '), tone: NoticeTone.error),
-          ] else if (auto.failure != null && !online) ...[
-            // The server's reason, and the app keeps trying on its own — the
-            // chofer has nothing to press.
-            const SizedBox(height: Insets.md),
-            InlineNotice(
-              message: auto.failure!.userMessage,
-              tone: NoticeTone.error,
-            ),
-          ],
-          if (driver.cashOwedCents > 0) ...[
-            const SizedBox(height: Insets.md),
-            InlineNotice(
-              message:
-                  'Efectivo por entregar: '
-                  '${driver.cashOwedCents.formatDOP}',
-              icon: Icons.payments_outlined,
-            ),
+          for (var i = 0; i < notices.length; i++) ...[
+            if (i > 0) const SizedBox(height: Insets.md),
+            notices[i],
           ],
         ],
       ),

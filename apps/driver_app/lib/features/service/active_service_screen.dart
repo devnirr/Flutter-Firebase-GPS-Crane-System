@@ -385,6 +385,10 @@ class _ClientCard extends ConsumerWidget {
                 child: const Icon(Icons.chat_bubble_outline, size: 20),
               ),
             ),
+          // Room between the two, so a thumb aiming for one at the roadside
+          // does not land on the other.
+          if (service.canChat && service.canCall)
+            const SizedBox(width: Insets.sm),
           if (service.canCall)
             IconButton.filledTonal(
               onPressed: () => ScaffoldMessenger.of(context).showSnackBar(

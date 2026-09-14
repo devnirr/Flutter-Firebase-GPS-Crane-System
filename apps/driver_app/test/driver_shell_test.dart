@@ -86,25 +86,23 @@ Future<void> main() async {
     for (final label in ['Inicio', 'Pedidos', 'Chat', 'Perfil']) {
       expect(tab(label), findsOneWidget, reason: label);
     }
-    // Inicio: the map and the switch, nothing else.
+    // Inicio: the map, nothing else.
     expect(find.byType(DriverMap), findsOneWidget);
     // The chofer's photo in the header, the mark large under it.
     expect(find.byType(DriverAvatar), findsOneWidget);
     expect(tester.widget<GruaLogo>(find.byType(GruaLogo)).size, 120);
-    expect(find.textContaining('línea'), findsWidgets);
+    // No "En línea" card: online is the normal state and says nothing.
+    expect(find.textContaining('línea'), findsNothing);
     expect(find.text('PEDIDOS DISPONIBLES'), findsNothing);
 
     // Laid out, not just present: the map runs from the top of the screen to
-    // the bar, and the online status sits at the bottom of it, over the map.
+    // the bar, with nothing covering the bottom of it.
     final barTop = tester.getTopLeft(find.byType(NavigationBar)).dy;
     final map = tester.getRect(find.byType(DriverMap));
     expect(map.top, 0);
     expect(map.bottom, barTop);
-    // No switch: being in the app is being online.
     expect(find.byType(Switch), findsNothing);
-    final switchCard = tester.getRect(find.byKey(const Key('online-status')));
-    expect(switchCard.bottom, greaterThan(barTop - 120));
-    expect(switchCard.top, greaterThan(map.center.dy));
+    expect(find.byKey(const Key('online-blocked')), findsNothing);
 
     await openTab(tester, 'Pedidos');
     expect(find.text('Mis pedidos'), findsOneWidget);

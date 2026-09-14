@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:driver_app/app.dart';
+import 'package:driver_app/features/home/driver_map.dart';
 import 'package:driver_app/features/home/location_publisher.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -161,8 +162,7 @@ Future<void> main() async {
     expect(backend.allDrivers.length, before);
   });
 
-  testWidgets('signing in reaches the home screen with the online status',
-      (tester) async {
+  testWidgets('signing in reaches the home screen', (tester) async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();
 
@@ -176,7 +176,7 @@ Future<void> main() async {
     await tester.tap(find.text('ENTRAR'));
     await tester.pumpAndSettle(const Duration(seconds: 1));
 
-    expect(find.textContaining('línea'), findsWidgets);
+    expect(find.byType(DriverMap), findsOneWidget);
 
     // The open work has its own tab now.
     await tester.tap(
@@ -252,10 +252,11 @@ Future<void> main() async {
     await tester.tap(find.text('ENTRAR'));
     await tester.pumpAndSettle(const Duration(seconds: 1));
 
-    // Online by itself, with nothing to press.
+    // Online by itself, with nothing to press — and nothing on screen saying
+    // so, since it is the normal state.
     expect(backend.driver('driver-1')!.isOnline, isTrue);
-    expect(find.text('En línea'), findsOneWidget);
     expect(find.byType(Switch), findsNothing);
+    expect(find.text('En línea'), findsNothing);
 
     // The app closes: the whole widget tree goes, and with it the presence
     // connection — which is all the server has to go on.
@@ -286,8 +287,9 @@ Future<void> main() async {
     await tester.tap(find.text('ENTRAR'));
     await tester.pumpAndSettle(const Duration(seconds: 1));
 
+    // The one case the home screen speaks up: offline, and why.
     expect(backend.driver('driver-1')!.isOnline, isFalse);
-    expect(find.text('Fuera de línea'), findsOneWidget);
+    expect(find.byKey(const Key('online-blocked')), findsOneWidget);
     expect(find.textContaining('No tienes una grúa asignada'), findsOneWidget);
   });
 
