@@ -30,3 +30,20 @@ export const quoteSigningSecret = defineSecret('QUOTE_SIGNING_SECRET');
  *     firebase functions:secrets:set MAPS_API_KEY
  */
 export const mapsApiKey = defineSecret('MAPS_API_KEY');
+
+/**
+ * LiveKit, for voice calls between a customer and their chofer.
+ *
+ * The key and secret mint room tokens and must never leave the server. The
+ * URL is not secret — it is the `wss://…livekit.cloud` address both apps
+ * connect to — but living next to its key means one place to set a project.
+ *
+ *     firebase functions:secrets:set LIVEKIT_URL
+ *     firebase functions:secrets:set LIVEKIT_API_KEY
+ *     firebase functions:secrets:set LIVEKIT_API_SECRET
+ *
+ * Unset, calls are refused with a message pointing to the chat.
+ */
+export const livekitUrl = defineSecret('LIVEKIT_URL');
+export const livekitApiKey = defineSecret('LIVEKIT_API_KEY');
+export const livekitApiSecret = defineSecret('LIVEKIT_API_SECRET');

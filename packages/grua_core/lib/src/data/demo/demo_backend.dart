@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import '../../calls/voice_call.dart';
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
@@ -1098,6 +1099,130 @@ class DemoBackend {
     return const Result.ok(null);
   }
 
+  // -------------------------------------------------------------------------
+  // Voice calls — mirrors functions/src/callables/calls.ts
+  // -------------------------------------------------------------------------
+
+  final Map<String, VoiceCall> _calls = {};
+  final _callsController = StreamController<void>.broadcast();
+  var _callCounter = 0;
+
+  List<VoiceCall> get allCalls => List.unmodifiable(_calls.values);
+
+  VoiceCall? call(String id) => _calls[id];
+
+  Stream<VoiceCall?> incomingCallFor(String uid) async* {
+    VoiceCall? ringing() => _calls.values
+        .where((c) => c.calleeId == uid && c.state == CallState.ringing)
+        .fold<VoiceCall?>(null, (latest, c) => latest ?? c);
+    yield ringing();
+    yield* _callsController.stream.map((_) => ringing());
+  }
+
+  Stream<VoiceCall?> callUpdates(String id) async* {
+    yield _calls[id];
+    yield* _callsController.stream.map((_) => _calls[id]);
+  }
+
+  void _emitCalls() => _callsController.add(null);
+
+  /// Rings the other party on a service. Refused the same ways the callable is.
+  Result<CallJoin> startCall(String serviceId, String callerId) {
+    final service = _services[serviceId];
+    if (service == null) {
+      return const Err(Failure(FailureCode.notFound));
+    }
+    final isClient = callerId == service.clientId;
+    if (!isClient && callerId != service.driverId) {
+      return const Err(Failure(FailureCode.permissionDenied));
+    }
+    if (!service.canCall) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Solo puedes llamar mientras el servicio está en curso.',
+        ),
+      );
+    }
+    final busy = _calls.values.any(
+      (c) =>
+          c.serviceId == serviceId &&
+          (c.state == CallState.ringing || c.state == CallState.accepted),
+    );
+    if (busy) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Ya hay una llamada en curso.',
+        ),
+      );
+    }
+
+    final id = 'call-${++_callCounter}';
+    final clientName = service.clientName.isEmpty ? 'Cliente' : service.clientName;
+    final driverName = service.driverName.isEmpty ? 'Chofer' : service.driverName;
+    _calls[id] = VoiceCall(
+      id: id,
+      serviceId: serviceId,
+      state: CallState.ringing,
+      callerId: callerId,
+      callerName: isClient ? clientName : driverName,
+      calleeId: isClient ? service.driverId! : service.clientId,
+      calleeName: isClient ? driverName : clientName,
+      createdAt: _now(),
+    );
+    _emitCalls();
+    return Ok(
+      CallJoin(
+        callId: id,
+        peerName: isClient ? driverName : clientName,
+        url: '',
+        token: '',
+      ),
+    );
+  }
+
+  Result<CallJoin> answerCall(String callId, String uid) {
+    final call = _calls[callId];
+    if (call == null) return const Err(Failure(FailureCode.notFound));
+    if (uid != call.calleeId) {
+      return const Err(
+        Failure(FailureCode.permissionDenied, message: 'Esta llamada no es para ti.'),
+      );
+    }
+    if (call.state != CallState.ringing) {
+      return const Err(
+        Failure(FailureCode.invalidTransition, message: 'La llamada ya terminó.'),
+      );
+    }
+    _calls[callId] = call.copyWith(state: CallState.accepted, answeredAt: _now());
+    _emitCalls();
+    return Ok(
+      CallJoin(callId: callId, peerName: call.callerName, url: '', token: ''),
+    );
+  }
+
+  Result<void> endCall(String callId, String uid, EndCallReason reason) {
+    final call = _calls[callId];
+    if (call == null) return const Err(Failure(FailureCode.notFound));
+    if (uid != call.callerId && uid != call.calleeId) {
+      return const Err(Failure(FailureCode.permissionDenied));
+    }
+    // Idempotent, like the callable.
+    if (call.state.isOver) return const Ok(null);
+
+    final next = call.state == CallState.accepted
+        ? CallState.ended
+        : uid == call.calleeId
+            ? CallState.declined
+            : reason == EndCallReason.missed
+                ? CallState.missed
+                : CallState.cancelled;
+    _calls[callId] = call.copyWith(state: next);
+    _emitCalls();
+    return const Ok(null);
+  }
+
   Result<void> closeChatRequest(String id, String callerId) {
     final request = _chatRequests[id];
     final byClient = request?.clientId == callerId;
@@ -1685,6 +1810,7 @@ class DemoBackend {
   void _emitUsers() => _usersController.add(Map.unmodifiable(_users));
 
   void dispose() {
+    unawaited(_callsController.close());
     for (final timer in _timers) {
       timer.cancel();
     }

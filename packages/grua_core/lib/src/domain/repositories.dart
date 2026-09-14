@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../calls/voice_call.dart';
 import 'enums.dart';
 import 'failures.dart';
 import 'models/app_user.dart';
@@ -708,6 +709,19 @@ abstract interface class FunctionsGateway {
   /// Ends a chat request from either side: withdrawn or refused while it
   /// waits, closed once open.
   Future<Result<void>> closeChatRequest(String requestId);
+
+  /// Rings the other party on [serviceId] and joins the caller to the call.
+  ///
+  /// Refused outside the window where the two are in contact, and when a call
+  /// on the service is already ringing or in progress.
+  Future<Result<CallJoin>> startCall(String serviceId);
+
+  /// Answers a call ringing for the current user and joins them to it.
+  Future<Result<CallJoin>> answerCall(String callId);
+
+  /// Hangs up, declines, cancels, or gives up on a call that rang out.
+  /// Harmless on a call that has already ended.
+  Future<Result<void>> endCall(String callId, EndCallReason reason);
 
   Future<Result<QuoteResult>> quoteService({
     required ServiceLocation pickup,

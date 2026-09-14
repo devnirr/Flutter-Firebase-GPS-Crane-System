@@ -38,7 +38,9 @@ class ClientApp extends ConsumerWidget {
           context,
           MediaQuery(
             data: MediaQuery.of(context).copyWith(textScaler: scale),
-            child: child ?? const SizedBox.shrink(),
+            // Above the navigator, so a call rings on whatever screen is open
+            // and carries on when the person moves between screens.
+            child: CallLayer(child: child ?? const SizedBox.shrink()),
           ),
         );
       },

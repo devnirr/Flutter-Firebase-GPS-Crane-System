@@ -6,6 +6,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../../calls/voice_call.dart';
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
@@ -446,6 +447,19 @@ class DemoOfferRepository implements OfferRepository {
       Stream.value(null);
 }
 
+class DemoCallRepository implements CallRepository {
+  DemoCallRepository(this._backend);
+
+  final DemoBackend _backend;
+
+  @override
+  Stream<VoiceCall?> watchIncomingCall(String uid) =>
+      _backend.incomingCallFor(uid);
+
+  @override
+  Stream<VoiceCall?> watchCall(String callId) => _backend.callUpdates(callId);
+}
+
 class DemoChatRepository implements ChatRepository {
   DemoChatRepository(this._backend);
 
@@ -831,6 +845,22 @@ class DemoFunctionsGateway implements FunctionsGateway {
   Future<Result<void>> closeChatRequest(String requestId) async => _delayed(
         _backend.closeChatRequest(requestId, _backend.currentUserId),
       );
+
+  // Demo calls ring and connect on the in-memory backend, with no audio: the
+  // join carries no server to connect to, and the call screen treats that as
+  // a silent line.
+
+  @override
+  Future<Result<CallJoin>> startCall(String serviceId) async =>
+      _delayed(_backend.startCall(serviceId, _backend.currentUserId));
+
+  @override
+  Future<Result<CallJoin>> answerCall(String callId) async =>
+      _delayed(_backend.answerCall(callId, _backend.currentUserId));
+
+  @override
+  Future<Result<void>> endCall(String callId, EndCallReason reason) async =>
+      _delayed(_backend.endCall(callId, _backend.currentUserId, reason));
 
   @override
   Future<Result<QuoteResult>> quoteService({

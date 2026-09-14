@@ -182,7 +182,6 @@ class _TopBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final config = ref.watch(appConfigProvider);
     final services = ref.watch(activeServicesProvider).value ?? const [];
     final text = Theme.of(context).textTheme;
 
@@ -229,22 +228,6 @@ class _TopBar extends ConsumerWidget {
             ),
           ),
           const Spacer(),
-          if (!config.flavor.isProduction)
-            Container(
-              margin: const EdgeInsets.only(right: Insets.lg),
-              padding: const EdgeInsets.symmetric(
-                horizontal: Insets.sm,
-                vertical: 3,
-              ),
-              decoration: const BoxDecoration(
-                color: BrandColors.warningTint,
-                borderRadius: Corners.brXs,
-              ),
-              child: Text(
-                config.flavor.wire.toUpperCase(),
-                style: text.labelSmall?.copyWith(color: BrandColors.warning),
-              ),
-            ),
           Badge(
             isLabelVisible: needsManual > 0,
             label: Text('$needsManual'),

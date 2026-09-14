@@ -39,6 +39,7 @@ export {
   respondChatRequest,
   closeChatRequest,
 } from './callables/chatRequests.js';
+export { answerCall, endCall, startCall } from './callables/calls.js';
 export { ensureProfile } from './callables/profile.js';
 export { rateService, publishEta } from './callables/feedback.js';
 export {

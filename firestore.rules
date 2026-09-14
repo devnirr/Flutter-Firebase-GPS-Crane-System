@@ -283,6 +283,19 @@ service cloud.firestore {
     // Created and answered only through the requestChat / respondChatRequest
     // callables, which open the sealed truck ref; the two parties can read it.
     // Queries must filter on the caller's own clientId or driverId.
+    // ---------------------------------------------------------------------
+    // calls — voice calls between a customer and their chofer
+    // ---------------------------------------------------------------------
+
+    // Readable by the two people on the call, so each app can watch it ring,
+    // connect and end. Every write is the server's: who may call, and what
+    // state a call is in, are not a phone's to decide.
+    match /calls/{callId} {
+      allow read: if isStaff() ||
+        (ok() && (resource.data.callerId == uid() || resource.data.calleeId == uid()));
+      allow write: if false;
+    }
+
     match /chatRequests/{requestId} {
       allow read: if isStaff() ||
         (ok() && (resource.data.clientId == uid() || resource.data.driverId == uid()));

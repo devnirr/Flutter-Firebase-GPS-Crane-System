@@ -50,6 +50,7 @@ export const Collections = {
   audit: 'audit',
   webhookEvents: 'webhook_events',
   chatRequests: 'chatRequests',
+  calls: 'calls',
 } as const;
 
 export const Sub = {
@@ -98,6 +99,8 @@ export const Paths = {
 
   chatRequests: () => db.collection(Collections.chatRequests),
   chatRequest: (id: string) => db.collection(Collections.chatRequests).doc(id),
+  calls: () => db.collection(Collections.calls),
+  call: (id: string) => db.collection(Collections.calls).doc(id),
   chatRequestMessages: (id: string) =>
     db.collection(Collections.chatRequests).doc(id).collection(Sub.messages),
 

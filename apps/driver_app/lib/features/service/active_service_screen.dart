@@ -389,13 +389,36 @@ class _ClientCard extends ConsumerWidget {
           // does not land on the other.
           if (service.canChat && service.canCall)
             const SizedBox(width: Insets.sm),
-          if (service.canCall)
+          if (service.canCall) ...[
             IconButton.filledTonal(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Llamando a ${service.clientPhone}…')),
+              key: const Key('client-call'),
+              tooltip: 'Llamar al cliente',
+              // An in-app voice call: rings the customer's app, and works in
+              // a browser as well as on a phone.
+              onPressed: () => unawaited(
+                ref.read(callControllerProvider.notifier).call(
+                      serviceId: service.id,
+                      peerName: service.clientName,
+                    ),
               ),
               icon: const Icon(Icons.call, size: 20),
             ),
+            const SizedBox(width: Insets.sm),
+            IconButton.filledTonal(
+              key: const Key('client-video-call'),
+              tooltip: 'Videollamada',
+              // Same as the chat header: there is no video service behind
+              // this yet, so say so rather than pretend.
+              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Las videollamadas todavía no están disponibles.',
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.videocam_outlined, size: 20),
+            ),
+          ],
         ],
       ),
     );

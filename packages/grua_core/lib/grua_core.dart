@@ -9,6 +9,10 @@ library;
 // Configuration and startup
 export 'src/bootstrap.dart';
 // Chat — the screens both the customer and the chofer app show as-is
+export 'src/calls/call_controller.dart';
+export 'src/calls/call_layer.dart';
+export 'src/calls/voice_call.dart';
+export 'src/calls/voice_transport.dart';
 export 'src/chat/request_chat_screen.dart';
 export 'src/chat/service_chat_screen.dart';
 export 'src/config/app_config.dart';

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -519,10 +521,30 @@ class _Actions extends ConsumerWidget {
           child: _ActionButton(
             icon: Icons.call_outlined,
             label: 'Llamar',
+            // An in-app voice call to the chofer's app.
+            onTap: canContact
+                ? () => unawaited(
+                      ref.read(callControllerProvider.notifier).call(
+                            serviceId: service.id,
+                            peerName: service.driverName,
+                          ),
+                    )
+                : null,
+          ),
+        ),
+        const SizedBox(width: Insets.md),
+        Expanded(
+          child: _ActionButton(
+            icon: Icons.videocam_outlined,
+            label: 'Video',
+            // Same as the chat header: there is no video service behind this
+            // yet, so say so rather than pretend.
             onTap: canContact
                 ? () => ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Llamando a ${service.driverPhone}…'),
+                      const SnackBar(
+                        content: Text(
+                          'Las videollamadas todavía no están disponibles.',
+                        ),
                       ),
                     )
                 : null,

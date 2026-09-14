@@ -7,6 +7,7 @@ import 'package:firebase_database/firebase_database.dart' hide Query;
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../calls/voice_call.dart';
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/app_user.dart';
@@ -747,6 +748,40 @@ class FirestoreOfferRepository implements OfferRepository {
       .offer(serviceId, driverId)
       .snapshots()
       .map((snap) => snap.data())
+      .guarded();
+}
+
+class FirestoreCallRepository implements CallRepository {
+  const FirestoreCallRepository();
+
+  static CollectionReference<Map<String, dynamic>> get _calls =>
+      FirebaseFirestore.instance.collection('calls');
+
+  @override
+  Stream<VoiceCall?> watchIncomingCall(String uid) => _calls
+      .where('calleeId', isEqualTo: uid)
+      .where('state', isEqualTo: CallState.ringing.wire)
+      .limit(5)
+      .snapshots()
+      .map((snap) {
+        final calls = snap.docs
+            .map((d) => VoiceCall.fromJson(d.id, d.data()))
+            // A caller who vanished mid-ring leaves the document ringing until
+            // the server hears otherwise; nobody is on the other end of it.
+            .where((c) => !c.isStale(DateTime.now().toUtc()))
+            .toList();
+        return calls.isEmpty ? null : calls.first;
+      })
+      .guarded();
+
+  @override
+  Stream<VoiceCall?> watchCall(String callId) => _calls
+      .doc(callId)
+      .snapshots()
+      .map((snap) {
+        final data = snap.data();
+        return data == null ? null : VoiceCall.fromJson(snap.id, data);
+      })
       .guarded();
 }
 

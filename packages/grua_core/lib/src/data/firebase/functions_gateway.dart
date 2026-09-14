@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:cloud_functions/cloud_functions.dart' hide Result;
 import 'package:flutter/foundation.dart';
 
+import '../../calls/voice_call.dart';
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
 import '../../domain/models/service.dart';
@@ -203,6 +204,25 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   @override
   Future<Result<void>> closeChatRequest(String requestId) =>
       _callVoid('closeChatRequest', {'requestId': requestId});
+
+  static CallJoin _join(Map<String, dynamic> data) => CallJoin(
+        callId: data['callId'] as String? ?? '',
+        peerName: data['peerName'] as String? ?? '',
+        url: data['url'] as String? ?? '',
+        token: data['token'] as String? ?? '',
+      );
+
+  @override
+  Future<Result<CallJoin>> startCall(String serviceId) =>
+      _call('startCall', {'serviceId': serviceId}, _join);
+
+  @override
+  Future<Result<CallJoin>> answerCall(String callId) =>
+      _call('answerCall', {'callId': callId}, _join);
+
+  @override
+  Future<Result<void>> endCall(String callId, EndCallReason reason) =>
+      _callVoid('endCall', {'callId': callId, 'reason': reason.wire});
 
   @override
   Future<Result<QuoteResult>> quoteService({

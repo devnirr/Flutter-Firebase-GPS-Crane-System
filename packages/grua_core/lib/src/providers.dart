@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart'
     show FutureProviderFamily, Override, ProviderFamily, StreamProviderFamily;
 
+import 'calls/voice_call.dart';
 import 'config/app_config.dart';
 import 'config/maps_script.dart';
 import 'data/demo/demo_backend.dart';
@@ -70,6 +71,10 @@ final serviceRepositoryProvider = Provider<ServiceRepository>(
       throw UnimplementedError('serviceRepositoryProvider must be overridden'),
 );
 
+final callRepositoryProvider = Provider<CallRepository>(
+  (ref) => throw UnimplementedError('callRepositoryProvider must be overridden'),
+);
+
 final offerRepositoryProvider = Provider<OfferRepository>(
   (ref) => throw UnimplementedError('offerRepositoryProvider must be overridden'),
 );
@@ -134,6 +139,7 @@ List<Override> demoOverrides({
     truckRepositoryProvider.overrideWithValue(DemoTruckRepository(instance)),
     serviceRepositoryProvider.overrideWithValue(DemoServiceRepository(instance)),
     offerRepositoryProvider.overrideWithValue(const DemoOfferRepository()),
+    callRepositoryProvider.overrideWithValue(DemoCallRepository(instance)),
     chatRepositoryProvider.overrideWithValue(DemoChatRepository(instance)),
     chatRequestRepositoryProvider
         .overrideWithValue(DemoChatRequestRepository(instance)),
