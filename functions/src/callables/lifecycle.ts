@@ -74,7 +74,12 @@ function assertAssigned(service: FirebaseFirestore.DocumentData, driverId: strin
 // ---------------------------------------------------------------------------
 
 /**
- * The "En línea" switch.
+ * Online and offline for a chofer.
+ *
+ * No longer a switch the chofer flips: the app calls this with `online: true`
+ * by itself whenever it is open and the chofer is not, and asks for offline on
+ * sign-out. Closing the app is handled server-side by `followAppPresence`,
+ * because a force-quit phone runs no code to call this.
  *
  * A server call because `drivers/{uid}` is server-written, and `isOnline` there
  * is what the app shows and what starts the phone publishing its position. The

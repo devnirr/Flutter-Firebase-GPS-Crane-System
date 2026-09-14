@@ -123,6 +123,8 @@ export const Paths = {
 
   live: (driverId: string) => rtdb().ref(`live/${driverId}`),
   liveRoot: () => rtdb().ref('live'),
+  /** Whether the chofer's app is open; written by the app, cleared by onDisconnect. */
+  presence: (driverId: string) => rtdb().ref(`presence/${driverId}`),
 } as const;
 
 /** Storage object paths. Storage is addressed by string, not by reference. */

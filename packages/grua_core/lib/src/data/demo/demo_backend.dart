@@ -503,6 +503,15 @@ class DemoBackend {
   void setAppOpen(String driverId, {required bool open}) {
     final changed = open ? _appOpen.add(driverId) : _appOpen.remove(driverId);
     if (changed) _appOpenController.add(Set.unmodifiable(_appOpen));
+
+    // Mirrors `followAppPresence`: closing the app takes the chofer offline,
+    // unless they are holding a job the customer is watching.
+    if (!open && changed) {
+      final driver = _drivers[driverId];
+      if (driver != null && driver.isOnline && !driver.isBusy) {
+        setDriverOnline(driverId, online: false);
+      }
+    }
   }
 
   Stream<List<ChatMessage>> messagesFor(String serviceId) async* {

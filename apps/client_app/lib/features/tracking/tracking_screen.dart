@@ -212,10 +212,23 @@ class _MapCardState extends ConsumerState<_MapCard> {
               // Red is the leg the truck is driving now; the tow ahead of it
               // sits behind in dark dashes, the way the chofer's map draws the
               // same two.
-              route: toPickup?.points ?? [service.pickup.geo, ?dropoff],
+              // Nothing until there is a truck. The fallback used to be the
+              // pickup and the destination, which drew a straight red copy of
+              // the tow right over the real one while the customer was still
+              // waiting for a chofer.
+              route: truckAt == null
+                  ? const []
+                  : toPickup?.points ?? [truckAt, service.pickup.geo],
               routes: [
                 if (tow != null)
-                  MapRoute(points: tow, color: BrandColors.ink, dashed: true),
+                  MapRoute(points: tow, color: BrandColors.ink, dashed: true)
+                // Only while the road is still being fetched.
+                else if (dropoff != null)
+                  MapRoute(
+                    points: [service.pickup.geo, dropoff],
+                    color: BrandColors.ink,
+                    dashed: true,
+                  ),
               ],
               markers: [
                 MapMarker(

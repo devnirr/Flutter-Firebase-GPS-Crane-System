@@ -3,6 +3,7 @@ import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/fire
 import { logger } from 'firebase-functions/v2';
 
 import { needsDriverPhoto } from '../lib/chatRequests.js';
+import { followPresence } from '../lib/presence.js';
 
 import {
   DriverLiveState,
@@ -25,6 +26,34 @@ import { region } from '../callables/region.js';
  * twice), and chat notifications (so a message lands instantly and the push
  * follows).
  */
+
+/**
+ * Takes a chofer offline when their app closes.
+ *
+ * The app goes online by itself when it opens; this is the other half. A phone
+ * cannot be trusted to say goodbye — a force-quit, a dead battery or a closed
+ * browser tab runs no code at all — so the signal is the one the database
+ * produces on its own: the `onDisconnect` the app queued on `/presence/{uid}`
+ * fires when the connection closes, and flips `connected` to false.
+ *
+ * Two things it deliberately does not do:
+ *
+ * - **Act on a stale event.** A dropped signal and a reconnect a few seconds
+ *   later arrive as two writes, and this trigger can run after the second. The
+ *   node is read again, and if the app is back the chofer is left alone.
+ * - **Take a chofer offline mid-tow.** The customer is watching that truck, and
+ *   the `setOnline` callable refuses the same thing for the same reason. If the
+ *   phone has really gone, `reapStaleDrivers` notices the silent position and
+ *   tells the office.
+ */
+export const followAppPresence = onValueWritten(
+  { ref: '/presence/{driverId}', region: 'us-central1' },
+  async (event) => {
+    const after = event.data.after.val() as { connected?: boolean } | null;
+    if (after?.connected !== false) return;
+    await followPresence(event.params['driverId'] as string);
+  },
+);
 
 /**
  * Mirrors the assigned chofer's position into `tracking/{serviceId}`.

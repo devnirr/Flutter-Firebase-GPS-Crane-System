@@ -11,7 +11,11 @@ class DriverApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final config = ref.watch(appConfigProvider);
-    ref.watch(appPresenceProvider);
+    ref
+      ..watch(appPresenceProvider)
+      // At the root, like presence: online is about the app being open, not
+      // about which screen is showing.
+      ..watch(autoOnlineProvider);
 
     return MaterialApp.router(
       title: '${config.flavor.appName} · Chofer',

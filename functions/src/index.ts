@@ -72,6 +72,7 @@ export { createTruck, updateTruck, archiveTruck } from './callables/trucks.js';
 // ---------------------------------------------------------------------------
 
 export {
+  followAppPresence,
   mirrorLivePosition,
   recordEarnings,
   notifyOnMessage,

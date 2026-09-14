@@ -92,6 +92,21 @@ Future<void> main() async {
     await stopTheClock(tester);
   });
 
+  testWidgets('while searching, only the tow is drawn — no straight copy', (
+    tester,
+  ) async {
+    // The bug: the red leg is the truck's way to the pickup, and with no truck
+    // yet it fell back to pickup → destination. That drew a straight red line
+    // right over the tow the map was already drawing along the road.
+    final map = await pumpTracking(tester);
+
+    expect(map.route, isEmpty, reason: 'no truck, so no leg to the pickup');
+    expect(map.routes, hasLength(1));
+    expect(map.routes.single.color, BrandColors.ink);
+
+    await stopTheClock(tester);
+  });
+
   testWidgets('a move by the customer stops the camera chasing the truck', (
     tester,
   ) async {

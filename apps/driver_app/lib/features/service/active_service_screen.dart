@@ -276,8 +276,10 @@ class _ServiceMap extends ConsumerWidget {
                   MapRoute(points: tow, color: BrandColors.ink, dashed: true),
                 if (toNext != null)
                   MapRoute(points: toNext.points, dashed: toNext.isApproximate),
-                // Without a position yet, the plain trip still reads.
-                if (me == null && dropoff != null)
+                // Without a position yet, the plain trip still reads — but
+                // only when the road is not already drawn, or it is a straight
+                // copy laid over it.
+                if (me == null && tow == null && dropoff != null)
                   MapRoute(points: [pickup, dropoff], color: BrandColors.ink, dashed: true),
               ],
               // Red for you, blue for the customer, black for the destination.

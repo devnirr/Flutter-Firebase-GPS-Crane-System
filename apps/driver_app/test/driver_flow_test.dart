@@ -161,7 +161,7 @@ Future<void> main() async {
     expect(backend.allDrivers.length, before);
   });
 
-  testWidgets('signing in reaches the home screen with the online switch',
+  testWidgets('signing in reaches the home screen with the online status',
       (tester) async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();
@@ -228,6 +228,97 @@ Future<void> main() async {
 
     expect(find.text('ENTRAR'), findsOneWidget);
     expect(backend.isAppOpen('driver-1'), isFalse);
+  });
+
+  testWidgets('opening the app puts the chofer online, and closing it takes '
+      'them off', (tester) async {
+    // The bug: a switch. A chofer who opened the app and forgot to flip it
+    // sat on the roadside invisible to dispatch; one who closed the app
+    // without flipping it back stayed "En línea" on the office map with
+    // nobody holding the phone.
+    final backend = DemoBackend()
+      ..seed()
+      ..setDriverOnline('driver-1', online: false);
+    expect(backend.driver('driver-1')!.canGoOnline, isTrue);
+
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextFormField).first,
+      'driver1@gruasrd.do',
+    );
+    await tester.enterText(find.byType(TextFormField).last, 'secret123');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ENTRAR'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    // Online by itself, with nothing to press.
+    expect(backend.driver('driver-1')!.isOnline, isTrue);
+    expect(find.text('En línea'), findsOneWidget);
+    expect(find.byType(Switch), findsNothing);
+
+    // The app closes: the whole widget tree goes, and with it the presence
+    // connection — which is all the server has to go on.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+
+    expect(backend.isAppOpen('driver-1'), isFalse);
+    expect(backend.driver('driver-1')!.isOnline, isFalse);
+  });
+
+  testWidgets('a chofer with no grúa is told why instead of going online',
+      (tester) async {
+    final backend = DemoBackend()..seed();
+    final driver = backend.driver('driver-1')!;
+    // The office takes the grúa away: the chofer keeps the account and the
+    // app, and has nothing to go online with.
+    expect(backend.archiveTruck(driver.assignedTruckId!), isNull);
+    expect(backend.driver('driver-1')!.canGoOnline, isFalse);
+
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextFormField).first,
+      'driver1@gruasrd.do',
+    );
+    await tester.enterText(find.byType(TextFormField).last, 'secret123');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ENTRAR'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(backend.driver('driver-1')!.isOnline, isFalse);
+    expect(find.text('Fuera de línea'), findsOneWidget);
+    expect(find.textContaining('No tienes una grúa asignada'), findsOneWidget);
+  });
+
+  test('closing the app mid-tow leaves the chofer online', () async {
+    // The customer is watching that truck; losing the app for a moment must
+    // not make it vanish from their map. If the phone is really gone, the
+    // stale-position sweep tells the office.
+    final backend = DemoBackend(dispatchDelay: const Duration(milliseconds: 20))
+      ..seed()
+      ..setAppOpen('driver-1', open: true);
+    final driver = backend.driver('driver-1')!;
+    expect(driver.isOnline, isTrue);
+
+    backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(geo: LatLng(18.4795, -69.9420)),
+      dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
+      vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
+      truckType: driver.truckType,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 8000),
+      preferredDriverId: 'driver-1',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(backend.driver('driver-1')!.isBusy, isTrue);
+
+    backend.setAppOpen('driver-1', open: false);
+
+    expect(backend.driver('driver-1')!.isOnline, isTrue);
+    backend.dispose();
   });
 
   test('a chofer cannot go offline while holding a job', () async {

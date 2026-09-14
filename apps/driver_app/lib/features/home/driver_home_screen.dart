@@ -298,38 +298,22 @@ class _OfferStreamNotice extends ConsumerWidget {
   }
 }
 
-class _OnlineCard extends ConsumerStatefulWidget {
+/// Where the chofer stands with dispatch. A status, not a control.
+///
+/// There used to be a switch here. A chofer who opened the app and forgot to
+/// flip it sat on the roadside invisible to dispatch; one who closed the app
+/// without flipping it back stayed "En línea" on the office map with nobody
+/// holding the phone. Being in the app is now being at work, and this card
+/// only says so — or says what is stopping it.
+class _OnlineCard extends ConsumerWidget {
   const _OnlineCard({required this.driver});
 
   final Driver driver;
 
   @override
-  ConsumerState<_OnlineCard> createState() => _OnlineCardState();
-}
-
-class _OnlineCardState extends ConsumerState<_OnlineCard> {
-  var _busy = false;
-
-  Future<void> _toggle(bool value) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-
-    final result = await ref
-        .read(functionsGatewayProvider)
-        .setOnline(online: value);
-    if (!mounted) return;
-    setState(() => _busy = false);
-
-    if (result case Err(:final failure)) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(failure.userMessage)));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final driver = widget.driver;
+  Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final auto = ref.watch(autoOnlineProvider);
     final online = driver.isOnline;
 
     // Everything that must be true before dispatch can reach this chofer.
@@ -337,6 +321,18 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
       if (!driver.status.canWork) 'Tu cuenta no está activa',
       if (driver.assignedTruckId == null) 'No tienes una grúa asignada',
     ];
+
+    final connecting = !online && blockers.isEmpty && auto.failure == null;
+
+    final (Color dot, String title, String subtitle) = online
+        ? (BrandColors.success, 'En línea', 'Estás recibiendo pedidos.')
+        : connecting
+            ? (BrandColors.warning, 'Conectando…', 'Te ponemos en línea.')
+            : (
+                BrandColors.grey400,
+                'Fuera de línea',
+                'No recibirás pedidos.',
+              );
 
     return FloatingCard(
       child: Column(
@@ -346,10 +342,7 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
               Container(
                 width: 12,
                 height: 12,
-                decoration: BoxDecoration(
-                  color: online ? BrandColors.success : BrandColors.grey400,
-                  shape: BoxShape.circle,
-                ),
+                decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
               ),
               const SizedBox(width: Insets.md),
               Expanded(
@@ -357,13 +350,12 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      online ? 'En línea' : 'Fuera de línea',
+                      title,
+                      key: const Key('online-status'),
                       style: text.titleMedium,
                     ),
                     Text(
-                      online
-                          ? 'Estás recibiendo pedidos.'
-                          : 'No recibirás pedidos.',
+                      subtitle,
                       style: text.bodySmall?.copyWith(
                         color: BrandColors.grey600,
                       ),
@@ -371,22 +363,25 @@ class _OnlineCardState extends ConsumerState<_OnlineCard> {
                   ],
                 ),
               ),
-              if (_busy)
+              if (connecting || auto.connecting)
                 const SizedBox(
                   width: 20,
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2.2),
-                )
-              else
-                Switch.adaptive(
-                  value: online,
-                  onChanged: blockers.isEmpty ? _toggle : null,
                 ),
             ],
           ),
           if (blockers.isNotEmpty) ...[
             const SizedBox(height: Insets.md),
             InlineNotice(message: blockers.join(' · '), tone: NoticeTone.error),
+          ] else if (auto.failure != null && !online) ...[
+            // The server's reason, and the app keeps trying on its own — the
+            // chofer has nothing to press.
+            const SizedBox(height: Insets.md),
+            InlineNotice(
+              message: auto.failure!.userMessage,
+              tone: NoticeTone.error,
+            ),
           ],
           if (driver.cashOwedCents > 0) ...[
             const SizedBox(height: Insets.md),
