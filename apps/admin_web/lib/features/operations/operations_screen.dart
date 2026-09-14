@@ -805,7 +805,7 @@ class _ServiceRow extends StatelessWidget {
   }
 }
 
-class _LiveMap extends StatelessWidget {
+class _LiveMap extends ConsumerWidget {
   const _LiveMap({
     required this.services,
     required this.routed,
@@ -845,7 +845,7 @@ class _LiveMap extends StatelessWidget {
   final ValueChanged<String> onDriverTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final filter = eligible;
     final onlineDrivers = live
         .where((p) => p.isOnline)
@@ -880,6 +880,17 @@ class _LiveMap extends StatelessWidget {
             ),
     ];
 
+    final selectedDropoff = selected?.dropoff?.geo;
+    final storedPath = selected?.towPath ?? const <LatLng>[];
+    final selectedRoad = storedPath.isNotEmpty
+        ? storedPath
+        : selected == null || selectedDropoff == null
+            ? null
+            : ref
+                .watch(roadRouteProvider((selected!.pickup.geo, selectedDropoff)))
+                .value
+                ?.points;
+
     // What the camera has to hold: the whole job, and everyone who could take
     // it. A capable truck ninety kilometres away is worth seeing — that is the
     // dispatcher's answer about whether to wait or to call somebody in.
@@ -902,9 +913,13 @@ class _LiveMap extends StatelessWidget {
             // Framed rather than centred: a fixed zoom either cropped the
             // destination out or sat so far back the pickup was a speck.
             fitTo: frame,
-            route: selected?.dropoff == null
-                ? const []
-                : [selected!.pickup.geo, selected!.dropoff!.geo],
+            // The roads the tow will take, not a line over the mountains.
+            // Falls back to the straight pair on its own when there is no
+            // answer, so the job is always drawn.
+            route: selectedRoad ??
+                (selected?.dropoff == null
+                    ? const []
+                    : [selected!.pickup.geo, selected!.dropoff!.geo]),
             routes: trips,
             markers: [
               for (final service in shown) ...[

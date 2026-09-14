@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import '../../data/converters.dart';
+import '../../location/polyline.dart';
 import '../../utils/money.dart';
 import '../enums.dart';
 import '../value_objects.dart';
@@ -97,6 +98,16 @@ abstract class ServiceRoute with _$ServiceRoute {
 
   factory ServiceRoute.fromJson(Map<String, dynamic> json) =>
       _$ServiceRouteFromJson(json);
+
+  /// The drawn path, decoded once from what the server stored.
+  ///
+  /// Empty for a service quoted before the server routed, or when the Routes
+  /// API was unreachable at the time — the screen then falls back to fetching
+  /// its own, and to a straight line under that.
+  ///
+  /// Unchecked: [Service.towPath] is the one that knows the two ends and can
+  /// tell a road from a line across the Atlantic.
+  List<LatLng> get path => polyline.isEmpty ? const [] : decodePolyline(polyline);
 
   double get distanceKm => distanceMeters / 1000;
 
@@ -402,6 +413,19 @@ abstract class Service with _$Service {
   bool get isTerminal => status.isTerminal;
 
   bool get hasDriver => driverId != null && driverId!.isNotEmpty;
+
+  /// The tow drawn on a map: the road the server routed, checked against the
+  /// two ends it is supposed to join.
+  ///
+  /// Empty when there is no stored path, or when the stored one does not
+  /// describe this trip — both cases leave the screen to fetch its own, and a
+  /// straight line under that. A wrong path is worse than no path: one bad
+  /// point draws a band across the country.
+  List<LatLng> get towPath {
+    final end = dropoff?.geo;
+    if (end == null) return const [];
+    return sanePath(route.path, from: pickup.geo, to: end);
+  }
 
   bool get canChat => status.allowsContact && hasDriver;
 

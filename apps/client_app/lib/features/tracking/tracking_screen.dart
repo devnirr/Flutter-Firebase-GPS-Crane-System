@@ -119,7 +119,7 @@ class _TrackingBody extends ConsumerWidget {
   }
 }
 
-class _MapCard extends StatefulWidget {
+class _MapCard extends ConsumerStatefulWidget {
   const _MapCard({
     required this.service,
     required this.tracking,
@@ -133,10 +133,10 @@ class _MapCard extends StatefulWidget {
   final bool hasApiKey;
 
   @override
-  State<_MapCard> createState() => _MapCardState();
+  ConsumerState<_MapCard> createState() => _MapCardState();
 }
 
-class _MapCardState extends State<_MapCard> {
+class _MapCardState extends ConsumerState<_MapCard> {
   /// While true the camera rides with the truck. The customer's own touch
   /// turns it off — and only their touch, so a position update never steals
   /// the map back mid-pinch.
@@ -173,6 +173,27 @@ class _MapCardState extends State<_MapCard> {
     final stale = tracking?.isStale(widget.now) ?? true;
     final followed = truckAt ?? service.pickup.geo;
 
+    // The roads the grúa will actually drive. Both legs are fetched the way
+    // the chofer's own map fetches them, and each falls back to a straight
+    // line on its own if there is no answer — so there is always a line, and
+    // it is the real one whenever it can be.
+    final dropoff = service.dropoff?.geo;
+    // The server routed this tow once, at quote time, and every screen draws
+    // that same path. Fetching our own is the fallback for a service quoted
+    // before it did — or one quoted while the Routes API was unreachable.
+    final stored = service.towPath;
+    final tow = stored.isNotEmpty
+        ? stored
+        : dropoff == null
+            ? null
+            : ref.watch(roadRouteProvider((service.pickup.geo, dropoff))).value
+                ?.points;
+    final toPickup = truckAt == null
+        ? null
+        : ref
+            .watch(roadRouteProvider((routeGrain(truckAt), service.pickup.geo)))
+            .value;
+
     return ClipRRect(
       borderRadius: Corners.brLg,
       child: Stack(
@@ -188,9 +209,13 @@ class _MapCardState extends State<_MapCard> {
               zoom: 14.2,
               showAttribution: false,
               onUserMove: () => _takeOver(followed),
-              route: [
-                service.pickup.geo,
-                if (service.dropoff != null) service.dropoff!.geo,
+              // Red is the leg the truck is driving now; the tow ahead of it
+              // sits behind in dark dashes, the way the chofer's map draws the
+              // same two.
+              route: toPickup?.points ?? [service.pickup.geo, ?dropoff],
+              routes: [
+                if (tow != null)
+                  MapRoute(points: tow, color: BrandColors.ink, dashed: true),
               ],
               markers: [
                 MapMarker(

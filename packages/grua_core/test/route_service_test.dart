@@ -38,7 +38,7 @@ void main() {
               {
                 'distanceMeters': 41250,
                 'duration': '2710s',
-                'polyline': {'encodedPolyline': '_p~iF~ps|U_ulLnnqC_mqNvxq`@'},
+                'polyline': {'encodedPolyline': 'cqyoB~lyiLb_HotV_jAggf@'},
               },
             ],
           }),
@@ -104,7 +104,7 @@ void main() {
               {
                 'distanceMeters': 1000,
                 'duration': '120s',
-                'polyline': {'encodedPolyline': '_p~iF~ps|U_ulLnnqC'},
+                'polyline': {'encodedPolyline': 'cqyoB~lyiLb_HotV_jAggf@'},
               },
             ],
           }),

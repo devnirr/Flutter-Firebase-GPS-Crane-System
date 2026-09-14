@@ -27,7 +27,8 @@ import {
 } from '../lib/geo.js';
 import { requireClient, requireNotInMaintenance } from '../lib/guards.js';
 import { buildQuote, loadPricing, signQuote, verifyQuote } from '../lib/pricing.js';
-import { quoteSigningSecret } from '../lib/secrets.js';
+import { roadRoute } from '../lib/routes.js';
+import { mapsApiKey, quoteSigningSecret } from '../lib/secrets.js';
 import { serviceCode } from '../lib/time.js';
 import { openTruckRef } from '../lib/truckRef.js';
 import { dispatchNext } from '../dispatch/dispatchNext.js';
@@ -96,6 +97,41 @@ const toLatLng = (p: z.infer<typeof point>): LatLng => ({
 });
 
 /**
+ * The trip as the service document records it.
+ *
+ * The real road where the Routes API answers, the straight-line estimate where
+ * it does not. Computed once here so that the customer's map, the chofer's and
+ * the dispatcher's all draw the same path: before this each of them fetched
+ * its own, on every device, on every session, and none of them agreed.
+ *
+ * `estimatedRoadKm` stays the *priced* distance either way — see the note in
+ * `quoteService`.
+ */
+async function tripRoute(
+  from: LatLng,
+  to: LatLng,
+  now: Date,
+): Promise<{
+  distanceMeters: number;
+  durationSeconds: number;
+  polyline: string;
+  provider: string;
+  fetchedAt: Timestamp;
+}> {
+  const road = await roadRoute(from, to);
+  const estimateKm = estimatedRoadKm(from, to);
+
+  return {
+    distanceMeters: road?.distanceMeters ?? Math.round(estimateKm * 1000),
+    durationSeconds:
+      road?.durationSeconds ?? Math.round((estimateKm / 28) * 3600),
+    polyline: road?.polyline ?? '',
+    provider: road ? 'routes_api' : 'estimate',
+    fetchedAt: Timestamp.fromDate(now),
+  };
+}
+
+/**
  * Refuses a point we cannot actually serve.
  *
  * Better to say so while the customer is still choosing than to accept the job
@@ -146,7 +182,7 @@ async function assertCovered(pickup: LatLng, dropoff: LatLng): Promise<void> {
  * way.
  */
 export const quoteService = onCall(
-  { region, cors: true, secrets: [quoteSigningSecret] },
+  { region, cors: true, secrets: [quoteSigningSecret, mapsApiKey] },
   async (request) => {
   const parsed = quoteInput.safeParse(request.data);
   if (!parsed.success) throw invalidArgument('Revisa los datos e intenta de nuevo.');
@@ -159,6 +195,11 @@ export const quoteService = onCall(
   await assertCovered(from, to);
 
   const truckType = truckTypeOverride ?? inferTruckType(v.type, v.condition);
+  // The priced distance stays the deterministic estimate on purpose. It is
+  // covered by the signature, and `requestService` recomputes it a minute
+  // later to check that signature — two live Routes API calls that disagree by
+  // a hundred metres would refuse every request as a price mismatch. The real
+  // road goes on `route`, which is what the maps draw.
   const distanceKm = estimatedRoadKm(from, to);
   const now = new Date();
 
@@ -184,13 +225,15 @@ export const quoteService = onCall(
     truckType,
   });
 
+  const route = await tripRoute(from, to, now);
+
   return {
     quote,
     route: {
-      distanceMeters: Math.round(distanceKm * 1000),
-      durationSeconds: Math.round((distanceKm / 28) * 3600),
-      polyline: '',
-      provider: 'estimate',
+      distanceMeters: route.distanceMeters,
+      durationSeconds: route.durationSeconds,
+      polyline: route.polyline,
+      provider: route.provider,
       fetchedAt: now.toISOString(),
     },
     expiresAt: expiresAt.toISOString(),
@@ -209,7 +252,7 @@ export const quoteService = onCall(
  * than leaving them on a dead end.
  */
 export const requestService = onCall(
-  { region, cors: true, secrets: [quoteSigningSecret] },
+  { region, cors: true, secrets: [quoteSigningSecret, mapsApiKey] },
   async (request) => {
   const parsed = requestInput.safeParse(request.data);
   if (!parsed.success) throw invalidArgument('Revisa los datos e intenta de nuevo.');
@@ -300,6 +343,9 @@ export const requestService = onCall(
 
   const serviceRef = Paths.services().doc();
   const code = serviceCode(now);
+  // Outside the transaction: no network inside one, and a retried transaction
+  // would call the Routes API again.
+  const route = await tripRoute(from, to, now);
 
   await db.runTransaction(async (transaction) => {
     transaction.create(serviceRef, {
@@ -329,13 +375,7 @@ export const requestService = onCall(
         placeId: dropoff.placeId,
         notes: dropoff.notes,
       },
-      route: {
-        distanceMeters: Math.round(distanceKm * 1000),
-        durationSeconds: Math.round((distanceKm / 28) * 3600),
-        polyline: '',
-        provider: 'estimate',
-        fetchedAt: Timestamp.fromDate(now),
-      },
+      route,
       quote,
       payment: {
         method: paymentMethod,

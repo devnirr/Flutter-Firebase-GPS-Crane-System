@@ -17,3 +17,16 @@ import { defineSecret } from 'firebase-functions/params';
  * longest one lives ten minutes, and the app re-quotes on a mismatch.
  */
 export const quoteSigningSecret = defineSecret('QUOTE_SIGNING_SECRET');
+
+/**
+ * The Maps key the server routes with.
+ *
+ * Separate from the one in each app's `web/index.html`: that one draws tiles in
+ * a browser and is referrer-restricted, this one calls the Routes API from a
+ * function and should be restricted to that API instead. Leaving it unset is
+ * not an error — every route falls back to the straight-line estimate, which
+ * is what the product did before.
+ *
+ *     firebase functions:secrets:set MAPS_API_KEY
+ */
+export const mapsApiKey = defineSecret('MAPS_API_KEY');

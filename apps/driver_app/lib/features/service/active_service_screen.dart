@@ -246,9 +246,13 @@ class _ServiceMap extends ConsumerWidget {
     final toNext = me == null
         ? null
         : ref.watch(roadRouteProvider((routeGrain(me), next))).value;
-    final tow = goingToPickup && dropoff != null
-        ? ref.watch(roadRouteProvider((pickup, dropoff))).value
-        : null;
+    // The path the server already routed, where there is one.
+    final storedTow = service.towPath;
+    final tow = !goingToPickup || dropoff == null
+        ? null
+        : storedTow.isNotEmpty
+            ? storedTow
+            : ref.watch(roadRouteProvider((pickup, dropoff))).value?.points;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -269,7 +273,7 @@ class _ServiceMap extends ConsumerWidget {
               ],
               routes: [
                 if (tow != null)
-                  MapRoute(points: tow.points, color: BrandColors.ink, dashed: true),
+                  MapRoute(points: tow, color: BrandColors.ink, dashed: true),
                 if (toNext != null)
                   MapRoute(points: toNext.points, dashed: toNext.isApproximate),
                 // Without a position yet, the plain trip still reads.

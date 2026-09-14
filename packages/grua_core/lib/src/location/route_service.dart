@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../domain/value_objects.dart';
+import 'polyline.dart';
+import 'script_router.dart';
 
 /// A road route between two points, ready to draw.
 @immutable
@@ -83,13 +85,36 @@ class RouteService {
     if (cached != null) return cached;
 
     final fetched = await _fetch(from, to);
+    // A path is only as good as the string it came from, and one wrong point
+    // draws a line off the edge of the world and back. The straight line is
+    // better than that.
+    final sane = fetched == null
+        ? null
+        : sanePath(fetched.points, from: from, to: to).isEmpty
+            ? null
+            : fetched;
+
     // Only real routes are kept: a fallback caused by a dropped connection
     // should be retried next time, not remembered.
-    if (fetched != null) _cache[key] = fetched;
-    return fetched ?? RoadRoute.straight(from, to);
+    if (sane != null) _cache[key] = sane;
+    return sane ?? RoadRoute.straight(from, to);
   }
 
   Future<RoadRoute?> _fetch(LatLng from, LatLng to) async {
+    // The browser first. `routes.googleapis.com` sends no CORS headers, so a
+    // web build's POST below is refused before it leaves the page and every
+    // map drew the tow as a straight line across the countryside. The Maps
+    // script already on the page answers the same question from inside it.
+    final script = await scriptRoute(from, to);
+    if (script != null && script.points.length >= 2) {
+      return RoadRoute(
+        points: script.points,
+        distanceMeters: script.distanceMeters,
+        durationSeconds: script.durationSeconds,
+        isApproximate: false,
+      );
+    }
+
     if (apiKey.isEmpty) return null;
 
     Map<String, Object> waypoint(LatLng p) => {
@@ -152,35 +177,4 @@ class RouteService {
       return null;
     }
   }
-}
-
-/// Decodes Google's encoded polyline format into points.
-///
-/// The format packs each coordinate delta into 5-bit chunks, offset by 63 so
-/// every chunk is a printable character.
-List<LatLng> decodePolyline(String encoded) {
-  final points = <LatLng>[];
-  var index = 0;
-  var lat = 0;
-  var lng = 0;
-
-  int next() {
-    var result = 0;
-    var shift = 0;
-    int chunk;
-    do {
-      chunk = encoded.codeUnitAt(index++) - 63;
-      result |= (chunk & 0x1f) << shift;
-      shift += 5;
-    } while (chunk >= 0x20 && index < encoded.length);
-    return (result & 1) != 0 ? ~(result >> 1) : result >> 1;
-  }
-
-  while (index < encoded.length) {
-    lat += next();
-    if (index >= encoded.length) break;
-    lng += next();
-    points.add(LatLng(lat / 1e5, lng / 1e5));
-  }
-  return points;
 }

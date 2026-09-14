@@ -15,6 +15,16 @@ class ServiceDetailScreen extends ConsumerWidget {
     final service = ref.watch(serviceByIdProvider(serviceId)).value;
     final events = ref.watch(serviceEventsProvider(serviceId)).value ?? const [];
 
+    // The roads the tow took, rather than a line drawn over the mountains.
+    final dropoff = service?.dropoff?.geo;
+    final stored = service?.towPath ?? const <LatLng>[];
+    final road = stored.isNotEmpty
+        ? stored
+        : service == null || dropoff == null
+            ? null
+            : ref.watch(roadRouteProvider((service.pickup.geo, dropoff))).value
+                ?.points;
+
     return Scaffold(
       backgroundColor: BrandColors.offWhite,
       appBar: AppBar(
@@ -36,10 +46,7 @@ class ServiceDetailScreen extends ConsumerWidget {
                       zoom: 13,
                       interactive: false,
                       showAttribution: false,
-                      route: [
-                        service.pickup.geo,
-                        if (service.dropoff != null) service.dropoff!.geo,
-                      ],
+                      route: road ?? [service.pickup.geo, ?dropoff],
                       markers: [
                         MapMarker(
                           position: service.pickup.geo,
