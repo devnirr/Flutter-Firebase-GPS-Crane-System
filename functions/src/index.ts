@@ -79,11 +79,13 @@ export {
   notifyOnMessage,
   notifyOnChatRequestMessage,
   backfillChatRequestPhoto,
+  backfillServiceDriverPhoto,
 } from './triggers/index.js';
 
 export {
   sweepExpiredOffers,
   reapStaleDrivers,
+  releaseFinishedDrivers,
   expireAbandonedServices,
   tidyOrphanedOffers,
 } from './scheduled/index.js';

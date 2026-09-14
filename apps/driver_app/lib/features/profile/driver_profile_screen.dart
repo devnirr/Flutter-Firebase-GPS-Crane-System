@@ -126,16 +126,7 @@ class DriverProfileScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: Insets.xl),
-                OutlinedButton.icon(
-                  key: const Key('sign-out'),
-                  onPressed: () => signOutDriver(ref),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: BrandColors.danger,
-                    side: const BorderSide(color: BrandColors.dangerTint),
-                  ),
-                  icon: const Icon(Icons.logout, size: 18),
-                  label: const Text('Cerrar sesión'),
-                ),
+                const _SignOutButton(),
                 const SizedBox(height: Insets.lg),
                 Center(
                   child: Text(
@@ -278,6 +269,56 @@ class _Row extends StatelessWidget {
       trailing: onTap == null
           ? null
           : const Icon(Icons.chevron_right, color: BrandColors.grey400),
+    );
+  }
+}
+
+/// "Cerrar sesión", with a spinner in place of its icon until signing out is
+/// done — it goes offline and clears presence on the server first, which takes
+/// long enough on a weak signal to look like the tap did nothing.
+class _SignOutButton extends ConsumerStatefulWidget {
+  const _SignOutButton();
+
+  @override
+  ConsumerState<_SignOutButton> createState() => _SignOutButtonState();
+}
+
+class _SignOutButtonState extends ConsumerState<_SignOutButton> {
+  var _signingOut = false;
+
+  Future<void> _signOut() async {
+    if (_signingOut) return;
+    setState(() => _signingOut = true);
+    try {
+      await signOutDriver(ref);
+    } finally {
+      // Normally the router has already taken this screen away; this is for a
+      // sign-out that failed and left the chofer here to try again.
+      if (mounted) setState(() => _signingOut = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      key: const Key('sign-out'),
+      onPressed: _signingOut ? null : _signOut,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: BrandColors.danger,
+        // Busy, not disabled: keep the colours while the spinner runs.
+        disabledForegroundColor: BrandColors.danger,
+        side: const BorderSide(color: BrandColors.dangerTint),
+      ),
+      icon: _signingOut
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: BrandColors.danger,
+              ),
+            )
+          : const Icon(Icons.logout, size: 18),
+      label: const Text('Cerrar sesión'),
     );
   }
 }

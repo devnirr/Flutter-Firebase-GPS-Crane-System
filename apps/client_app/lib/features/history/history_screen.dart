@@ -82,13 +82,11 @@ class HistoryScreen extends ConsumerWidget {
         ),
         data: (page) {
           if (page.items.isEmpty) {
-            return EmptyState(
+            return const EmptyState(
               title: 'Todavía no tienes servicios',
               message: 'Cuando pidas tu primera grúa, la verás aquí junto con '
                   'su factura.',
               icon: Icons.receipt_long_outlined,
-              actionLabel: 'Pedir una grúa',
-              onAction: () => context.go(Routes.request),
             );
           }
 

@@ -46,6 +46,7 @@ class ServiceDetailScreen extends ConsumerWidget {
                       zoom: 13,
                       interactive: false,
                       showAttribution: false,
+                      expandable: true,
                       route: road ?? [service.pickup.geo, ?dropoff],
                       markers: [
                         MapMarker(

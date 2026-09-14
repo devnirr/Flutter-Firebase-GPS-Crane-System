@@ -752,6 +752,9 @@ export const assignServiceManually = onCall({ region, cors: true }, async (reque
         driverId,
         driverName: driver['name'] ?? '',
         driverPhone: driver['phone'] ?? '',
+        // Copied like an automatic accept copies it: without it the customer's
+        // tracking card and chat showed a manually assigned chofer as a letter.
+        driverPhotoUrl: driver['photoUrl'] ?? '',
         driverRating: driver['rating'] ?? 0,
         truckId: driver['assignedTruckId'] ?? null,
         truckPlate: driver['assignedTruckPlate'] ?? '',

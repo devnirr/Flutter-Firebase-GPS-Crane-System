@@ -63,6 +63,8 @@ void main() {
     expect(assigned.driverName, driver.name);
     expect(assigned.driverPhone, isNotEmpty);
     expect(assigned.assignmentMode, AssignmentMode.manual);
+    // The customer's card shows the chofer's face, not a letter.
+    expect(assigned.driverPhotoUrl, driver.photoUrl);
 
     // The chofer is committed, so the cascade cannot hand them a second job.
     expect(backend.driver(driver.id)!.currentServiceId, service.id);
@@ -70,6 +72,18 @@ void main() {
     // And the customer's tracking map has somebody on it — the thing a second
     // copy of this logic would have been most likely to forget.
     expect(await backend.trackingFor(service.id).first, isNotNull);
+  });
+
+  test("the chofer's photo travels onto the service", () {
+    final service = request();
+    final driver = freeDriverWith(TruckType.gancho);
+    const photo = 'data:image/png;base64,iVBORw0KGgo=';
+    backend.storeUpload('drivers/${driver.id}/photo.png', photo);
+    expect(backend.setDriverPhoto(driver.id, 'drivers/${driver.id}/photo.png'), photo);
+
+    backend.assignServiceManually(serviceId: service.id, driverId: driver.id);
+
+    expect(backend.service(service.id)!.driverPhotoUrl, photo);
   });
 
   test('the assignment is written as manual, not as an automatic accept', () {

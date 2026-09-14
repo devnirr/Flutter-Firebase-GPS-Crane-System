@@ -210,6 +210,7 @@ class _MapCardState extends ConsumerState<_MapCard> {
               hasApiKey: widget.hasApiKey,
               zoom: 14.2,
               showAttribution: false,
+              expandable: true,
               onUserMove: () => _takeOver(followed),
               // Red is the leg the truck is driving now; the tow ahead of it
               // sits behind in dark dashes, the way the chofer's map draws the
@@ -379,13 +380,14 @@ class _DriverCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: BrandColors.redTint,
-                child: Text(
-                  service.driverName.isEmpty ? '?' : service.driverName[0],
-                  style: text.titleLarge?.copyWith(color: BrandColors.red),
-                ),
+              // The chofer's photo, so the customer knows the face of who
+              // is getting out of the truck. It used to be only the first
+              // letter of their name, whatever photo the chofer had.
+              DriverAvatar(
+                key: const Key('driver-photo'),
+                name: service.driverName,
+                photoUrl: service.driverPhotoUrl,
+                size: 48,
               ),
               const SizedBox(width: Insets.lg),
               Expanded(
@@ -452,12 +454,24 @@ class _DriverCard extends StatelessWidget {
   }
 }
 
-class _Actions extends ConsumerWidget {
+class _Actions extends ConsumerStatefulWidget {
   const _Actions({required this.service});
 
   final Service service;
 
-  Future<void> _cancel(BuildContext context, WidgetRef ref) async {
+  @override
+  ConsumerState<_Actions> createState() => _ActionsState();
+}
+
+class _ActionsState extends ConsumerState<_Actions> {
+  /// True from "Sí, cancelar" until the server answers, so the button shows it
+  /// is working and a second tap cannot send a second cancellation.
+  var _cancelling = false;
+
+  Service get service => widget.service;
+
+  Future<void> _cancel() async {
+    if (_cancelling) return;
     final now = DateTime.now().toUtc();
     final fee = service.cancellationIncursFee(now);
 
@@ -485,13 +499,15 @@ class _Actions extends ConsumerWidget {
       ),
     );
 
-    if (confirmed != true || !context.mounted) return;
+    if (confirmed != true || !mounted) return;
 
+    setState(() => _cancelling = true);
     final result = await ref.read(functionsGatewayProvider).cancelService(
           serviceId: service.id,
           reason: 'client_request',
         );
-    if (!context.mounted) return;
+    if (!mounted) return;
+    setState(() => _cancelling = false);
 
     result.fold(
       (_) => context.go(Routes.home),
@@ -502,7 +518,7 @@ class _Actions extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final canContact = service.canChat;
 
     return Row(
@@ -556,9 +572,8 @@ class _Actions extends ConsumerWidget {
             icon: Icons.close,
             label: 'Cancelar',
             destructive: true,
-            onTap: service.isCancellableByClient
-                ? () => _cancel(context, ref)
-                : null,
+            loading: _cancelling,
+            onTap: service.isCancellableByClient ? _cancel : null,
           ),
         ),
       ],
@@ -572,12 +587,17 @@ class _ActionButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.destructive = false,
+    this.loading = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
   final bool destructive;
+
+  /// Swaps the icon for a spinner and ignores taps, keeping the button's
+  /// colour so it reads as busy rather than disabled.
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -592,13 +612,25 @@ class _ActionButton extends StatelessWidget {
       color: BrandColors.white,
       borderRadius: Corners.brMd,
       child: InkWell(
-        onTap: onTap,
+        onTap: loading ? null : onTap,
         borderRadius: Corners.brMd,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: Insets.md),
           child: Column(
             children: [
-              Icon(icon, size: 20, color: color),
+              if (loading)
+                SizedBox.square(
+                  dimension: 20,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: color,
+                    ),
+                  ),
+                )
+              else
+                Icon(icon, size: 20, color: color),
               const SizedBox(height: Insets.xs),
               Text(
                 label,

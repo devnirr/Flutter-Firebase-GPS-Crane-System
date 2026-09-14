@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/misc.dart'
     show FutureProviderFamily, Override, ProviderFamily, StreamProviderFamily;
 
 import 'calls/voice_call.dart';
+import 'calls/voice_transport.dart';
 import 'config/app_config.dart';
 import 'config/maps_script.dart';
 import 'data/demo/demo_backend.dart';
@@ -127,6 +128,7 @@ List<Override> demoOverrides({
   DemoBackend? backend,
   UserRole role = UserRole.client,
   String? actingAs,
+  VoiceTransport Function()? voiceTransport,
 }) {
   final instance = backend ?? (DemoBackend()..seed());
   if (actingAs != null) instance.currentUserId = actingAs;
@@ -140,6 +142,9 @@ List<Override> demoOverrides({
     serviceRepositoryProvider.overrideWithValue(DemoServiceRepository(instance)),
     offerRepositoryProvider.overrideWithValue(const DemoOfferRepository()),
     callRepositoryProvider.overrideWithValue(DemoCallRepository(instance)),
+    // No LiveKit server in demo mode: calls ring and connect without audio.
+    voiceTransportFactoryProvider
+        .overrideWithValue(voiceTransport ?? SilentVoiceTransport.new),
     chatRepositoryProvider.overrideWithValue(DemoChatRepository(instance)),
     chatRequestRepositoryProvider
         .overrideWithValue(DemoChatRequestRepository(instance)),

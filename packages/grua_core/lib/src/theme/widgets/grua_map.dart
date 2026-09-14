@@ -7,6 +7,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart' as gmap;
 
 import '../../domain/value_objects.dart';
 import '../brand.dart';
+import 'brand_widgets.dart';
 import 'schematic_map.dart';
 
 /// The map every screen uses.
@@ -36,8 +37,32 @@ class GruaMap extends StatefulWidget {
     this.onCameraIdle,
     this.onUserMove,
     this.onMapCreated,
+    this.expandable = false,
     super.key,
-  });
+  }) : _expanded = false;
+
+  /// The same map, filling the page that [expandable] opens.
+  ///
+  /// It pans and zooms whatever the card allowed, and leaves the card's
+  /// callbacks behind: a customer looking around the full-screen map has not
+  /// taken the camera of the card underneath.
+  GruaMap._expanded(GruaMap card)
+      : center = card.center,
+        hasApiKey = card.hasApiKey,
+        zoom = card.zoom,
+        markers = card.markers,
+        route = card.route,
+        routes = card.routes,
+        circles = card.circles,
+        fitTo = card.fitTo,
+        interactive = true,
+        showAttribution = true,
+        padding = EdgeInsets.zero,
+        onCameraIdle = null,
+        onUserMove = null,
+        onMapCreated = null,
+        expandable = false,
+        _expanded = true;
 
   /// Where the camera looks. Ignored while [fitTo] has points.
   final LatLng center;
@@ -81,6 +106,15 @@ class GruaMap extends StatefulWidget {
   final VoidCallback? onUserMove;
   final ValueChanged<gmap.GoogleMapController>? onMapCreated;
 
+  /// Puts a full-screen button in the bottom-right corner, for maps that sit
+  /// in a card. It takes the place of Google's own web camera control, which
+  /// only pans and cannot open anything.
+  final bool expandable;
+
+  /// Whether this is the full-screen copy, which shows the button that closes
+  /// it instead.
+  final bool _expanded;
+
   @override
   State<GruaMap> createState() => _GruaMapState();
 }
@@ -95,6 +129,10 @@ class _GruaMapState extends State<GruaMap> {
   var _weAreMoving = true;
 
   var _iconsRequested = false;
+
+  /// The card's latest configuration, so an open full-screen map keeps moving
+  /// with the truck rather than freezing where it was when it opened.
+  late final _latest = ValueNotifier<GruaMap>(widget);
 
   // Not initState: the icons are drawn at the screen's pixel ratio, and
   // reading MediaQuery there throws in debug builds. The throw landed inside
@@ -112,6 +150,14 @@ class _GruaMapState extends State<GruaMap> {
   @override
   void didUpdateWidget(GruaMap oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.expandable) {
+      // After the frame: this runs mid-build, and the full-screen page
+      // listening to it cannot rebuild until the build is over.
+      final latest = widget;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _latest.value = latest;
+      });
+    }
     final controller = _controller;
     if (controller == null) return;
 
@@ -183,7 +229,52 @@ class _GruaMapState extends State<GruaMap> {
     // the view is gone, and a call on a disposed controller is an error
     // nobody is waiting for.
     _controller = null;
+    // `_latest` is not disposed: the card can go away while its full-screen
+    // page is still open (the service ended underneath it), and that page is
+    // still listening. It shows the last map it had until it is closed.
     super.dispose();
+  }
+
+  void _openFullScreen() {
+    _latest.value = widget;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => Scaffold(
+          body: ValueListenableBuilder<GruaMap>(
+            valueListenable: _latest,
+            builder: (_, card, _) => GruaMap._expanded(card),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The corner button: into full screen on a card, back out of it on the
+  /// full-screen copy.
+  Widget _cornerButton(BuildContext context) {
+    final expanded = widget._expanded;
+    return Positioned(
+      right: Insets.md,
+      bottom: Insets.md,
+      child: SafeArea(
+        child: Tooltip(
+          message: expanded ? 'Salir de pantalla completa' : 'Pantalla completa',
+          child: FloatingCard(
+            key: Key(expanded ? 'map-exit-fullscreen' : 'map-fullscreen'),
+            padding: const EdgeInsets.all(Insets.sm),
+            borderRadius: Corners.brMd,
+            onTap: expanded
+                ? () => Navigator.of(context).maybePop()
+                : _openFullScreen,
+            child: Icon(
+              expanded ? Icons.fullscreen_exit : Icons.fullscreen,
+              color: BrandColors.ink,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _buildIcons() async {
@@ -203,6 +294,17 @@ class _GruaMapState extends State<GruaMap> {
 
   @override
   Widget build(BuildContext context) {
+    final map = _map();
+    if (!widget.expandable && !widget._expanded) return map;
+    return Stack(
+      children: [
+        Positioned.fill(child: map),
+        _cornerButton(context),
+      ],
+    );
+  }
+
+  Widget _map() {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Google centres the camera inside the padding, so the fit has to be
@@ -282,6 +384,8 @@ class _GruaMapState extends State<GruaMap> {
       zoomControlsEnabled: false,
       mapToolbarEnabled: false,
       compassEnabled: false,
+      // Our full-screen button sits where Google's web camera control would.
+      webCameraControlEnabled: !widget.expandable && !widget._expanded,
       // A map the user cannot pan is the right call on screens where the
       // camera is following a truck.
       scrollGesturesEnabled: widget.interactive,

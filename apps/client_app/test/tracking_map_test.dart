@@ -34,7 +34,10 @@ Future<void> main() async {
     await tester.pump();
   }
 
-  Future<GruaMap> pumpTracking(WidgetTester tester) async {
+  Future<GruaMap> pumpTracking(
+    WidgetTester tester, {
+    void Function(Service service)? before,
+  }) async {
     tester.view
       ..devicePixelRatio = 1
       ..physicalSize = const Size(430, 900);
@@ -51,6 +54,7 @@ Future<void> main() async {
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 4200),
     );
+    before?.call(service);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -78,6 +82,36 @@ Future<void> main() async {
     await tester.pump(const Duration(milliseconds: 100));
     return tester.widget<GruaMap>(find.byType(GruaMap));
   }
+
+  testWidgets("the chofer's card shows their photo, not a letter", (
+    tester,
+  ) async {
+    // The bug: the card drew the first letter of the chofer's name whatever
+    // photo they had, and a chofer assigned by hand had none on the service
+    // to draw anyway.
+    const photo = 'data:image/png;base64,iVBORw0KGgo=';
+    await pumpTracking(
+      tester,
+      before: (service) {
+        final driver = backend.allDrivers.firstWhere(
+          (d) => d.truckType == TruckType.gancho && d.status.canWork && !d.isBusy,
+        );
+        backend
+          ..storeUpload('drivers/${driver.id}/photo.png', photo)
+          ..setDriverPhoto(driver.id, 'drivers/${driver.id}/photo.png');
+        expect(
+          backend.assignServiceManually(serviceId: service.id, driverId: driver.id),
+          isNull,
+        );
+      },
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final avatar = tester.widget<DriverAvatar>(find.byKey(const Key('driver-photo')));
+    expect(avatar.photoUrl, photo);
+
+    await stopTheClock(tester);
+  });
 
   testWidgets('the map takes gestures, and reports the ones it did not make', (
     tester,

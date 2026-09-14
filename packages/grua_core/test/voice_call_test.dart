@@ -27,7 +27,7 @@ void main() {
   late ProviderContainer container;
 
   /// A tow in progress: the one window where the two may call each other.
-  void setUpService({bool assign = true}) {
+  void setUpService({bool assign = true, Exception? micError}) {
     backend = DemoBackend(dispatchDelay: const Duration(hours: 1))..seed();
     service = backend.createService(
       clientId: client,
@@ -51,12 +51,17 @@ void main() {
       );
     }
 
-    transport = SilentVoiceTransport();
+    transport = SilentVoiceTransport(prepareError: micError);
     container = ProviderContainer(
       overrides: [
-        ...demoOverrides(backend: backend, actingAs: client),
+        ...demoOverrides(
+          backend: backend,
+          actingAs: client,
+          // One the test can inspect.
+          voiceTransport: () => transport,
+        ),
         currentUserIdProvider.overrideWithValue(client),
-        voiceTransportFactoryProvider.overrideWithValue((_) => transport),
+
       ],
     )
       // Kept alive the way the app keeps it: watched from the root.
@@ -184,6 +189,59 @@ void main() {
 
       expect(backend.startCall(service.id, client), isA<Err<CallJoin>>());
       tearDownAll();
+    });
+  });
+
+  group('the microphone', () {
+    // What the chofer hit: the call reached the customer's phone and rang, and
+    // the chofer's own screen said the microphone could not be used. The
+    // microphone was only asked for after the other phone was already ringing,
+    // and any audio failure was blamed on it.
+
+    testWidgets('refused when calling: nobody is rung', (tester) async {
+      setUpService(micError: Exception('NotAllowedError: Permission denied'));
+
+      await run(tester, controller().call(serviceId: service.id, peerName: 'Chofer'));
+      await settle(tester);
+
+      expect(backend.allCalls, isEmpty, reason: 'the other phone never rang');
+      expect(session().phase, CallPhase.ended);
+      expect(session().message, CallAudioProblem.permission.message);
+      await settle(tester, CallController.endedLinger);
+      tearDownAll();
+    });
+
+    testWidgets('refused when answering: the call is declined, not accepted', (tester) async {
+      setUpService(micError: Exception('NotAllowedError: Permission denied'));
+      backend.startCall(service.id, driverId);
+      await settle(tester);
+      expect(session().phase, CallPhase.incoming);
+
+      await run(tester, controller().answer());
+      await settle(tester);
+
+      // The caller hears "No contestó" rather than waiting on a silent line.
+      expect(onlyCall().state, CallState.declined);
+      expect(session().message, CallAudioProblem.permission.message);
+      await settle(tester, CallController.endedLinger);
+      tearDownAll();
+    });
+
+    test('says what actually went wrong', () {
+      // Web: a browser DOMException, known only by its name.
+      expect(CallAudioProblem.of(Exception('NotAllowedError: Permission denied')),
+          CallAudioProblem.permission);
+      expect(CallAudioProblem.of(Exception('NotFoundError: Requested device not found')),
+          CallAudioProblem.noMicrophone);
+      expect(CallAudioProblem.of(Exception('NotReadableError: Could not start audio source')),
+          CallAudioProblem.microphoneBusy);
+      expect(
+        CallAudioProblem.of(Exception("Cannot read properties of undefined (reading 'getUserMedia')")),
+        CallAudioProblem.unknown,
+      );
+      // Not every failure is the microphone.
+      expect(CallAudioProblem.of(Exception('websocket closed')), CallAudioProblem.connection);
+      expect(CallAudioProblem.of(Exception('something odd')), CallAudioProblem.unknown);
     });
   });
 

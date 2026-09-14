@@ -12,7 +12,6 @@ class ProfileScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final userAsync = ref.watch(currentUserProvider);
     final settings = ref.watch(appSettingsProvider).value;
-    final config = ref.watch(appConfigProvider);
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
@@ -147,13 +146,6 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                   icon: const Icon(Icons.logout, size: 18),
                   label: const Text('Cerrar sesión'),
-                ),
-                const SizedBox(height: Insets.lg),
-                Center(
-                  child: Text(
-                    'Grúas RD 24/7 · ${config.flavor.wire}',
-                    style: text.bodySmall?.copyWith(color: BrandColors.grey400),
-                  ),
                 ),
               ],
             ),

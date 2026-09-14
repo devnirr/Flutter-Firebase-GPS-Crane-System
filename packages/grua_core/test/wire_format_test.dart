@@ -80,6 +80,23 @@ void main() {
       expect(service.status.isTerminal, isFalse);
     });
 
+    test('the price charged at completion is read from `final`', () {
+      // `completeService` writes it there. Read under any other name the
+      // chofer was shown the estimate, "Cobrar" sent it, and the server
+      // refused it: "El monto no coincide".
+      final service = Service.fromJson({
+        'id': 's1',
+        'code': 'GR-0001',
+        'clientId': 'c1',
+        'pickup': {'geo': {'lat': 18.47, 'lng': -69.9}},
+        'status': 'completed',
+        'quote': {'totalCents': 531000},
+        'final': {'totalCents': 553500},
+      });
+
+      expect(service.totalCents, 553500);
+    });
+
     test('an unknown role is not staff', () {
       expect(
         AppUser.fromJson({

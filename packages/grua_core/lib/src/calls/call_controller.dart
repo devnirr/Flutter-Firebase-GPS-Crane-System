@@ -80,14 +80,6 @@ class CallSession {
       );
 }
 
-/// Makes the audio side of a call. Overridden in tests to hand back a
-/// [SilentVoiceTransport] they can inspect.
-final voiceTransportFactoryProvider = Provider<VoiceTransport Function(CallJoin)>(
-  // Demo mode has no LiveKit server, so its joins carry no URL.
-  (ref) => (join) =>
-      join.url.isEmpty ? SilentVoiceTransport() : LiveKitVoiceTransport(),
-);
-
 /// One call at a time, for whoever is signed in: placing one, being rung,
 /// talking, and the moment after it ends.
 ///
@@ -129,6 +121,15 @@ class CallController extends Notifier<CallSession> {
     if (!state.isIdle) return;
     state = CallSession(phase: CallPhase.outgoing, peerName: peerName);
 
+    // The microphone first, and only then the other phone. The other way
+    // round, a caller whose microphone was refused had already set the other
+    // phone ringing — and the person who picked up got nobody.
+    if (!await _takeMicrophone()) return;
+    if (state.phase != CallPhase.outgoing) {
+      _releaseMicrophone(); // hung up during the permission prompt
+      return;
+    }
+
     final gateway = ref.read(functionsGatewayProvider);
     final result = await gateway.startCall(serviceId);
 
@@ -138,6 +139,7 @@ class CallController extends Notifier<CallSession> {
       if (result case Ok(:final value)) {
         unawaited(gateway.endCall(value.callId, EndCallReason.cancelled));
       }
+      _releaseMicrophone();
       return;
     }
 
@@ -177,6 +179,10 @@ class CallController extends Notifier<CallSession> {
     if (state.phase != CallPhase.incoming || callId == null) return;
     state = state.copyWith(phase: CallPhase.connecting);
 
+    // Before answering on the server: a callee who cannot talk declines,
+    // rather than accepting a call and leaving the caller listening to nothing.
+    if (!await _takeMicrophone(declining: callId)) return;
+
     final result = await ref.read(functionsGatewayProvider).answerCall(callId);
     switch (result) {
       case Err(:final failure):
@@ -212,8 +218,37 @@ class CallController extends Notifier<CallSession> {
 
   // ---------------------------------------------------------------- plumbing
 
+  /// Takes the microphone for this call. False, with the screen already
+  /// saying why, when it could not be had.
+  ///
+  /// [declining] is the call to turn down when this was an answer.
+  Future<bool> _takeMicrophone({String? declining}) async {
+    final transport = ref.read(voiceTransportFactoryProvider)();
+    _transport = transport;
+    try {
+      await transport.prepare();
+      return true;
+    } on Object catch (error) {
+      debugPrint('Call microphone refused: $error');
+      final problem = CallAudioProblem.of(error);
+      _end(problem.message);
+      if (declining != null) {
+        await ref
+            .read(functionsGatewayProvider)
+            .endCall(declining, EndCallReason.declined);
+      }
+      return false;
+    }
+  }
+
+  void _releaseMicrophone() {
+    final transport = _transport;
+    _transport = null;
+    if (transport != null) unawaited(transport.disconnect());
+  }
+
   Future<void> _connect(CallJoin join) async {
-    final transport = ref.read(voiceTransportFactoryProvider)(join);
+    final transport = _transport ?? ref.read(voiceTransportFactoryProvider)();
     _transport = transport;
     state = state.copyWith(canSwitchSpeaker: transport.canSwitchSpeaker);
 
@@ -236,12 +271,11 @@ class CallController extends Notifier<CallSession> {
     try {
       await transport.connect(url: join.url, token: join.token);
     } on Object catch (error) {
+      // The real error in the console, and the screen says which kind it was.
+      // It used to blame the microphone for everything, a server it could not
+      // reach included.
       debugPrint('Call audio failed: $error');
-      // Most often the microphone permission, refused or never granted.
-      await _finish(
-        EndCallReason.hangup,
-        'No pudimos usar el micrófono. Revisa los permisos e intenta de nuevo.',
-      );
+      await _finish(EndCallReason.hangup, CallAudioProblem.of(error).message);
     }
   }
 

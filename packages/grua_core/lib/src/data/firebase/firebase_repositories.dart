@@ -38,17 +38,20 @@ import '../paths.dart';
 
 /// Maps a thrown Firebase error onto a [Failure] the UI already knows how to
 /// render, so no screen ever has to interpret a plugin exception.
-Failure _mapError(Object error) {
+Failure _mapError(Object error, {String? source}) {
   // Anything that lands on FailureCode.unknown reaches the user as a generic
   // "Algo salió mal", which is right for them and useless for us. Log the raw
-  // plugin error in debug so the actual code is one glance away.
+  // plugin error in debug so the actual code is one glance away — and *where*
+  // it came from: a bare "permission-denied" from one of dozens of listeners
+  // and calls says a rule refused something without saying which.
   if (kDebugMode) {
     final code = switch (error) {
       fb.FirebaseAuthException(:final code) => code,
       FirebaseException(:final code) => code,
       _ => null,
     };
-    debugPrint('[grua] Firebase error ${code ?? error.runtimeType}: $error');
+    final from = source == null ? '' : ' [$source]';
+    debugPrint('[grua] Firebase error ${code ?? error.runtimeType}$from: $error');
   }
 
   if (error is fb.FirebaseAuthException) {
@@ -119,11 +122,26 @@ Failure _mapError(Object error) {
 
 /// Runs [action], turning any thrown Firebase error into a [Failure].
 Future<Result<T>> _guard<T>(Future<T> Function() action) async {
+  // Taken before the first await, while the repository method that called
+  // this is still on the stack: after it, the trace is the SDK's, not ours.
+  final origin = kDebugMode ? _callerOf(StackTrace.current) : null;
   try {
     return Result.ok(await action());
   } on Object catch (error) {
-    return Result.err(_mapError(error));
+    return Result.err(_mapError(error, source: origin));
   }
+}
+
+/// The frame that called [_guard], trimmed to something readable in a log.
+String? _callerOf(StackTrace trace) {
+  final frames = trace.toString().split('\n').map((l) => l.trim());
+  for (final frame in frames) {
+    if (frame.isEmpty || frame.contains('_guard') || frame.contains('_callerOf')) {
+      continue;
+    }
+    return frame.length > 160 ? frame.substring(0, 160) : frame;
+  }
+  return null;
 }
 
 extension _GuardedStream<T> on Stream<T> {
@@ -133,8 +151,10 @@ extension _GuardedStream<T> on Stream<T> {
   /// screen knows how to render — so a denied read arrived at the UI as an
   /// opaque object and every screen treated it as "no data yet". Mapping it
   /// here means a stream fails in the same vocabulary as a one-shot call.
-  Stream<T> guarded() => handleError(
-        (Object error) => throw _mapError(error),
+  ///
+  /// [source] names the listener in the debug log.
+  Stream<T> guarded([String? source]) => handleError(
+        (Object error) => throw _mapError(error, source: source),
         // Already a Failure: a second pass would bury the original code under
         // FailureCode.unknown.
         test: (error) => error is! Failure,
@@ -240,7 +260,7 @@ class FirestoreUserRepository implements UserRepository {
 
   @override
   Stream<AppUser?> watchUser(String uid) =>
-      Paths.user(uid).snapshots().map((snap) => snap.data()).guarded();
+      Paths.user(uid).snapshots().map((snap) => snap.data()).guarded('watchUser');
 
   @override
   Stream<List<AppUser>> watchAllClients({int limit = 500}) => Paths.users()
@@ -260,7 +280,7 @@ class FirestoreUserRepository implements UserRepository {
             .where((user) => user.role == UserRole.client)
             .toList(),
       )
-      .guarded();
+      .guarded('watchAllClients');
 
   @override
   Future<Result<AppUser>> fetchUser(String uid) => _guard(() async {
@@ -348,7 +368,7 @@ class FirebaseDriverRepository implements DriverRepository {
 
   @override
   Stream<Driver?> watchDriver(String uid) =>
-      Paths.driver(uid).snapshots().map((snap) => snap.data()).guarded();
+      Paths.driver(uid).snapshots().map((snap) => snap.data()).guarded('watchDriver');
 
   @override
   Stream<List<Driver>> watchAllDrivers({DriverStatus? status}) {
@@ -360,7 +380,7 @@ class FirebaseDriverRepository implements DriverRepository {
         .limit(500)
         .snapshots()
         .map((snap) => snap.docs.map((d) => d.data()).toList())
-        .guarded();
+        .guarded('watchAllDrivers');
   }
 
   @override
@@ -623,7 +643,7 @@ class FirestoreServiceRepository implements ServiceRepository {
       .limit(200)
       .snapshots()
       .map((snap) => snap.docs.map((d) => d.data()).toList())
-      .guarded();
+      .guarded('watchActiveServices');
 
   @override
   Stream<List<ServiceEvent>> watchEvents(String serviceId) =>
@@ -741,14 +761,14 @@ class FirestoreOfferRepository implements OfferRepository {
           // nothing is the worst state this app has. A refused or unindexed
           // collection-group query used to arrive here as an opaque error and
           // read as "no offers" — indistinguishable from a quiet night.
-          .guarded();
+          .guarded('watchIncomingOffer');
 
   @override
   Stream<Offer?> watchOffer(String serviceId, String driverId) => Paths
       .offer(serviceId, driverId)
       .snapshots()
       .map((snap) => snap.data())
-      .guarded();
+      .guarded('watchOffer');
 }
 
 class FirestoreCallRepository implements CallRepository {
@@ -772,7 +792,7 @@ class FirestoreCallRepository implements CallRepository {
             .toList();
         return calls.isEmpty ? null : calls.first;
       })
-      .guarded();
+      .guarded('watchIncomingCall');
 
   @override
   Stream<VoiceCall?> watchCall(String callId) => _calls
@@ -782,7 +802,7 @@ class FirestoreCallRepository implements CallRepository {
         final data = snap.data();
         return data == null ? null : VoiceCall.fromJson(snap.id, data);
       })
-      .guarded();
+      .guarded('watchCall');
 }
 
 class FirestoreChatRepository implements ChatRepository {

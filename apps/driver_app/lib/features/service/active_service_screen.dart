@@ -266,6 +266,7 @@ class _ServiceMap extends ConsumerWidget {
               hasApiKey: ref.watch(hasMapsKeyProvider),
               zoom: 14,
               showAttribution: false,
+              expandable: true,
               fitTo: [
                 ?me,
                 next,
@@ -591,6 +592,11 @@ class _CancelButton extends ConsumerWidget {
           : () async {
               final reason = await showModalBottomSheet<DriverCancelReason>(
                 context: context,
+                // Seven reasons are taller than the default half-screen sheet,
+                // which cut the last ones off. The sheet sizes to its list and
+                // scrolls only when even the full screen is not enough.
+                isScrollControlled: true,
+                useSafeArea: true,
                 backgroundColor: Colors.transparent,
                 builder: (_) => const _ReasonSheet(),
               );
@@ -635,13 +641,22 @@ class _ReasonSheet extends StatelessWidget {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: Insets.md),
-          for (final reason in reasons)
-            ListTile(
-              title: Text(reason.label),
-              onTap: () => Navigator.of(context).pop(reason),
-              trailing: const Icon(Icons.chevron_right,
-                  color: BrandColors.grey400),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final reason in reasons)
+                    ListTile(
+                      title: Text(reason.label),
+                      onTap: () => Navigator.of(context).pop(reason),
+                      trailing: const Icon(Icons.chevron_right,
+                          color: BrandColors.grey400),
+                    ),
+                ],
+              ),
             ),
+          ),
         ],
       ),
     );

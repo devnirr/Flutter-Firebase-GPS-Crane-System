@@ -377,7 +377,11 @@ abstract class Service with _$Service {
 
     /// Written at completion. Differs from [quote] when waiting time or a
     /// reroute changed the price.
-    Quote? finalQuote,
+    ///
+    /// `final` on the wire — `completeService` writes it under that name. Read
+    /// as `finalQuote` it was never there, so the chofer was shown the estimate
+    /// and "Cobrar" sent it, and the server refused it as not matching.
+    @JsonKey(name: 'final') Quote? finalQuote,
     @Default(ServicePayment()) ServicePayment payment,
     String? driverId,
     @Default('') String driverName,

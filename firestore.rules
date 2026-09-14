@@ -277,13 +277,6 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // chatRequests — a customer talking to a nearby chofer before any job
-    // ---------------------------------------------------------------------
-
-    // Created and answered only through the requestChat / respondChatRequest
-    // callables, which open the sealed truck ref; the two parties can read it.
-    // Queries must filter on the caller's own clientId or driverId.
-    // ---------------------------------------------------------------------
     // calls — voice calls between a customer and their chofer
     // ---------------------------------------------------------------------
 
@@ -296,6 +289,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---------------------------------------------------------------------
+    // chatRequests — a customer talking to a nearby chofer before any job
+    // ---------------------------------------------------------------------
+
+    // Created and answered only through the requestChat / respondChatRequest
+    // callables, which open the sealed truck ref; the two parties can read it.
+    // Queries must filter on the caller's own clientId or driverId.
     match /chatRequests/{requestId} {
       allow read: if isStaff() ||
         (ok() && (resource.data.clientId == uid() || resource.data.driverId == uid()));

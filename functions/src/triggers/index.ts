@@ -3,6 +3,7 @@ import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/fire
 import { logger } from 'firebase-functions/v2';
 
 import { needsDriverPhoto } from '../lib/chatRequests.js';
+import { needsServiceDriverPhoto } from '../lib/servicePhoto.js';
 import { followPresence } from '../lib/presence.js';
 
 import {
@@ -300,6 +301,31 @@ export const notifyOnChatRequestMessage = onDocumentCreated(
       data: { requestId, type: 'chat_request_message' },
       channel: 'chat',
     });
+  },
+);
+
+/**
+ * Fills in the chofer's photo on an active service that has none.
+ *
+ * Assigning by hand used to leave it out, so those customers saw their chofer
+ * as a letter. The assignment copies it now; this catches the services already
+ * out, and a chofer who adds a photo mid-job. Writing back re-runs the trigger
+ * once, and that pass sees the photo and stops. A chofer with no photo at all
+ * writes nothing, so there is no loop either.
+ */
+export const backfillServiceDriverPhoto = onDocumentWritten(
+  { document: 'services/{serviceId}', region },
+  async (event) => {
+    const after = event.data?.after;
+    const service = after?.data();
+    if (!after || !service || !needsServiceDriverPhoto(service)) return;
+
+    const driver = (await Paths.driver(service['driverId'] as string).get()).data();
+    const photoUrl = (driver?.['photoUrl'] as string | undefined) ?? '';
+    if (!photoUrl) return;
+
+    await after.ref.update({ driverPhotoUrl: photoUrl });
+    logger.info('service.photoBackfilled', { serviceId: event.params['serviceId'] });
   },
 );
 

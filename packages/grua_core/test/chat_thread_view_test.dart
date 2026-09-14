@@ -40,6 +40,7 @@ Future<void> main() async {
     Future<Result<void>> Function({required bool blocked})? onSetBlocked,
     Future<Result<void>> Function()? onClearChat,
     Future<Result<void>> Function()? onDeleteChat,
+    VoidCallback? onCall,
   }) => MaterialApp(
     theme: AppTheme.phone(),
     home: ChatThreadView(
@@ -61,9 +62,25 @@ Future<void> main() async {
       onDeleteChat: onDeleteChat,
       onDeleteMessages: onDeleteMessages,
       onDownloadImages: onDownloadImages,
+      onCall: onCall,
       onSend: (_, _) async => const Result.ok(null),
     ),
   );
+
+  testWidgets('the call button places an in-app call when the chat has one', (
+    tester,
+  ) async {
+    // The job chat's phone icon used to hand the number to the dialer, which in
+    // a browser did nothing. With a call action it rings the other app instead.
+    var calls = 0;
+    await tester.pumpWidget(harness(messages: const [], onCall: () => calls++));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('chat-call')));
+    await tester.pump();
+
+    expect(calls, 1);
+  });
 
   testWidgets('a message of mine shows one tick when sent and two when read', (
     tester,

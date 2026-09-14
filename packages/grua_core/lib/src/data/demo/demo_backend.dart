@@ -1481,6 +1481,7 @@ class DemoBackend {
       driverId: driver.id,
       driverName: driver.name,
       driverPhone: driver.phone,
+      driverPhotoUrl: driver.photoUrl,
       driverRating: driver.rating,
       truckId: truck?.id,
       truckPlate: truck?.displayPlate ?? '',

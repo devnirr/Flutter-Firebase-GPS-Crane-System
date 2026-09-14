@@ -1,6 +1,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 
+import { releaseIfFinished } from '../lib/driverRelease.js';
 import { OfferState, ServiceStatus } from '../lib/enums.js';
 import { FieldValue, Paths, Timestamp } from '../lib/firestore.js';
 import { alertAdmins } from '../lib/push.js';
@@ -123,6 +124,34 @@ export const reapStaleDrivers = onSchedule(
         );
       }
     }
+  },
+);
+
+/**
+ * Frees choferes still marked busy with a job that is over.
+ *
+ * Nothing should leave one behind, but a chofer who is left behind cannot get
+ * out on their own: "Ocupado" with an empty screen, never offered work, and
+ * refused when they try to go offline.
+ */
+export const releaseFinishedDrivers = onSchedule(
+  { schedule: 'every 5 minutes', region, timeZone: 'America/Santo_Domingo' },
+  async () => {
+    const holding = await Paths.drivers()
+      .where('currentServiceId', '!=', null)
+      .limit(200)
+      .get();
+
+    let released = 0;
+    for (const doc of holding.docs) {
+      try {
+        if (await releaseIfFinished(doc.id)) released++;
+      } catch (error) {
+        // One bad record must not stop the sweep for the rest.
+        logger.error('sweep.releaseFailed', { driverId: doc.id, error });
+      }
+    }
+    if (released > 0) logger.warn('sweep.releasedDrivers', { count: released });
   },
 );
 

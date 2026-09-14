@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../calls/call_controller.dart';
 import '../domain/enums.dart';
 import '../domain/failures.dart';
 import '../domain/models/chat_prefs.dart';
@@ -67,6 +68,19 @@ class ServiceChatScreen extends ConsumerWidget {
       photoUrl: isDriver ? '' : (service?.driverPhotoUrl ?? ''),
       // On a job the two sides already have each other's number.
       phoneNumber: (isDriver ? service?.clientPhone : service?.driverPhone) ?? '',
+      // The same in-app call as the phone button on the service screen, so the
+      // header's call icon rings the other person's app — in a browser too,
+      // where handing a number to the dialer did nothing at all. Outside the
+      // window where the two are in contact, the call screen says why it
+      // cannot ring.
+      onCall: service == null
+          ? null
+          : () => unawaited(
+                ref.read(callControllerProvider.notifier).call(
+                      serviceId: serviceId,
+                      peerName: otherName,
+                    ),
+              ),
       hiddenBefore: prefs.clearedAt,
       blocked: blocked,
       blockedByOther: blockedByOther,
@@ -185,6 +199,7 @@ class ChatThreadView extends StatefulWidget {
     this.subtitle,
     this.photoUrl = '',
     this.phoneNumber = '',
+    this.onCall,
     this.hiddenBefore,
     this.blocked = false,
     this.blockedByOther = false,
@@ -209,8 +224,15 @@ class ChatThreadView extends StatefulWidget {
   /// The other person's face in the header. Empty draws their initials.
   final String photoUrl;
 
-  /// Who the call button dials. Empty says we do not have their number yet.
+  /// Who the call button dials, when there is no [onCall]. Empty says we do
+  /// not have their number yet.
   final String phoneNumber;
+
+  /// Places an in-app voice call. When given, the call button uses it instead
+  /// of handing [phoneNumber] to the phone's dialer. The job chat passes one;
+  /// a chat with a nearby truck before any job has no service to call through,
+  /// and keeps the dialer.
+  final VoidCallback? onCall;
 
   /// This person emptied the conversation up to here: messages sent at or
   /// before it are theirs to not see again. Nothing is removed for the other
@@ -626,9 +648,14 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     _search.clear();
   });
 
-  /// Hands the number to the phone's dialer rather than placing the call: the
-  /// customer and the chofer talk on their own line, as they do today.
+  /// Places the in-app call where there is one; otherwise hands the number to
+  /// the phone's dialer.
   Future<void> _call() async {
+    final onCall = widget.onCall;
+    if (onCall != null) {
+      onCall();
+      return;
+    }
     final number = widget.phoneNumber;
     if (number.isEmpty) {
       _say('Todavía no tenemos su número de teléfono.');

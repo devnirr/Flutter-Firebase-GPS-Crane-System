@@ -12,6 +12,7 @@ import {
 } from '../lib/enums.js';
 import { Code, invalidArgument, precondition } from '../lib/errors.js';
 import { FieldValue, Paths } from '../lib/firestore.js';
+import { releaseIfFinished } from '../lib/driverRelease.js';
 import { distanceMeters, type LatLng } from '../lib/geo.js';
 import { requireActiveDriver, requireAuth, requireRole } from '../lib/guards.js';
 import { buildQuote, cancellationFeeCents, loadPricing } from '../lib/pricing.js';
@@ -128,7 +129,8 @@ export const setOnline = onCall({ region, cors: true }, async (request) => {
   const driver = (await driverRef.get()).data();
   if (!driver) throw precondition(Code.notFound, 'Chofer no encontrado.');
 
-  if (driver['currentServiceId']) {
+  // A hold on a job that is already over must not keep them online forever.
+  if (driver['currentServiceId'] && !(await releaseIfFinished(caller.uid))) {
     throw precondition(
       Code.driverBusy,
       'No puedes ponerte fuera de línea con un servicio en curso.',
@@ -489,7 +491,12 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
   )?.toDate();
 
   const feeCents = cancellationFeeCents(pricing, acceptedAt ?? null, new Date());
-  const driverId = service['driverId'] as string | undefined;
+
+  // The chofer comes from the transaction's own read, not the one above. A
+  // chofer who accepted between the two was otherwise never freed: the service
+  // ended up cancelled with them on it, and they stayed "Ocupado" on an empty
+  // screen, skipped by dispatch and unable to go offline.
+  let driverId: string | undefined;
 
   await applyTransition({
     serviceId,
@@ -507,7 +514,9 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
       },
     },
 
-    inTransaction: ({ transaction }) => {
+    inTransaction: ({ transaction, service: fresh }) => {
+      driverId = fresh['driverId'] as string | undefined;
+
       transaction.update(Paths.user(service['clientId'] as string), {
         activeServiceId: FieldValue.delete(),
         updatedAt: FieldValue.serverTimestamp(),
