@@ -210,11 +210,19 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         peerName: data['peerName'] as String? ?? '',
         url: data['url'] as String? ?? '',
         token: data['token'] as String? ?? '',
+        video: data['video'] == true,
       );
 
   @override
-  Future<Result<CallJoin>> startCall(String serviceId) =>
-      _call('startCall', {'serviceId': serviceId}, _join);
+  Future<Result<CallJoin>> startCall(String serviceId, {bool video = false}) =>
+      _call('startCall', {'serviceId': serviceId, 'video': video}, _join);
+
+  @override
+  Future<Result<CallJoin>> startChatRequestCall(
+    String requestId, {
+    bool video = false,
+  }) =>
+      _call('startCall', {'chatRequestId': requestId, 'video': video}, _join);
 
   @override
   Future<Result<CallJoin>> answerCall(String callId) =>

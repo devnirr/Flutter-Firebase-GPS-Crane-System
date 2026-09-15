@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show StreamProviderFamily;
+import 'package:livekit_client/livekit_client.dart' as lk show VideoTrack;
 
 import '../domain/failures.dart';
 import '../providers.dart';
@@ -39,6 +40,8 @@ class CallSession {
     this.muted = false,
     this.speaker = false,
     this.canSwitchSpeaker = false,
+    this.video = false,
+    this.cameraOn = false,
     this.connectedAt,
     this.message,
   });
@@ -49,6 +52,12 @@ class CallSession {
   final bool muted;
   final bool speaker;
   final bool canSwitchSpeaker;
+
+  /// A video call: the screen shows pictures, not just a name.
+  final bool video;
+
+  /// This person is sending their picture. Only ever true on a [video] call.
+  final bool cameraOn;
 
   /// When both were on the line, for the timer.
   final DateTime? connectedAt;
@@ -65,6 +74,7 @@ class CallSession {
     bool? muted,
     bool? speaker,
     bool? canSwitchSpeaker,
+    bool? cameraOn,
     DateTime? connectedAt,
     String? message,
   }) =>
@@ -75,6 +85,8 @@ class CallSession {
         muted: muted ?? this.muted,
         speaker: speaker ?? this.speaker,
         canSwitchSpeaker: canSwitchSpeaker ?? this.canSwitchSpeaker,
+        video: video,
+        cameraOn: cameraOn ?? this.cameraOn,
         connectedAt: connectedAt ?? this.connectedAt,
         message: message ?? this.message,
       );
@@ -115,11 +127,25 @@ class CallController extends Notifier<CallSession> {
 
   // ---------------------------------------------------------------- placing
 
-  /// Rings the other party on [serviceId]. [peerName] is shown straight away,
-  /// before the server has answered.
-  Future<void> call({required String serviceId, required String peerName}) async {
+  /// Rings the other party on [serviceId], or in the pre-job conversation
+  /// [chatRequestId] — exactly one of the two. [peerName] is shown straight
+  /// away, before the server has answered. [video] makes it a video call.
+  Future<void> call({
+    required String peerName,
+    String? serviceId,
+    String? chatRequestId,
+    bool video = false,
+  }) async {
+    assert(
+      (serviceId == null) != (chatRequestId == null),
+      'A call is on a service or in a chat, not both and not neither.',
+    );
     if (!state.isIdle) return;
-    state = CallSession(phase: CallPhase.outgoing, peerName: peerName);
+    state = CallSession(
+      phase: CallPhase.outgoing,
+      peerName: peerName,
+      video: video,
+    );
 
     // The microphone first, and only then the other phone. The other way
     // round, a caller whose microphone was refused had already set the other
@@ -131,7 +157,9 @@ class CallController extends Notifier<CallSession> {
     }
 
     final gateway = ref.read(functionsGatewayProvider);
-    final result = await gateway.startCall(serviceId);
+    final result = serviceId != null
+        ? await gateway.startCall(serviceId, video: video)
+        : await gateway.startChatRequestCall(chatRequestId!, video: video);
 
     // Hung up while the server was still being asked. The call exists now, and
     // left alone it would ring on the other phone for the full 45 seconds.
@@ -170,6 +198,7 @@ class CallController extends Notifier<CallSession> {
       phase: CallPhase.incoming,
       callId: call.id,
       peerName: call.callerName,
+      video: call.video,
     );
     _watchCall(call.id);
   }
@@ -216,6 +245,30 @@ class CallController extends Notifier<CallSession> {
     await _transport?.setSpeaker(on: on);
   }
 
+  /// Stops or restarts sending this person's picture, keeping the call.
+  Future<void> toggleCamera() async {
+    if (!state.video) return;
+    final on = !state.cameraOn;
+    state = state.copyWith(cameraOn: on);
+    await _transport?.setCameraOn(on: on);
+  }
+
+  Future<void> switchCamera() async {
+    if (!state.video) return;
+    await _transport?.switchCamera();
+  }
+
+  /// This person's own picture, for the preview. Never anything on a voice
+  /// call, before the camera is taken, or once the call is over.
+  ValueListenable<lk.VideoTrack?> get localVideo =>
+      _transport?.localVideo ?? _noVideo;
+
+  /// The other person's picture, once it arrives.
+  ValueListenable<lk.VideoTrack?> get remoteVideo =>
+      _transport?.remoteVideo ?? _noVideo;
+
+  static final _noVideo = ValueNotifier<lk.VideoTrack?>(null);
+
   // ---------------------------------------------------------------- plumbing
 
   /// Takes the microphone for this call. False, with the screen already
@@ -226,12 +279,16 @@ class CallController extends Notifier<CallSession> {
     final transport = ref.read(voiceTransportFactoryProvider)();
     _transport = transport;
     try {
-      await transport.prepare();
+      await transport.prepare(video: state.video);
+      // A new state, so the screen picks up the camera preview it now has.
+      if (!state.isIdle && state.phase != CallPhase.ended) {
+        state = state.copyWith(cameraOn: state.video);
+      }
       return true;
     } on Object catch (error) {
       debugPrint('Call microphone refused: $error');
       final problem = CallAudioProblem.of(error);
-      _end(problem.message);
+      _end(problem.messageFor(video: state.video));
       if (declining != null) {
         await ref
             .read(functionsGatewayProvider)
@@ -251,6 +308,13 @@ class CallController extends Notifier<CallSession> {
     final transport = _transport ?? ref.read(voiceTransportFactoryProvider)();
     _transport = transport;
     state = state.copyWith(canSwitchSpeaker: transport.canSwitchSpeaker);
+
+    // A video call is held at arm's length, where the earpiece cannot be
+    // heard.
+    if (state.video && transport.canSwitchSpeaker) {
+      state = state.copyWith(speaker: true);
+      unawaited(transport.setSpeaker(on: true));
+    }
 
     _joined = transport.peerJoined.listen((_) {
       // The caller is in the room before anyone answers; being alone in it is
@@ -275,7 +339,10 @@ class CallController extends Notifier<CallSession> {
       // It used to blame the microphone for everything, a server it could not
       // reach included.
       debugPrint('Call audio failed: $error');
-      await _finish(EndCallReason.hangup, CallAudioProblem.of(error).message);
+      await _finish(
+        EndCallReason.hangup,
+        CallAudioProblem.of(error).messageFor(video: state.video),
+      );
     }
   }
 

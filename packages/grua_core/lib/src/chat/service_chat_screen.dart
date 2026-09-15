@@ -81,6 +81,15 @@ class ServiceChatScreen extends ConsumerWidget {
                       peerName: otherName,
                     ),
               ),
+      onVideoCall: service == null
+          ? null
+          : () => unawaited(
+                ref.read(callControllerProvider.notifier).call(
+                      serviceId: serviceId,
+                      peerName: otherName,
+                      video: true,
+                    ),
+              ),
       hiddenBefore: prefs.clearedAt,
       blocked: blocked,
       blockedByOther: blockedByOther,
@@ -200,6 +209,7 @@ class ChatThreadView extends StatefulWidget {
     this.photoUrl = '',
     this.phoneNumber = '',
     this.onCall,
+    this.onVideoCall,
     this.hiddenBefore,
     this.blocked = false,
     this.blockedByOther = false,
@@ -233,6 +243,10 @@ class ChatThreadView extends StatefulWidget {
   /// a chat with a nearby truck before any job has no service to call through,
   /// and keeps the dialer.
   final VoidCallback? onCall;
+
+  /// Places an in-app video call. Only a job chat has one: a call runs through
+  /// a service, and a chat with a nearby truck has none yet.
+  final VoidCallback? onVideoCall;
 
   /// This person emptied the conversation up to here: messages sent at or
   /// before it are theirs to not see again. Nothing is removed for the other
@@ -665,9 +679,16 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     if (!opened) _say('No se pudo abrir el teléfono.');
   }
 
-  /// There is no video service behind this yet — better to say so than to
-  /// open a screen that never connects.
-  void _videoCall() => _say('Las videollamadas todavía no están disponibles.');
+  /// Rings the other person's app with video, where the chat has a service to
+  /// call through; otherwise says why it cannot rather than doing nothing.
+  void _videoCall() {
+    final onVideoCall = widget.onVideoCall;
+    if (onVideoCall != null) {
+      onVideoCall();
+      return;
+    }
+    _say('La videollamada está disponible durante un servicio.');
+  }
 
   void _say(String message) {
     if (!mounted) return;

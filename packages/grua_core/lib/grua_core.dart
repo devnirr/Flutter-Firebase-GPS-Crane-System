@@ -65,6 +65,7 @@ export 'src/theme/widgets/grua_logo.dart';
 export 'src/theme/widgets/grua_map.dart';
 export 'src/theme/widgets/notification_banner.dart';
 export 'src/theme/widgets/schematic_map.dart';
+export 'src/theme/widgets/vehicle_photos.dart';
 
 // Utilities
 export 'src/utils/date_time_do.dart';

@@ -77,12 +77,13 @@ void main() {
 
   test('the call queries have theirs', () {
     // The app watching for a call ringing for it, and the server refusing a
-    // second call on a service that already has one.
+    // second call on a service, or in a pre-job chat, that already has one.
     expect(
       declared(),
       containsAll([
         'calls: calleeId ASCENDING + state ASCENDING',
         'calls: serviceId ASCENDING + state ASCENDING',
+        'calls: chatRequestId ASCENDING + state ASCENDING',
       ]),
     );
   });

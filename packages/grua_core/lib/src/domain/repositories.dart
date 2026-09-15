@@ -194,6 +194,18 @@ abstract interface class ServiceRepository {
 
   Stream<ServiceTracking?> watchTracking(String serviceId);
 
+  /// Puts one photo of the customer's vehicle in the bucket under
+  /// `requests/{clientId}/` and returns the URL that travels on the request.
+  ///
+  /// Uploaded before the service exists — the photos are part of asking — so
+  /// they are filed under the customer rather than the service. Demo mode has
+  /// no bucket and hands back a data URI.
+  Future<Result<String>> uploadVehiclePhoto({
+    required String clientId,
+    required Uint8List bytes,
+    required String contentType,
+  });
+
   /// Every service, newest first, for the office's Servicios page. Staff only:
   /// the rules refuse the query to anyone else.
   ///
@@ -713,8 +725,17 @@ abstract interface class FunctionsGateway {
   /// Rings the other party on [serviceId] and joins the caller to the call.
   ///
   /// Refused outside the window where the two are in contact, and when a call
-  /// on the service is already ringing or in progress.
-  Future<Result<CallJoin>> startCall(String serviceId);
+  /// on the service is already ringing or in progress. [video] makes it a
+  /// video call for both sides.
+  Future<Result<CallJoin>> startCall(String serviceId, {bool video = false});
+
+  /// The same, in a conversation opened from a nearby truck before any job.
+  /// Refused unless the chofer accepted it and it is still open, and when
+  /// either of the two blocked the other.
+  Future<Result<CallJoin>> startChatRequestCall(
+    String requestId, {
+    bool video = false,
+  });
 
   /// Answers a call ringing for the current user and joins them to it.
   Future<Result<CallJoin>> answerCall(String callId);

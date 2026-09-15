@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:livekit_client/livekit_client.dart' as lk
+    show VideoTrack, VideoTrackRenderer, VideoViewFit;
+
 import '../theme/brand.dart';
 import 'call_controller.dart';
 
@@ -26,7 +29,218 @@ class CallLayer extends ConsumerWidget {
       children: [
         Positioned.fill(child: child),
         if (!session.isIdle)
-          Positioned.fill(child: _CallScreen(session: session)),
+          Positioned.fill(
+            // Ringing and the moment after it ends look the same either way;
+            // only a video call on its way or on the line shows pictures.
+            child: session.video &&
+                    (session.phase == CallPhase.outgoing ||
+                        session.phase == CallPhase.connecting ||
+                        session.phase == CallPhase.active)
+                ? _VideoCallScreen(session: session)
+                : _CallScreen(session: session),
+          ),
+      ],
+    );
+  }
+}
+
+/// A video call: the other person filling the screen, this person's own
+/// picture in a corner, and the controls over the bottom.
+///
+/// Before the other person's picture arrives — still ringing, or they have
+/// their camera off — the big picture is this person's own preview, then
+/// the other person's initial.
+class _VideoCallScreen extends ConsumerWidget {
+  const _VideoCallScreen({required this.session});
+
+  final CallSession session;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    final controller = ref.read(callControllerProvider.notifier);
+    final name = session.peerName.isEmpty ? 'Videollamada' : session.peerName;
+    final active = session.phase == CallPhase.active;
+
+    return Material(
+      key: const Key('call-screen'),
+      color: BrandColors.ink,
+      child: ValueListenableBuilder<lk.VideoTrack?>(
+        valueListenable: controller.remoteVideo,
+        builder: (context, remote, _) => ValueListenableBuilder<lk.VideoTrack?>(
+          valueListenable: controller.localVideo,
+          builder: (context, local, _) {
+            final showRemote = active && remote != null;
+            // Your own face fills the screen only while nobody else is on it.
+            final big = showRemote ? remote : (active ? null : local);
+
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: big != null
+                      ? lk.VideoTrackRenderer(
+                          big,
+                          // A new renderer when the picture changes hands, not
+                          // one left drawing the old track.
+                          key: ValueKey(identityHashCode(big)),
+                          fit: lk.VideoViewFit.cover,
+                        )
+                      : Center(
+                          child: _Avatar(
+                            name: name,
+                            ringing: session.phase == CallPhase.outgoing,
+                          ),
+                        ),
+                ),
+                // Keeps the white text legible over a bright picture.
+                const Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x99000000),
+                            Color(0x00000000),
+                            Color(0x00000000),
+                            Color(0xB3000000),
+                          ],
+                          stops: [0, 0.25, 0.6, 1],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      Insets.lg,
+                      Insets.lg,
+                      Insets.lg,
+                      Insets.xl,
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          name,
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.titleLarge?.copyWith(color: BrandColors.white),
+                        ),
+                        const SizedBox(height: Insets.xs),
+                        _Status(session: session),
+                        if (active && remote == null) ...[
+                          const SizedBox(height: Insets.xs),
+                          Text(
+                            'Cámara apagada',
+                            key: const Key('call-peer-camera-off'),
+                            style: text.bodySmall?.copyWith(
+                              color: BrandColors.white.withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        _VideoControls(session: session, controller: controller),
+                      ],
+                    ),
+                  ),
+                ),
+                if (showRemote && local != null && session.cameraOn)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.all(Insets.lg),
+                        child: ClipRRect(
+                          borderRadius: Corners.brMd,
+                          child: SizedBox(
+                            key: const Key('call-self-view'),
+                            width: 104,
+                            height: 148,
+                            child: lk.VideoTrackRenderer(
+                              local,
+                              fit: lk.VideoViewFit.cover,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoControls extends StatelessWidget {
+  const _VideoControls({required this.session, required this.controller});
+
+  final CallSession session;
+  final CallController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final hangUp = _RoundButton(
+      key: const Key('call-hangup'),
+      icon: Icons.call_end,
+      label: 'Colgar',
+      color: BrandColors.red,
+      size: 60,
+      onTap: () => unawaited(controller.hangUp()),
+    );
+    if (session.phase != CallPhase.active) return Center(child: hangUp);
+
+    // Wraps rather than squeezing: five round buttons do not fit side by side
+    // on a narrow phone.
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: Insets.lg,
+      runSpacing: Insets.md,
+      children: [
+        _RoundButton(
+          key: const Key('call-mute'),
+          icon: session.muted ? Icons.mic_off : Icons.mic_none,
+          label: 'Micrófono',
+          color: session.muted ? BrandColors.white : BrandColors.grey600,
+          iconColor: session.muted ? BrandColors.ink : BrandColors.white,
+          size: 60,
+          onTap: () => unawaited(controller.toggleMute()),
+        ),
+        _RoundButton(
+          key: const Key('call-camera'),
+          icon: session.cameraOn ? Icons.videocam : Icons.videocam_off,
+          label: 'Cámara',
+          color: session.cameraOn ? BrandColors.grey600 : BrandColors.white,
+          iconColor: session.cameraOn ? BrandColors.white : BrandColors.ink,
+          size: 60,
+          onTap: () => unawaited(controller.toggleCamera()),
+        ),
+        if (session.cameraOn)
+          _RoundButton(
+            key: const Key('call-switch-camera'),
+            icon: Icons.cameraswitch_outlined,
+            label: 'Girar',
+            color: BrandColors.grey600,
+            size: 60,
+            onTap: () => unawaited(controller.switchCamera()),
+          ),
+        if (session.canSwitchSpeaker)
+          _RoundButton(
+            key: const Key('call-speaker'),
+            icon: session.speaker ? Icons.volume_up : Icons.volume_down,
+            label: 'Altavoz',
+            color: session.speaker ? BrandColors.white : BrandColors.grey600,
+            iconColor: session.speaker ? BrandColors.ink : BrandColors.white,
+            size: 60,
+            onTap: () => unawaited(controller.toggleSpeaker()),
+          ),
+        hangUp,
       ],
     );
   }
@@ -208,7 +422,8 @@ class _StatusState extends State<_Status> {
     final session = widget.session;
     final label = switch (session.phase) {
       CallPhase.outgoing => 'Llamando…',
-      CallPhase.incoming => 'Llamada entrante',
+      CallPhase.incoming =>
+        session.video ? 'Videollamada entrante' : 'Llamada entrante',
       CallPhase.connecting => 'Conectando…',
       CallPhase.active => _elapsed(session.connectedAt),
       CallPhase.ended => session.message ?? 'Llamada terminada',
@@ -257,7 +472,7 @@ class _Controls extends StatelessWidget {
             ),
             _RoundButton(
               key: const Key('call-answer'),
-              icon: Icons.call,
+              icon: session.video ? Icons.videocam : Icons.call,
               label: 'Contestar',
               color: BrandColors.success,
               onTap: () => unawaited(controller.answer()),
@@ -315,6 +530,7 @@ class _RoundButton extends StatelessWidget {
     required this.color,
     required this.onTap,
     this.iconColor = BrandColors.white,
+    this.size = 68,
     super.key,
   });
 
@@ -323,6 +539,7 @@ class _RoundButton extends StatelessWidget {
   final Color color;
   final Color iconColor;
   final VoidCallback onTap;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -339,9 +556,9 @@ class _RoundButton extends StatelessWidget {
               customBorder: const CircleBorder(),
               onTap: onTap,
               child: SizedBox(
-                width: 68,
-                height: 68,
-                child: Icon(icon, color: iconColor, size: 30),
+                width: size,
+                height: size,
+                child: Icon(icon, color: iconColor, size: size * 0.44),
               ),
             ),
           ),

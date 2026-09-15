@@ -67,6 +67,17 @@ service firebase.storage {
       allow write: if ok() && isReasonableSize() && isImageOrPdf();
     }
 
+    // Photos of the vehicle a customer adds to a request, uploaded before the
+    // service exists. The chofer offered the job sees them through the
+    // download URL the request carries; as with chat photos, the random name
+    // and the token in that URL are what keep them to the people concerned.
+    match /requests/{clientId}/{fileName} {
+      allow read: if isStaff() || (ok() && request.auth.uid == clientId);
+      allow write: if ok() && request.auth.uid == clientId
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|png|webp|heic)');
+    }
+
     match /trucks/{truckId}/{fileName} {
       allow read: if ok();
       allow write: if isStaff() && isReasonableSize() && isImageOrPdf();

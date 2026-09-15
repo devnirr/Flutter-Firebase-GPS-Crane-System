@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../calls/call_controller.dart';
 import '../domain/enums.dart';
 import '../domain/failures.dart';
 import '../domain/models/chat_prefs.dart';
@@ -85,6 +86,35 @@ class _RequestChatScreenState extends ConsumerState<RequestChatScreen> {
         () => ref.read(functionsGatewayProvider).closeChatRequest(widget.requestId),
       );
 
+  /// Rings the other person's app, voice or video, while the conversation is
+  /// open. Before the chofer accepts and after it closes it says why instead:
+  /// asking for the camera only to be refused by the server helps nobody.
+  void _call({
+    required ChatRequestPhase phase,
+    required String peerName,
+    required bool video,
+  }) {
+    if (phase != ChatRequestPhase.open) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            phase == ChatRequestPhase.waiting
+                ? 'Podrán llamarse cuando el chofer acepte el chat.'
+                : 'Esta conversación terminó.',
+          ),
+        ),
+      );
+      return;
+    }
+    unawaited(
+      ref.read(callControllerProvider.notifier).call(
+            chatRequestId: widget.requestId,
+            peerName: peerName,
+            video: video,
+          ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final request = ref.watch(chatRequestProvider(widget.requestId)).value;
@@ -123,6 +153,10 @@ class _RequestChatScreenState extends ConsumerState<RequestChatScreen> {
       // Denormalised onto the request when the chofer accepts, so the customer
       // sees the face they picked off the map.
       photoUrl: _isDriver ? '' : request.driverPhotoUrl,
+      // In-app calls, like a job's chat. There is no phone number to dial
+      // before a job: the chofer stays anonymous until the tow is requested.
+      onCall: () => _call(phase: phase, peerName: title, video: false),
+      onVideoCall: () => _call(phase: phase, peerName: title, video: true),
       hiddenBefore: prefs.clearedAt,
       blocked: blocked,
       blockedByOther: blockedByOther,

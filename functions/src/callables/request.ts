@@ -29,6 +29,7 @@ import { requireClient, requireNotInMaintenance } from '../lib/guards.js';
 import { buildQuote, loadPricing, signQuote, verifyQuote } from '../lib/pricing.js';
 import { roadRoute } from '../lib/routes.js';
 import { mapsApiKey, quoteSigningSecret } from '../lib/secrets.js';
+import { MAX_VEHICLE_PHOTOS, isVehiclePhotoUrl } from '../lib/servicePhoto.js';
 import { serviceCode } from '../lib/time.js';
 import { openTruckRef } from '../lib/truckRef.js';
 import { dispatchNext } from '../dispatch/dispatchNext.js';
@@ -64,7 +65,14 @@ const vehicle = z.object({
   year: z.number().int().min(1900).max(2100).nullable().optional(),
   type: z.nativeEnum(VehicleType).default(VehicleType.sedan),
   condition: z.nativeEnum(VehicleCondition).default(VehicleCondition.noArranca),
-  photoPaths: z.array(z.string().max(400)).max(5).default([]),
+  // Download URLs of the photos the customer added, uploaded to the bucket
+  // before asking. Only our own bucket's: the chofer's app loads them as-is.
+  photoPaths: z
+    .array(
+      z.string().max(2048).refine(isVehiclePhotoUrl, 'Foto no válida.'),
+    )
+    .max(MAX_VEHICLE_PHOTOS)
+    .default([]),
   notes: z.string().max(500).default(''),
 });
 

@@ -41,6 +41,7 @@ Future<void> main() async {
     Future<Result<void>> Function()? onClearChat,
     Future<Result<void>> Function()? onDeleteChat,
     VoidCallback? onCall,
+    VoidCallback? onVideoCall,
   }) => MaterialApp(
     theme: AppTheme.phone(),
     home: ChatThreadView(
@@ -63,6 +64,7 @@ Future<void> main() async {
       onDeleteMessages: onDeleteMessages,
       onDownloadImages: onDownloadImages,
       onCall: onCall,
+      onVideoCall: onVideoCall,
       onSend: (_, _) async => const Result.ok(null),
     ),
   );
@@ -194,13 +196,28 @@ Future<void> main() async {
     expect(find.text('Voy llegando a la esquina'), findsOneWidget);
     expect(find.byKey(const Key('chat-search-field')), findsNothing);
 
-    // The video call says plainly that it is not there yet.
+    // Without a service to call through, the video call says why it cannot.
     await tester.tap(find.byKey(const Key('chat-video-call')));
     await tester.pumpAndSettle();
     expect(
-      find.text('Las videollamadas todavía no están disponibles.'),
+      find.text('La videollamada está disponible durante un servicio.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('the video button places an in-app video call when the chat has one', (
+    tester,
+  ) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      harness(messages: const [], onVideoCall: () => calls++),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('chat-video-call')));
+    await tester.pump();
+
+    expect(calls, 1);
   });
 
   testWidgets('the other side typing shows just above the message box', (

@@ -1,5 +1,48 @@
 import { ACTIVE_STATUSES, type ServiceStatus } from './enums.js';
 
+/** How many vehicle photos a request may carry — the form allows three. */
+export const MAX_VEHICLE_PHOTOS = 3;
+
+/**
+ * Whether a vehicle photo on a request is one of ours: a download URL from the
+ * project's own bucket.
+ *
+ * The chofer's app loads these as they are, so a request must not be able to
+ * point it at any address on the internet.
+ */
+export function isVehiclePhotoUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol === 'https:') {
+    return (
+      url.hostname === 'firebasestorage.googleapis.com' ||
+      url.hostname.endsWith('.firebasestorage.app')
+    );
+  }
+  // The Storage emulator, and only when running under the emulator.
+  return (
+    process.env['FUNCTIONS_EMULATOR'] === 'true' &&
+    url.protocol === 'http:' &&
+    (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+  );
+}
+
+/**
+ * The vehicle photos to copy onto an offer: only well-formed ones, at most
+ * [MAX_VEHICLE_PHOTOS].
+ */
+export function vehiclePhotoUrls(vehicle: unknown): string[] {
+  const photos = ((vehicle ?? {}) as Record<string, unknown>)['photoPaths'];
+  if (!Array.isArray(photos)) return [];
+  return photos
+    .filter((p): p is string => typeof p === 'string' && isVehiclePhotoUrl(p))
+    .slice(0, MAX_VEHICLE_PHOTOS);
+}
+
 /**
  * Whether a service has a chofer on it but no photo of them.
  *

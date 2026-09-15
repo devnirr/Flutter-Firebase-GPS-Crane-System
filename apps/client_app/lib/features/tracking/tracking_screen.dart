@@ -553,15 +553,14 @@ class _ActionsState extends ConsumerState<_Actions> {
           child: _ActionButton(
             icon: Icons.videocam_outlined,
             label: 'Video',
-            // Same as the chat header: there is no video service behind this
-            // yet, so say so rather than pretend.
+            // An in-app video call to the chofer's app.
             onTap: canContact
-                ? () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Las videollamadas todavía no están disponibles.',
-                        ),
-                      ),
+                ? () => unawaited(
+                      ref.read(callControllerProvider.notifier).call(
+                            serviceId: service.id,
+                            peerName: service.driverName,
+                            video: true,
+                          ),
                     )
                 : null,
           ),

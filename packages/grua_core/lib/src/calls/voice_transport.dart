@@ -4,20 +4,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 
-/// The audio half of a call: take the microphone, connect, talk, hang up.
+/// The media half of a call: take the microphone (and the camera, for a video
+/// call), connect, talk, hang up.
 ///
 /// An interface rather than LiveKit directly because two things cannot open a
-/// real audio session — demo mode, which has no LiveKit server, and a widget
-/// test, which has no microphone — and both still need the whole call flow to
-/// run. [SilentVoiceTransport] stands in for them.
+/// real media session — demo mode, which has no LiveKit server, and a widget
+/// test, which has no microphone or camera — and both still need the whole
+/// call flow to run. [SilentVoiceTransport] stands in for them.
 abstract class VoiceTransport {
-  /// Takes the microphone, asking for permission if it has to.
+  /// Takes the microphone, and the camera when [video], asking for permission
+  /// if it has to.
   ///
   /// Called *before* anybody is rung: a person who cannot talk should find out
   /// before the other phone starts ringing, not after it has been answered.
-  Future<void> prepare();
+  Future<void> prepare({bool video = false});
 
-  /// Joins the call's room and starts sending the prepared microphone.
+  /// Joins the call's room and starts sending what [prepare] took.
   Future<void> connect({required String url, required String token});
 
   /// Fires when the other person is in the room and can be heard.
@@ -33,37 +35,61 @@ abstract class VoiceTransport {
 
   bool get canSwitchSpeaker;
 
-  /// Leaves the room and gives the microphone back.
+  /// This person's own camera, for the preview. Null on a voice call, and
+  /// while the camera is off.
+  ValueListenable<lk.VideoTrack?> get localVideo;
+
+  /// The other person's camera. Null until it arrives, and while they have it
+  /// off.
+  ValueListenable<lk.VideoTrack?> get remoteVideo;
+
+  /// Stops or restarts sending the picture, keeping the call.
+  Future<void> setCameraOn({required bool on});
+
+  /// Front to back camera and back again.
+  Future<void> switchCamera();
+
+  /// Leaves the room and gives the microphone and camera back.
   Future<void> disconnect();
 }
 
-/// Makes the audio side of a call — a real one by default, a silent one in
+/// Makes the media side of a call — a real one by default, a silent one in
 /// demo mode and in tests.
 final voiceTransportFactoryProvider = Provider<VoiceTransport Function()>(
   (ref) => LiveKitVoiceTransport.new,
 );
 
-/// What stopped the audio, in words the person can act on.
+/// What stopped the call's audio or picture, in words the person can act on.
 enum CallAudioProblem {
   /// Permission refused, dismissed, or blocked for this site.
   permission(
     'Permite el uso del micrófono para llamar. En el navegador, toca el ícono '
     'del candado junto a la dirección y activa el micrófono.',
+    video:
+        'Permite el uso de la cámara y el micrófono para la videollamada. En el '
+        'navegador, toca el ícono del candado junto a la dirección y actívalos.',
   ),
 
   /// No microphone on this device, or none the browser can see.
-  noMicrophone('No encontramos un micrófono en este dispositivo.'),
+  noMicrophone(
+    'No encontramos un micrófono en este dispositivo.',
+    video: 'No encontramos una cámara o un micrófono en este dispositivo.',
+  ),
 
   /// Allowed, but the system would not open it: another program holding it,
   /// the operating system's own privacy switch, or a device that failed.
   microphoneBusy(
     'No pudimos abrir el micrófono. Puede que otra aplicación lo esté usando '
     'o que el sistema lo tenga bloqueado.',
+    video:
+        'No pudimos abrir la cámara o el micrófono. Puede que otra aplicación '
+        'los esté usando o que el sistema los tenga bloqueados.',
   ),
 
   /// The page is not on HTTPS or localhost, where browsers refuse microphones.
   insecurePage(
     'El navegador solo permite el micrófono en páginas seguras (https).',
+    video: 'El navegador solo permite la cámara en páginas seguras (https).',
   ),
 
   /// Could not reach the call server.
@@ -72,9 +98,16 @@ enum CallAudioProblem {
   /// Anything else.
   unknown('No pudimos iniciar el audio de la llamada. Intenta de nuevo.');
 
-  const CallAudioProblem(this.message);
+  const CallAudioProblem(this.message, {String? video}) : _videoMessage = video;
 
+  /// The words for a voice call.
   final String message;
+  final String? _videoMessage;
+
+  /// The words for this kind of call: a video call that could not open the
+  /// camera must not only blame the microphone.
+  String messageFor({required bool video}) =>
+      video ? (_videoMessage ?? message) : message;
 
   /// Reads what went wrong from the error the platform actually threw.
   ///
@@ -96,7 +129,10 @@ enum CallAudioProblem {
     if (has('NotFoundError') || has('device not found') || has('OverconstrainedError')) {
       return CallAudioProblem.noMicrophone;
     }
-    if (has('NotReadableError') || has('Could not start audio source') || has('TrackStartError')) {
+    if (has('NotReadableError') ||
+        has('Could not start audio source') ||
+        has('Could not start video source') ||
+        has('TrackStartError')) {
       return CallAudioProblem.microphoneBusy;
     }
     if (has('SecurityError') || has('mediaDevices') || has('getUserMedia is not')) {
@@ -118,9 +154,13 @@ enum CallAudioProblem {
 class LiveKitVoiceTransport implements VoiceTransport {
   lk.Room? _room;
   lk.LocalAudioTrack? _mic;
+  lk.LocalVideoTrack? _camera;
   lk.EventsListener<lk.RoomEvent>? _listener;
   final _joined = StreamController<void>.broadcast();
   final _left = StreamController<void>.broadcast();
+  final _localVideo = ValueNotifier<lk.VideoTrack?>(null);
+  final _remoteVideo = ValueNotifier<lk.VideoTrack?>(null);
+  lk.CameraPosition _position = lk.CameraPosition.front;
 
   static const _capture = lk.AudioCaptureOptions(
     echoCancellation: true,
@@ -138,18 +178,36 @@ class LiveKitVoiceTransport implements VoiceTransport {
   bool get canSwitchSpeaker => lk.AudioManager.instance.canSwitchSpeakerphone;
 
   @override
-  Future<void> prepare() async {
+  ValueListenable<lk.VideoTrack?> get localVideo => _localVideo;
+
+  @override
+  ValueListenable<lk.VideoTrack?> get remoteVideo => _remoteVideo;
+
+  @override
+  Future<void> prepare({bool video = false}) async {
     _mic ??= await lk.LocalAudioTrack.create(_capture);
+    if (video && _camera == null) {
+      // 540p: plenty for a face or a dented bumper on a phone, and light on a
+      // roadside mobile connection.
+      final camera = await lk.LocalVideoTrack.createCameraTrack(
+        lk.CameraCaptureOptions(
+          cameraPosition: _position,
+          params: lk.VideoParametersPresets.h540_169,
+        ),
+      );
+      _camera = camera;
+      _localVideo.value = camera;
+    }
   }
 
   @override
   Future<void> connect({required String url, required String token}) async {
+    final video = _camera != null;
     final room = lk.Room(
-      roomOptions: const lk.RoomOptions(
-        // Voice only: nothing here ever publishes video, and adaptive stream
-        // and dynacast exist to save video bandwidth.
-        adaptiveStream: false,
-        dynacast: false,
+      roomOptions: lk.RoomOptions(
+        // Both exist to save video bandwidth, so only a video call wants them.
+        adaptiveStream: video,
+        dynacast: video,
         defaultAudioCaptureOptions: _capture,
       ),
     );
@@ -157,9 +215,32 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
     _listener = room.createListener()
       ..on<lk.ParticipantConnectedEvent>((_) => _joined.add(null))
-      ..on<lk.ParticipantDisconnectedEvent>((_) => _left.add(null))
+      ..on<lk.ParticipantDisconnectedEvent>((_) {
+        _remoteVideo.value = null;
+        _left.add(null);
+      })
       // Lost for good — the other side will not hear anything more either.
-      ..on<lk.RoomDisconnectedEvent>((_) => _left.add(null));
+      ..on<lk.RoomDisconnectedEvent>((_) => _left.add(null))
+      ..on<lk.TrackSubscribedEvent>((event) {
+        final track = event.track;
+        if (track is lk.VideoTrack) _remoteVideo.value = track;
+      })
+      ..on<lk.TrackUnsubscribedEvent>((event) {
+        if (identical(event.track, _remoteVideo.value)) _remoteVideo.value = null;
+      })
+      // The other person switched their camera off, or back on.
+      ..on<lk.TrackMutedEvent>((event) {
+        if (event.participant is lk.RemoteParticipant &&
+            event.publication.kind == lk.TrackType.VIDEO) {
+          _remoteVideo.value = null;
+        }
+      })
+      ..on<lk.TrackUnmutedEvent>((event) {
+        final track = event.publication.track;
+        if (event.participant is lk.RemoteParticipant && track is lk.VideoTrack) {
+          _remoteVideo.value = track;
+        }
+      });
 
     await room.connect(url, token);
 
@@ -167,12 +248,24 @@ class LiveKitVoiceTransport implements VoiceTransport {
     _mic = mic;
     await room.localParticipant?.publishAudioTrack(mic);
 
+    final camera = _camera;
+    if (camera != null) await room.localParticipant?.publishVideoTrack(camera);
+
     // Browsers refuse to play audio a page starts on its own. Harmless when
     // they refuse: LiveKit reports it rather than throwing.
     if (kIsWeb) await room.startAudio();
 
-    // Already there: the caller joined first and has been waiting.
-    if (room.remoteParticipants.isNotEmpty) _joined.add(null);
+    // Already there: the caller joined first and has been waiting, and may
+    // already be sending their picture.
+    if (room.remoteParticipants.isNotEmpty) {
+      for (final participant in room.remoteParticipants.values) {
+        for (final publication in participant.videoTrackPublications) {
+          final track = publication.track;
+          if (track != null && !publication.muted) _remoteVideo.value = track;
+        }
+      }
+      _joined.add(null);
+    }
   }
 
   @override
@@ -193,11 +286,39 @@ class LiveKitVoiceTransport implements VoiceTransport {
   }
 
   @override
+  Future<void> setCameraOn({required bool on}) async {
+    final camera = _camera;
+    if (camera == null) return;
+    if (on) {
+      await camera.unmute();
+      _localVideo.value = camera;
+    } else {
+      // Stopped, not just hidden: the light on the phone goes off too.
+      _localVideo.value = null;
+      await camera.mute();
+    }
+  }
+
+  @override
+  Future<void> switchCamera() async {
+    final camera = _camera;
+    if (camera == null) return;
+    _position = _position == lk.CameraPosition.front
+        ? lk.CameraPosition.back
+        : lk.CameraPosition.front;
+    await camera.setCameraPosition(_position);
+  }
+
+  @override
   Future<void> disconnect() async {
     final room = _room;
     final mic = _mic;
+    final camera = _camera;
     _room = null;
     _mic = null;
+    _camera = null;
+    _localVideo.value = null;
+    _remoteVideo.value = null;
     await _listener?.dispose();
     _listener = null;
     if (room != null) {
@@ -206,15 +327,19 @@ class LiveKitVoiceTransport implements VoiceTransport {
     }
     // Given back even when the call never connected — cancelled during the
     // permission prompt, refused by the server — or the browser keeps showing
-    // the microphone as in use.
+    // the microphone and camera as in use.
     if (mic != null) {
       await mic.stop();
       await mic.dispose();
     }
+    if (camera != null) {
+      await camera.stop();
+      await camera.dispose();
+    }
   }
 }
 
-/// A call with no audio, for demo mode and tests.
+/// A call with no audio or picture, for demo mode and tests.
 ///
 /// Reports the other person as joined as soon as it connects: the ringing and
 /// answering are what the rest of the call flow is waiting on, and those come
@@ -227,11 +352,15 @@ class SilentVoiceTransport implements VoiceTransport {
 
   final _joined = StreamController<void>.broadcast();
   final _left = StreamController<void>.broadcast();
+  final _noVideo = ValueNotifier<lk.VideoTrack?>(null);
 
   bool prepared = false;
+  bool preparedVideo = false;
   bool connected = false;
   bool muted = false;
   bool speaker = false;
+  bool cameraOn = false;
+  int cameraSwitches = 0;
 
   @override
   Stream<void> get peerJoined => _joined.stream;
@@ -243,10 +372,18 @@ class SilentVoiceTransport implements VoiceTransport {
   bool get canSwitchSpeaker => true;
 
   @override
-  Future<void> prepare() async {
+  ValueListenable<lk.VideoTrack?> get localVideo => _noVideo;
+
+  @override
+  ValueListenable<lk.VideoTrack?> get remoteVideo => _noVideo;
+
+  @override
+  Future<void> prepare({bool video = false}) async {
     final error = prepareError;
     if (error != null) throw error;
     prepared = true;
+    preparedVideo = video;
+    cameraOn = video;
   }
 
   @override
@@ -265,8 +402,16 @@ class SilentVoiceTransport implements VoiceTransport {
   Future<void> setSpeaker({required bool on}) async => speaker = on;
 
   @override
+  Future<void> setCameraOn({required bool on}) async => cameraOn = on;
+
+  @override
+  Future<void> switchCamera() async => cameraSwitches++;
+
+  @override
   Future<void> disconnect() async {
     connected = false;
     prepared = false;
+    preparedVideo = false;
+    cameraOn = false;
   }
 }

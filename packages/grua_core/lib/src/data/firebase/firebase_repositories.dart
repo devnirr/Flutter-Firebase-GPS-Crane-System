@@ -609,6 +609,34 @@ class FirestoreServiceRepository implements ServiceRepository {
       Paths.service(id).snapshots().map((snap) => snap.data());
 
   @override
+  Future<Result<String>> uploadVehiclePhoto({
+    required String clientId,
+    required Uint8List bytes,
+    required String contentType,
+  }) =>
+      _guard(() async {
+        final ext = switch (contentType) {
+          'image/png' => 'png',
+          'image/webp' => 'webp',
+          'image/heic' => 'heic',
+          _ => 'jpg',
+        };
+        final ref = FirebaseStorage.instance.ref(
+          'requests/$clientId/${DateTime.now().microsecondsSinceEpoch}.$ext',
+        );
+        await ref.putData(
+          bytes,
+          SettableMetadata(
+            contentType: contentType,
+            cacheControl: 'private, max-age=604800',
+          ),
+        );
+        // The URL, not the path: the chofer's app shows it as-is, and its
+        // token is what lets them read a file in another person's folder.
+        return await ref.getDownloadURL();
+      });
+
+  @override
   Stream<Service?> watchActiveForClient(String clientId) => Paths.services()
       .where('clientId', isEqualTo: clientId)
       .where('status', whereIn: _activeWire)

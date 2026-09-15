@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
+import 'package:image_picker/image_picker.dart';
 
 /// Everything the customer has filled in so far.
 ///
@@ -271,10 +273,26 @@ class RequestController extends Notifier<RequestDraft> {
 
     state = state.copyWith(submitting: true, clearFailure: true);
 
+    // The photos go up first, so the request carries them and the chofer sees
+    // the car on the offer. They used to stay on the customer's phone: picked,
+    // shown on the form, and never sent anywhere.
+    final photoUrls = await _uploadPhotos();
+    if (photoUrls == null) {
+      state = state.copyWith(
+        submitting: false,
+        failure: const Failure(
+          FailureCode.network,
+          message: 'No pudimos subir las fotos del vehículo. Revisa tu conexión '
+              'e intenta de nuevo, o quítalas para continuar.',
+        ),
+      );
+      return null;
+    }
+
     final result = await ref.read(functionsGatewayProvider).requestService(
           pickup: pickup,
           dropoff: dropoff,
-          vehicle: state.vehicle,
+          vehicle: state.vehicle.copyWith(photoPaths: photoUrls),
           truckType: quote.truckType,
           paymentMethod: state.paymentMethod,
           quoteSignature: quote.signature,
@@ -298,7 +316,70 @@ class RequestController extends Notifier<RequestDraft> {
     );
   }
 
+  /// Uploads every picked photo and returns their URLs, in order. Null when
+  /// any of them fails: a request that silently drops the photo the customer
+  /// took is the bug this replaced.
+  Future<List<String>?> _uploadPhotos() async {
+    final paths = state.photoPaths;
+    if (paths.isEmpty) return const [];
+
+    final clientId = ref.read(currentUserIdProvider);
+    if (clientId == null) return null;
+
+    final read = ref.read(photoBytesReaderProvider);
+    final services = ref.read(serviceRepositoryProvider);
+    final urls = <String>[];
+    for (final path in paths) {
+      try {
+        final bytes = await read(path);
+        final result = await services.uploadVehiclePhoto(
+          clientId: clientId,
+          bytes: bytes,
+          contentType: imageContentType(bytes),
+        );
+        switch (result) {
+          case Ok(:final value):
+            urls.add(value);
+          case Err():
+            return null;
+        }
+      } on Object {
+        // The picked file is gone — cleared from the cache, a revoked blob URL.
+        return null;
+      }
+    }
+    return urls;
+  }
+
   void reset() => state = build();
+}
+
+/// Reads a picked photo off the device. A provider so a test can hand the form
+/// photos without a camera or a file system.
+final photoBytesReaderProvider = Provider<Future<Uint8List> Function(String path)>(
+  (ref) => (path) => XFile(path).readAsBytes(),
+);
+
+/// The image type, from the bytes themselves.
+///
+/// Not from the name: in a browser the picker hands back a blob URL with no
+/// extension at all. The picker re-encodes at `imageQuality`, which makes
+/// nearly everything a JPEG.
+String imageContentType(Uint8List bytes) {
+  bool startsWith(List<int> magic, [int offset = 0]) {
+    if (bytes.length < offset + magic.length) return false;
+    for (var i = 0; i < magic.length; i++) {
+      if (bytes[offset + i] != magic[i]) return false;
+    }
+    return true;
+  }
+
+  if (startsWith(const [0x89, 0x50, 0x4E, 0x47])) return 'image/png';
+  if (startsWith(const [0x52, 0x49, 0x46, 0x46]) &&
+      startsWith(const [0x57, 0x45, 0x42, 0x50], 8)) {
+    return 'image/webp';
+  }
+  return 'image/jpeg';
 }
 
 final NotifierProvider<RequestController, RequestDraft> requestControllerProvider =

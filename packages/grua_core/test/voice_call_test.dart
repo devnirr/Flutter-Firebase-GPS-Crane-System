@@ -345,6 +345,201 @@ void main() {
     });
   });
 
+  group('video calls', () {
+    testWidgets('placing one rings as video and takes the camera first', (tester) async {
+      setUpService();
+
+      await run(
+        tester,
+        controller().call(serviceId: service.id, peerName: 'Chofer', video: true),
+      );
+      await settle(tester);
+
+      expect(onlyCall().video, isTrue, reason: 'the other phone rings as video');
+      expect(transport.preparedVideo, isTrue);
+      expect(session().video, isTrue);
+      expect(session().cameraOn, isTrue);
+
+      backend.answerCall(onlyCall().id, driverId);
+      await settle(tester);
+      expect(session().phase, CallPhase.active);
+      // Held at arm's length: out of the loudspeaker.
+      expect(session().speaker, isTrue);
+
+      await controller().toggleCamera();
+      expect(session().cameraOn, isFalse);
+      expect(transport.cameraOn, isFalse);
+      await controller().switchCamera();
+      expect(transport.cameraSwitches, 1);
+
+      await run(tester, controller().hangUp());
+      await settle(tester, CallController.endedLinger + const Duration(seconds: 1));
+      tearDownAll();
+    });
+
+    testWidgets('being video-called answers with the camera', (tester) async {
+      setUpService();
+      backend.startCall(service.id, driverId, video: true);
+      await settle(tester);
+
+      expect(session().phase, CallPhase.incoming);
+      expect(session().video, isTrue);
+
+      await run(tester, controller().answer());
+      await settle(tester);
+      expect(transport.preparedVideo, isTrue);
+      expect(session().phase, CallPhase.active);
+
+      await run(tester, controller().hangUp());
+      await settle(tester, CallController.endedLinger + const Duration(seconds: 1));
+      tearDownAll();
+    });
+
+    testWidgets('a voice call never takes the camera', (tester) async {
+      setUpService();
+      await run(tester, controller().call(serviceId: service.id, peerName: 'Chofer'));
+      await settle(tester);
+
+      expect(onlyCall().video, isFalse);
+      expect(transport.preparedVideo, isFalse);
+      await controller().toggleCamera();
+      expect(session().cameraOn, isFalse);
+
+      await run(tester, controller().hangUp());
+      await settle(tester, CallController.endedLinger + const Duration(seconds: 1));
+      tearDownAll();
+    });
+
+    testWidgets('a refused camera says camera, not only microphone', (tester) async {
+      setUpService(micError: Exception('NotAllowedError: Permission denied'));
+
+      await run(
+        tester,
+        controller().call(serviceId: service.id, peerName: 'Chofer', video: true),
+      );
+      await settle(tester);
+
+      expect(backend.allCalls, isEmpty);
+      expect(session().message, CallAudioProblem.permission.messageFor(video: true));
+      expect(session().message, contains('cámara'));
+      await settle(tester, CallController.endedLinger);
+      tearDownAll();
+    });
+
+    testWidgets('the screen shows the video controls on the line', (tester) async {
+      setUpService();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            builder: (context, child) => CallLayer(child: child!),
+            home: const Scaffold(body: Text('mapa')),
+          ),
+        ),
+      );
+
+      backend.startCall(service.id, driverId, video: true);
+      await settle(tester);
+      expect(find.text('Videollamada entrante'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('call-answer')));
+      await settle(tester);
+
+      expect(find.byKey(const Key('call-camera')), findsOneWidget);
+      expect(find.byKey(const Key('call-switch-camera')), findsOneWidget);
+      expect(find.byKey(const Key('call-mute')), findsOneWidget);
+      // No picture from the other side in a test: it says so instead.
+      expect(find.byKey(const Key('call-peer-camera-off')), findsOneWidget);
+
+      // Camera off: nothing to flip.
+      await tester.tap(find.byKey(const Key('call-camera')));
+      await settle(tester);
+      expect(find.byKey(const Key('call-switch-camera')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('call-hangup')));
+      await settle(tester);
+      await settle(tester, CallController.endedLinger);
+      expect(find.byKey(const Key('call-screen')), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      tearDownAll();
+    });
+  });
+
+  group('in a chat before any job', () {
+    late String requestId;
+
+    /// A customer and the chofer of a nearby truck, talking before a tow is
+    /// requested. [accept] is whether the chofer answered yes.
+    void setUpChat({bool accept = true}) {
+      setUpService(assign: false);
+      final chofer = backend.allDrivers
+          .firstWhere((d) => d.id != driverId && d.status.canWork && !d.isBusy);
+      driverId = chofer.id;
+      backend.setDriverOnline(driverId, online: true);
+      requestId = backend
+          .createChatRequest(clientId: client, driverId: driverId)
+          .valueOrNull!;
+      if (accept) {
+        expect(
+          backend.respondChatRequest(requestId, driverId, accept: true),
+          isA<Ok<void>>(),
+        );
+      }
+    }
+
+    testWidgets('a video call rings the chofer once they accepted', (tester) async {
+      setUpChat();
+
+      await run(
+        tester,
+        controller().call(chatRequestId: requestId, peerName: 'Chofer', video: true),
+      );
+      await settle(tester);
+
+      expect(onlyCall().chatRequestId, requestId);
+      expect(onlyCall().serviceId, isEmpty);
+      expect(onlyCall().calleeId, driverId);
+      expect(onlyCall().video, isTrue);
+      expect(transport.preparedVideo, isTrue);
+
+      backend.answerCall(onlyCall().id, driverId);
+      await settle(tester);
+      expect(session().phase, CallPhase.active);
+
+      await run(tester, controller().hangUp());
+      await settle(tester, CallController.endedLinger + const Duration(seconds: 1));
+      expect(onlyCall().state, CallState.ended);
+      tearDownAll();
+    });
+
+    testWidgets('the chofer can call the customer too', (tester) async {
+      setUpChat();
+
+      backend.startChatRequestCall(requestId, driverId, video: true);
+      await settle(tester);
+
+      expect(session().phase, CallPhase.incoming);
+      expect(session().video, isTrue);
+      tearDownAll();
+    });
+
+    testWidgets('nobody rings before the chofer accepts', (tester) async {
+      setUpChat(accept: false);
+
+      await run(
+        tester,
+        controller().call(chatRequestId: requestId, peerName: 'Chofer', video: true),
+      );
+      await settle(tester);
+
+      expect(backend.allCalls, isEmpty);
+      expect(session().message, contains('conversación está abierta'));
+      await settle(tester, CallController.endedLinger);
+      tearDownAll();
+    });
+  });
+
   group('the call screen', () {
     testWidgets('rings over the app, answers, and hangs up', (tester) async {
       setUpService();

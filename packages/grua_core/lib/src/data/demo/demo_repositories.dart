@@ -333,6 +333,15 @@ class DemoServiceRepository implements ServiceRepository {
       _backend.serviceUpdates.map((all) => all[id]);
 
   @override
+  Future<Result<String>> uploadVehiclePhoto({
+    required String clientId,
+    required Uint8List bytes,
+    required String contentType,
+  }) =>
+      // No bucket in demo mode: the photo itself travels, as a data URI.
+      _delayed(Result.ok(UriData.fromBytes(bytes, mimeType: contentType).toString()));
+
+  @override
   Stream<Service?> watchActiveForClient(String clientId) =>
       _backend.serviceUpdates.map(
         (all) => all.values
@@ -851,8 +860,21 @@ class DemoFunctionsGateway implements FunctionsGateway {
   // a silent line.
 
   @override
-  Future<Result<CallJoin>> startCall(String serviceId) async =>
-      _delayed(_backend.startCall(serviceId, _backend.currentUserId));
+  Future<Result<CallJoin>> startCall(String serviceId, {bool video = false}) async =>
+      _delayed(_backend.startCall(serviceId, _backend.currentUserId, video: video));
+
+  @override
+  Future<Result<CallJoin>> startChatRequestCall(
+    String requestId, {
+    bool video = false,
+  }) async =>
+      _delayed(
+        _backend.startChatRequestCall(
+          requestId,
+          _backend.currentUserId,
+          video: video,
+        ),
+      );
 
   @override
   Future<Result<CallJoin>> answerCall(String callId) async =>

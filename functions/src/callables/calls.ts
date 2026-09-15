@@ -9,49 +9,96 @@ import {
   endedState,
   joinFor,
   partiesFor,
+  partiesForChatRequest,
   type CallParties,
 } from '../lib/calls.js';
 import { Code, invalidArgument, notFound, precondition } from '../lib/errors.js';
-import { FieldValue, Paths, db } from '../lib/firestore.js';
+import { FieldValue, Paths, Timestamp, db } from '../lib/firestore.js';
 import { requireAuth } from '../lib/guards.js';
 import { notify } from '../lib/push.js';
 import { livekitApiKey, livekitApiSecret, livekitUrl } from '../lib/secrets.js';
 import { region } from './region.js';
 
 /**
- * Voice calls between a customer and their chofer.
+ * Voice and video calls between a customer and their chofer.
  *
  * A call is a document at `calls/{callId}` that both apps watch, plus a LiveKit
  * room the two of them join. The document is the ringing: the other party's
- * app sees it appear and shows Answer and Decline. The room is the audio. The
- * server owns both — it decides who may call, writes every state change, and
- * is the only thing holding the LiveKit secret.
+ * app sees it appear and shows Answer and Decline. The room is the audio, and
+ * the picture when `video` is set. The server owns both — it decides who may
+ * call, writes every state change, and is the only thing holding the LiveKit
+ * secret.
  */
 
 const secrets = [livekitApiKey, livekitApiSecret, livekitUrl];
 
-/** Starts a call to the other party on a service, and joins the caller. */
+const millis = (value: unknown): number | null =>
+  value instanceof Timestamp ? value.toMillis() : null;
+
+/**
+ * Starts a call to the other party, and joins the caller.
+ *
+ * On a service ([serviceId]) or in a conversation opened from a nearby truck
+ * before any job ([chatRequestId]) — exactly one of the two.
+ */
 export const startCall = onCall({ region, cors: true, secrets }, async (request) => {
-  const parsed = z.object({ serviceId: z.string().min(1).max(64) }).safeParse(request.data);
-  if (!parsed.success) throw invalidArgument('Servicio inválido.');
+  const parsed = z
+    .object({
+      serviceId: z.string().min(1).max(64).optional(),
+      chatRequestId: z.string().min(1).max(64).optional(),
+      // Absent from builds that only knew voice, which is what they placed.
+      video: z.boolean().default(false),
+    })
+    .refine((data) => Boolean(data.serviceId) !== Boolean(data.chatRequestId))
+    .safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Llamada inválida.');
 
   const { uid } = requireAuth(request);
-  const { serviceId } = parsed.data;
+  const { serviceId, chatRequestId, video } = parsed.data;
 
-  const service = (await Paths.service(serviceId).get()).data();
-  if (!service) throw notFound('Este servicio ya no existe.');
+  let parties: CallParties;
+  // Which conversation the call belongs to, on the call and in its lookup.
+  let scope: { field: 'serviceId' | 'chatRequestId'; id: string };
 
-  const parties: CallParties = partiesFor(service, uid);
+  if (serviceId) {
+    const service = (await Paths.service(serviceId).get()).data();
+    if (!service) throw notFound('Este servicio ya no existe.');
+    parties = partiesFor(service, uid);
+    scope = { field: 'serviceId', id: serviceId };
+  } else {
+    const id = chatRequestId!;
+    const chat = (await Paths.chatRequest(id).get()).data();
+    if (!chat) throw notFound('Esta conversación ya no existe.');
+    parties = partiesForChatRequest(
+      {
+        ...chat,
+        expiresAtMs: millis(chat['expiresAt']),
+        closesAtMs: millis(chat['closesAt']),
+      },
+      uid,
+      Date.now(),
+    );
+    // Two strangers until a job exists: a block stops the phone ringing as
+    // well as the messages, whichever of the two did the blocking.
+    const [blockedByCallee, blockedByCaller] = await Promise.all([
+      Paths.user(parties.calleeId).collection('blocked').doc(uid).get(),
+      Paths.user(uid).collection('blocked').doc(parties.calleeId).get(),
+    ]);
+    if (blockedByCallee.exists || blockedByCaller.exists) {
+      throw precondition(Code.invalidTransition, 'No puedes llamar a esta persona.');
+    }
+    scope = { field: 'chatRequestId', id };
+  }
 
   const callRef = Paths.calls().doc();
 
-  // One call per service at a time. Checked and written in one transaction so
-  // two people pressing call at the same moment get one call, not two rooms
-  // with one person waiting in each.
+  // One call per conversation at a time. Checked and written in one
+  // transaction so two people pressing call at the same moment get one call,
+  // not two rooms with one person waiting in each.
   await db.runTransaction(async (transaction) => {
     const open = await transaction.get(
       Paths.calls()
-        .where('serviceId', '==', serviceId)
+        .where(scope.field, '==', scope.id)
         .where('state', 'in', ACTIVE_CALL_STATES)
         .limit(1),
     );
@@ -62,8 +109,9 @@ export const startCall = onCall({ region, cors: true, secrets }, async (request)
     }
 
     transaction.create(callRef, {
-      serviceId,
+      [scope.field]: scope.id,
       ...parties,
+      video,
       state: CallState.ringing,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -76,15 +124,20 @@ export const startCall = onCall({ region, cors: true, secrets }, async (request)
   await notify({
     uid: parties.calleeId,
     audience: parties.calleeRole,
-    title: 'Llamada entrante',
-    body: `${parties.callerName} te está llamando.`,
-    data: { type: 'incoming_call', callId: callRef.id, serviceId },
+    title: video ? 'Videollamada entrante' : 'Llamada entrante',
+    body: `${parties.callerName} te está ${video ? 'videollamando' : 'llamando'}.`,
+    data: {
+      type: 'incoming_call',
+      callId: callRef.id,
+      [scope.field]: scope.id,
+      video: String(video),
+    },
   }).catch((error: unknown) => logger.warn('call.pushFailed', { error: String(error) }));
 
   const join = await joinFor(callRef.id, uid, parties.callerName);
-  logger.info('call.started', { callId: callRef.id, serviceId });
+  logger.info('call.started', { callId: callRef.id, [scope.field]: scope.id, video });
 
-  return { callId: callRef.id, peerName: parties.calleeName, ...join };
+  return { callId: callRef.id, peerName: parties.calleeName, video, ...join };
 });
 
 /** Answers a ringing call and joins the callee. */
@@ -123,7 +176,12 @@ export const answerCall = onCall({ region, cors: true, secrets }, async (request
   const join = await joinFor(callId, uid, call['calleeName'] as string);
   logger.info('call.answered', { callId });
 
-  return { callId, peerName: call['callerName'] as string, ...join };
+  return {
+    callId,
+    peerName: call['callerName'] as string,
+    video: call['video'] === true,
+    ...join,
+  };
 });
 
 /** Ends a call — hang up, decline, cancel, or give up after ringing out. */
@@ -171,7 +229,18 @@ export const endCall = onCall({ region, cors: true }, async (request) => {
       audience: outcome.data['calleeRole'] as 'client' | 'driver',
       title: 'Llamada perdida',
       body: `${outcome.data['callerName'] as string} te llamó.`,
-      data: { type: 'missed_call', callId, serviceId: outcome.data['serviceId'] as string },
+      // Whichever conversation it was: a call in a pre-job chat has no
+      // service, and a push payload cannot carry an undefined value.
+      data: {
+        type: 'missed_call',
+        callId,
+        ...(typeof outcome.data['serviceId'] === 'string'
+          ? { serviceId: outcome.data['serviceId'] }
+          : {}),
+        ...(typeof outcome.data['chatRequestId'] === 'string'
+          ? { chatRequestId: outcome.data['chatRequestId'] }
+          : {}),
+      },
     }).catch((error: unknown) => logger.warn('call.pushFailed', { error: String(error) }));
   }
 

@@ -1178,6 +1178,11 @@ class _ServiceDrawer extends ConsumerWidget {
           DetailRow(label: 'Teléfono', value: service.clientPhone),
           DetailRow(label: 'Vehículo', value: service.vehicle.displayName),
           DetailRow(label: 'Problema', value: service.vehicle.condition.label),
+          if (service.vehicle.photoPaths.isNotEmpty) ...[
+            const SizedBox(height: Insets.xs),
+            VehiclePhotoStrip(urls: service.vehicle.photoPaths),
+            const SizedBox(height: Insets.sm),
+          ],
           DetailRow(label: 'Grúa', value: service.truckTypeRequired.label),
           if (service.hasDriver)
             DetailRow(label: 'Chofer', value: service.driverName),

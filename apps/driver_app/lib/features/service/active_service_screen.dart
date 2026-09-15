@@ -408,14 +408,14 @@ class _ClientCard extends ConsumerWidget {
             IconButton.filledTonal(
               key: const Key('client-video-call'),
               tooltip: 'Videollamada',
-              // Same as the chat header: there is no video service behind
-              // this yet, so say so rather than pretend.
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Las videollamadas todavía no están disponibles.',
-                  ),
-                ),
+              // The same in-app call as the phone button, with the camera on:
+              // the customer can show the damage before the grúa gets there.
+              onPressed: () => unawaited(
+                ref.read(callControllerProvider.notifier).call(
+                      serviceId: service.id,
+                      peerName: service.clientName,
+                      video: true,
+                    ),
               ),
               icon: const Icon(Icons.videocam_outlined, size: 20),
             ),
@@ -444,6 +444,15 @@ class _JobCard extends StatelessWidget {
             service.vehicle.condition.label,
             style: text.bodySmall?.copyWith(color: BrandColors.grey600),
           ),
+          // The customer's photos stay to hand on the way, for picking the
+          // right car out of a row of them.
+          if (service.vehicle.photoPaths.isNotEmpty) ...[
+            const SizedBox(height: Insets.sm),
+            VehiclePhotoStrip(
+              key: const Key('job-vehicle-photos'),
+              urls: service.vehicle.photoPaths,
+            ),
+          ],
           const Divider(height: Insets.xxl),
           RouteSummary(
             pickup: service.pickup.displayAddress,

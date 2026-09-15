@@ -22,6 +22,7 @@ const {
   endedState,
   joinFor,
   partiesFor,
+  partiesForChatRequest,
   roomFor,
 } = await import('../src/lib/calls.js');
 
@@ -68,6 +69,52 @@ describe('partiesFor', () => {
     for (const status of ['accepted', 'arrived', 'in_progress']) {
       expect(() => partiesFor(service({ status }), 'client-1')).not.toThrow();
     }
+  });
+});
+
+describe('partiesForChatRequest', () => {
+  const now = 1_000_000;
+  const chat = (over: Record<string, unknown> = {}) => ({
+    status: 'accepted',
+    clientId: 'client-1',
+    clientName: 'Manuel Guzmán',
+    driverId: 'driver-1',
+    driverName: 'Ramón Peralta',
+    expiresAtMs: now - 60_000,
+    closesAtMs: now + 60_000,
+    ...over,
+  });
+
+  it('rings the other side of an open conversation, either way round', () => {
+    const fromClient = partiesForChatRequest(chat(), 'client-1', now);
+    expect(fromClient.calleeId).toBe('driver-1');
+    expect(fromClient.calleeRole).toBe('driver');
+    expect(fromClient.calleeName).toBe('Ramón Peralta');
+
+    const fromDriver = partiesForChatRequest(chat(), 'driver-1', now);
+    expect(fromDriver.calleeId).toBe('client-1');
+    expect(fromDriver.calleeRole).toBe('client');
+  });
+
+  it('refuses anyone who is not in the conversation', () => {
+    expect(() => partiesForChatRequest(chat(), 'driver-2', now)).toThrow(/No formas parte/);
+  });
+
+  it('refuses before the chofer accepts, and once it is closed or lapsed', () => {
+    // A stranger's phone must not ring for a request the chofer did not answer.
+    expect(() =>
+      partiesForChatRequest(
+        chat({ status: 'pending', expiresAtMs: now + 60_000, closesAtMs: null }),
+        'client-1',
+        now,
+      ),
+    ).toThrow(/abierta/);
+    for (const status of ['declined', 'cancelled', 'closed']) {
+      expect(() => partiesForChatRequest(chat({ status }), 'client-1', now)).toThrow(/abierta/);
+    }
+    expect(() =>
+      partiesForChatRequest(chat({ closesAtMs: now - 1 }), 'client-1', now),
+    ).toThrow(/abierta/);
   });
 });
 

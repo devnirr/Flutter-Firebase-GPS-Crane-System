@@ -148,6 +148,58 @@ Future<void> main() async {
     expect(find.text('RECHAZAR'), findsOneWidget);
   });
 
+  testWidgets("the customer's vehicle photos are on the request", (tester) async {
+    // The bug: the customer added photos to the form, they never left the
+    // phone, and the chofer's card had nowhere to show them anyway.
+    tester.view
+      ..devicePixelRatio = 1
+      ..physicalSize = const Size(430, 1400);
+    addTearDown(tester.view.reset);
+
+    const photo = 'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    await tester.pumpWidget(
+      harness(
+        offer: offerFor().copyWith(vehiclePhotoUrls: const [photo, photo]),
+        position: (position: here, heading: 0),
+      ),
+    );
+    await tester.pump();
+    await signIn(tester);
+
+    final strip = tester.widget<VehiclePhotoStrip>(
+      find.byKey(const Key('offer-vehicle-photos')),
+    );
+    expect(strip.urls, const [photo, photo]);
+    expect(find.byKey(const Key('vehicle-photo-1')), findsOneWidget);
+
+    // A thumbnail opens the photo big enough to see the damage.
+    await tester.tap(find.byKey(const Key('vehicle-photo-0')));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const Key('vehicle-photo-viewer')), findsOneWidget);
+    expect(find.text('1 / 2'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Cerrar'));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const Key('vehicle-photo-viewer')), findsNothing);
+  });
+
+  testWidgets('a request without photos shows no photo row', (tester) async {
+    tester.view
+      ..devicePixelRatio = 1
+      ..physicalSize = const Size(430, 1400);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      harness(offer: offerFor(), position: (position: here, heading: 0)),
+    );
+    await tester.pump();
+    await signIn(tester);
+
+    expect(find.text('NUEVA SOLICITUD'), findsOneWidget);
+    expect(find.byKey(const Key('offer-vehicle-photos')), findsNothing);
+  });
+
   testWidgets('a refused ACEPTAR says why, even after the card is gone',
       (tester) async {
     // The bug: `_respond` bailed on `!mounted` before showing the refusal, and

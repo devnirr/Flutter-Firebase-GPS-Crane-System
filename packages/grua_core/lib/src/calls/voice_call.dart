@@ -48,6 +48,8 @@ class VoiceCall {
     required this.callerName,
     required this.calleeId,
     required this.calleeName,
+    this.chatRequestId = '',
+    this.video = false,
     this.createdAt,
     this.answeredAt,
   });
@@ -63,23 +65,36 @@ class VoiceCall {
     return VoiceCall(
       id: id,
       serviceId: json['serviceId'] as String? ?? '',
+      chatRequestId: json['chatRequestId'] as String? ?? '',
       state: CallState.fromWire(json['state'] as String?),
       callerId: json['callerId'] as String? ?? '',
       callerName: json['callerName'] as String? ?? '',
       calleeId: json['calleeId'] as String? ?? '',
       calleeName: json['calleeName'] as String? ?? '',
+      video: json['video'] == true,
       createdAt: at(json['createdAt']),
       answeredAt: at(json['answeredAt']),
     );
   }
 
   final String id;
+
+  /// The service the call is on. Empty for a call in a pre-job chat.
   final String serviceId;
+
+  /// The conversation opened from a nearby truck the call is in, before any
+  /// job. Empty for a call on a service.
+  final String chatRequestId;
+
   final CallState state;
   final String callerId;
   final String callerName;
   final String calleeId;
   final String calleeName;
+
+  /// Camera as well as microphone, both ways. Chosen by the caller.
+  final bool video;
+
   final DateTime? createdAt;
   final DateTime? answeredAt;
 
@@ -102,11 +117,13 @@ class VoiceCall {
   VoiceCall copyWith({CallState? state, DateTime? answeredAt}) => VoiceCall(
         id: id,
         serviceId: serviceId,
+        chatRequestId: chatRequestId,
         state: state ?? this.state,
         callerId: callerId,
         callerName: callerName,
         calleeId: calleeId,
         calleeName: calleeName,
+        video: video,
         createdAt: createdAt,
         answeredAt: answeredAt ?? this.answeredAt,
       );
@@ -121,10 +138,12 @@ class CallJoin {
     required this.peerName,
     required this.url,
     required this.token,
+    this.video = false,
   });
 
   final String callId;
   final String peerName;
+  final bool video;
 
   /// The LiveKit server, `wss://…`. Empty in demo mode, where there is no
   /// audio to connect to.

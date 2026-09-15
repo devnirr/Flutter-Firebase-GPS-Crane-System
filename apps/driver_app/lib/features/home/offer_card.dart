@@ -190,6 +190,15 @@ class _OfferCardState extends ConsumerState<OfferCard> {
                   offer.condition.label,
                   style: text.bodySmall?.copyWith(color: BrandColors.grey600),
                 ),
+                // What the customer photographed: a car on its side and one
+                // with a flat are different jobs.
+                if (offer.vehiclePhotoUrls.isNotEmpty) ...[
+                  const SizedBox(height: Insets.sm),
+                  VehiclePhotoStrip(
+                    key: const Key('offer-vehicle-photos'),
+                    urls: offer.vehiclePhotoUrls,
+                  ),
+                ],
                 const SizedBox(height: Insets.md),
                 RouteSummary(
                   pickup: offer.pickupAddress.isEmpty

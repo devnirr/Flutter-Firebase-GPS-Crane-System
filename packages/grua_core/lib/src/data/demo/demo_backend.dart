@@ -1127,7 +1127,11 @@ class DemoBackend {
   void _emitCalls() => _callsController.add(null);
 
   /// Rings the other party on a service. Refused the same ways the callable is.
-  Result<CallJoin> startCall(String serviceId, String callerId) {
+  Result<CallJoin> startCall(
+    String serviceId,
+    String callerId, {
+    bool video = false,
+  }) {
     final service = _services[serviceId];
     if (service == null) {
       return const Err(Failure(FailureCode.notFound));
@@ -1169,6 +1173,7 @@ class DemoBackend {
       callerName: isClient ? clientName : driverName,
       calleeId: isClient ? service.driverId! : service.clientId,
       calleeName: isClient ? driverName : clientName,
+      video: video,
       createdAt: _now(),
     );
     _emitCalls();
@@ -1178,6 +1183,69 @@ class DemoBackend {
         peerName: isClient ? driverName : clientName,
         url: '',
         token: '',
+        video: video,
+      ),
+    );
+  }
+
+  /// Rings the other side of an open pre-job conversation. Refused the same
+  /// ways the callable is.
+  Result<CallJoin> startChatRequestCall(
+    String requestId,
+    String callerId, {
+    bool video = false,
+  }) {
+    final request = _chatRequests[requestId];
+    if (request == null) return const Err(Failure(FailureCode.notFound));
+    final isClient = callerId == request.clientId;
+    if (!isClient && callerId != request.driverId) {
+      return const Err(Failure(FailureCode.permissionDenied));
+    }
+    if (request.phaseAt(_now()) != ChatRequestPhase.open) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Solo puedes llamar mientras la conversación está abierta.',
+        ),
+      );
+    }
+    final busy = _calls.values.any(
+      (c) =>
+          c.chatRequestId == requestId &&
+          (c.state == CallState.ringing || c.state == CallState.accepted),
+    );
+    if (busy) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Ya hay una llamada en curso.',
+        ),
+      );
+    }
+
+    final id = 'call-${++_callCounter}';
+    final clientName = request.clientName.isEmpty ? 'Cliente' : request.clientName;
+    final driverName = request.driverName.isEmpty ? 'Chofer' : request.driverName;
+    _calls[id] = VoiceCall(
+      id: id,
+      serviceId: '',
+      chatRequestId: requestId,
+      state: CallState.ringing,
+      callerId: callerId,
+      callerName: isClient ? clientName : driverName,
+      calleeId: isClient ? request.driverId : request.clientId,
+      calleeName: isClient ? driverName : clientName,
+      video: video,
+      createdAt: _now(),
+    );
+    _emitCalls();
+    return Ok(
+      CallJoin(
+        callId: id,
+        peerName: isClient ? driverName : clientName,
+        url: '',
+        token: '',
+        video: video,
       ),
     );
   }
@@ -1198,7 +1266,13 @@ class DemoBackend {
     _calls[callId] = call.copyWith(state: CallState.accepted, answeredAt: _now());
     _emitCalls();
     return Ok(
-      CallJoin(callId: callId, peerName: call.callerName, url: '', token: ''),
+      CallJoin(
+        callId: callId,
+        peerName: call.callerName,
+        url: '',
+        token: '',
+        video: call.video,
+      ),
     );
   }
 

@@ -33,6 +33,9 @@ abstract class Offer with _$Offer {
     /// field existed.
     @NullableGeoPointConverter() LatLng? dropoffGeo,
     @Default('') String vehicleLabel,
+
+    /// Download URLs of the photos the customer added to the request.
+    @Default(<String>[]) List<String> vehiclePhotoUrls,
     @JsonKey(unknownEnumValue: VehicleCondition.unknown)
     @Default(VehicleCondition.unknown) VehicleCondition condition,
     @JsonKey(unknownEnumValue: TruckType.unknown)

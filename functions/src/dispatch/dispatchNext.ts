@@ -13,6 +13,7 @@ import { distanceMeters, type LatLng } from '../lib/geo.js';
 import { isAvailableWithin, positionsWithin } from '../lib/live.js';
 import { commissionCents, loadPricing } from '../lib/pricing.js';
 import { alertAdmins, sendOffer } from '../lib/push.js';
+import { vehiclePhotoUrls } from '../lib/servicePhoto.js';
 import { applyTransition } from '../lib/stateMachine.js';
 import { enqueueOfferExpiry } from '../lib/tasks.js';
 
@@ -474,6 +475,9 @@ export async function dispatchNext(
         ((current['dropoff'] as Record<string, unknown> | undefined)?.['geo'] as unknown) ??
         null,
       vehicleLabel: vehicleLabel(current['vehicle']),
+      // The photos the customer took, so the chofer sees the car before
+      // deciding — they cannot read the service itself until they accept.
+      vehiclePhotoUrls: vehiclePhotoUrls(current['vehicle']),
       condition:
         ((current['vehicle'] as Record<string, unknown> | undefined)?.['condition'] as string) ??
         '',

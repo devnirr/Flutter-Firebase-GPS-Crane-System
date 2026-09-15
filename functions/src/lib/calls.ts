@@ -1,13 +1,15 @@
 import { AccessToken } from 'livekit-server-sdk';
 
+import { chatRequestPhase } from './chatRequests.js';
 import { CONTACT_OPEN_STATUSES, type ServiceStatus } from './enums.js';
 import { Code, permissionDenied, precondition } from './errors.js';
 import { livekitApiKey, livekitApiSecret, livekitUrl } from './secrets.js';
 
 /**
- * Voice calls between the customer and the chofer on a service.
+ * Voice and video calls between a customer and a chofer: on a service, or in
+ * a conversation opened from a nearby truck before any job.
  *
- * The call itself is audio through LiveKit; everything here is what decides
+ * The call itself goes through LiveKit; everything here is what decides
  * whether a call may happen and what state it is in. Kept free of Firestore so
  * the rules can be tested on their own — the callables in
  * `callables/calls.ts` read and write, this decides.
@@ -86,6 +88,69 @@ export function partiesFor(
         callerRole: 'driver',
         callerName: driverName,
         calleeId: clientId!,
+        calleeRole: 'client',
+        calleeName: clientName,
+      };
+}
+
+/**
+ * Who is calling whom in a conversation opened from a nearby truck, before any
+ * job, or a refusal.
+ *
+ * Only the customer and the chofer of that conversation, and only while it is
+ * open — the chofer accepted and neither side has closed it. The same window
+ * in which the two may write to each other, so a stranger's phone never rings
+ * for a request the chofer did not answer.
+ */
+export function partiesForChatRequest(
+  request: {
+    status?: unknown;
+    clientId?: unknown;
+    clientName?: unknown;
+    driverId?: unknown;
+    driverName?: unknown;
+    expiresAtMs: number | null;
+    closesAtMs: number | null;
+  },
+  callerId: string,
+  now: number,
+): CallParties {
+  const clientId = typeof request.clientId === 'string' ? request.clientId : '';
+  const driverId = typeof request.driverId === 'string' ? request.driverId : '';
+
+  if (!callerId || (callerId !== clientId && callerId !== driverId)) {
+    throw permissionDenied('No formas parte de esta conversación.');
+  }
+  const phase = chatRequestPhase(
+    String(request.status ?? ''),
+    request.expiresAtMs,
+    request.closesAtMs,
+    now,
+  );
+  if (phase !== 'open') {
+    throw precondition(
+      Code.invalidTransition,
+      'Solo puedes llamar mientras la conversación está abierta.',
+    );
+  }
+
+  const clientName = (request.clientName as string | undefined) || 'Cliente';
+  const driverName = (request.driverName as string | undefined) || 'Chofer';
+
+  return callerId === clientId
+    ? {
+        callerId: clientId,
+        callerRole: 'client',
+        callerName: clientName,
+        calleeId: driverId,
+        calleeRole: 'driver',
+        calleeName: driverName,
+      }
+    : {
+        callerId: driverId,
+        callerRole: 'driver',
+        callerName: driverName,
+        calleeId: clientId,
         calleeRole: 'client',
         calleeName: clientName,
       };

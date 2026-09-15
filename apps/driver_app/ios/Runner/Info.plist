@@ -68,6 +68,8 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Usamos el micrófono para que puedas hablar con el cliente durante el servicio.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Usamos la cámara para las videollamadas con el cliente durante el servicio.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Usamos tu ubicación para enviarte los servicios más cercanos y para que el cliente vea tu grúa en camino.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
