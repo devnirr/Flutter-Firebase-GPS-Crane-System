@@ -7,33 +7,61 @@ import '../value_objects.dart';
 part 'remote_config_models.freezed.dart';
 part 'remote_config_models.g.dart';
 
-/// Tariffs at `config/pricing`.
+/// Tariffs at `config/pricing`. Mirrors `PricingConfig` in
+/// `functions/src/lib/pricing.ts`.
 ///
 /// [version] is stamped onto every quote so a service priced last month never
 /// re-prices when the tariff changes. Bump it whenever any amount below moves.
 @freezed
 abstract class PricingConfig with _$PricingConfig {
   const factory PricingConfig({
-    @Default(1) int version,
+    @Default(2) int version,
 
-    /// Banderazo per truck type, keyed by [TruckType.wire].
+    /// Tarifa base per vehicle type, keyed by [VehicleType.wire]. It includes
+    /// the first [includedKm] kilometres.
     @Default(<String, int>{
-      'plataforma': 180000,
-      'gancho': 150000,
-      'pesada': 450000,
+      'sedan': 150000,
+      'suv': 180000,
+      'camioneta': 200000,
+      'motor': 150000,
+      'camion': 500000,
+      'patana': 800000,
+      'equipo_pesado': 1000000,
     })
-    Map<String, int> baseCentsByTruckType,
+    Map<String, int> baseCentsByVehicleType,
+
+    /// Per kilometre past the included ones, on city streets.
+    @Default(<String, int>{
+      'sedan': 7000,
+      'suv': 7000,
+      'camioneta': 7000,
+      'motor': 7000,
+      'camion': 25000,
+      'patana': 40000,
+      'equipo_pesado': 60000,
+    })
+    Map<String, int> cityPerKmCentsByVehicleType,
+
+    /// Per kilometre past the included ones, on carretera and autopista.
+    @Default(<String, int>{
+      'sedan': 13000,
+      'suv': 13000,
+      'camioneta': 13000,
+      'motor': 13000,
+      'camion': 25000,
+      'patana': 40000,
+      'equipo_pesado': 60000,
+    })
+    Map<String, int> highwayPerKmCentsByVehicleType,
     @Default(5) double includedKm,
-    @Default(<String, int>{
-      'plataforma': 6500,
-      'gancho': 5500,
-      'pesada': 14000,
-    })
-    Map<String, int> perKmCentsByTruckType,
 
-    /// Night surcharge as a percentage of the base, applied between
-    /// [nightStartHour] and [nightEndHour] in America/Santo_Domingo.
-    @Default(2500) int nightSurchargeBps,
+    /// The least any service costs, before surcharges.
+    @Default(150000) int minimumCents,
+
+    /// Night surcharges on the total, between [nightStartHour] and
+    /// [nightEndHour] in America/Santo_Domingo. 3000 = 30%.
+    @Default(3000) int lightNightSurchargeBps,
+    @Default(4000) int heavyNightSurchargeBps,
     @Default(22) int nightStartHour,
     @Default(6) int nightEndHour,
     @Default(2000) int holidaySurchargeBps,
@@ -64,11 +92,20 @@ abstract class PricingConfig with _$PricingConfig {
   factory PricingConfig.fromJson(Map<String, dynamic> json) =>
       _$PricingConfigFromJson(json);
 
-  int baseCentsFor(TruckType type) =>
-      baseCentsByTruckType[type.wire] ?? baseCentsByTruckType['gancho'] ?? 150000;
+  int baseCentsFor(VehicleType type) => _rate(baseCentsByVehicleType, type);
 
-  int perKmCentsFor(TruckType type) =>
-      perKmCentsByTruckType[type.wire] ?? perKmCentsByTruckType['gancho'] ?? 5500;
+  int cityPerKmCentsFor(VehicleType type) =>
+      _rate(cityPerKmCentsByVehicleType, type);
+
+  int highwayPerKmCentsFor(VehicleType type) =>
+      _rate(highwayPerKmCentsByVehicleType, type);
+
+  /// A type the table does not name is priced as a carro.
+  static int _rate(Map<String, int> rates, VehicleType type) =>
+      rates[type.wire] ?? rates[VehicleType.sedan.wire] ?? 0;
+
+  int nightSurchargeBpsFor(VehicleType type) =>
+      type.isHeavy ? heavyNightSurchargeBps : lightNightSurchargeBps;
 
   /// Night rate spans midnight, so the comparison is an OR, not a range.
   bool isNightHour(int localHour) =>

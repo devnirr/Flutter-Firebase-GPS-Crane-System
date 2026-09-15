@@ -145,16 +145,23 @@ enum TruckType {
       (required == TruckType.gancho && this == TruckType.plataforma);
 }
 
-/// The customer's vehicle class, used to infer [TruckType].
+/// The customer's vehicle class. It sets the tarifa and the [TruckType].
 enum VehicleType {
   @JsonValue('sedan')
-  sedan('sedan', 'Carro / Sedán'),
+  sedan('sedan', 'Carro'),
   @JsonValue('suv')
-  suv('suv', 'Jeepeta / SUV'),
+  suv('suv', 'Jeepeta'),
   @JsonValue('camioneta')
   camioneta('camioneta', 'Camioneta'),
+
+  /// Vehículos pesados from here: a special grúa, and a price the operator
+  /// confirms before anybody goes.
   @JsonValue('camion')
-  camion('camion', 'Camión / Autobús'),
+  camion('camion', 'Camión 2 ejes'),
+  @JsonValue('patana')
+  patana('patana', 'Patana / Tráiler'),
+  @JsonValue('equipo_pesado')
+  equipoPesado('equipo_pesado', 'Equipo pesado'),
   @JsonValue('motor')
   motor('motor', 'Motor'),
   @JsonValue('unknown')
@@ -167,6 +174,45 @@ enum VehicleType {
 
   static VehicleType fromWire(String? wire) =>
       _resolve(VehicleType.values, wire, (v) => v.wire, VehicleType.unknown);
+
+  /// The ones the request form offers under "Vehículos livianos".
+  static const List<VehicleType> light = [
+    VehicleType.sedan,
+    VehicleType.suv,
+    VehicleType.camioneta,
+  ];
+
+  /// The ones under "Vehículos pesados". Mirrors `HEAVY_VEHICLE_TYPES` in
+  /// `functions/src/lib/enums.ts`.
+  static const List<VehicleType> heavy = [
+    VehicleType.camion,
+    VehicleType.patana,
+    VehicleType.equipoPesado,
+  ];
+
+  /// Needs the heavy grúa, and its price is only an estimate until the
+  /// operator confirms it.
+  bool get isHeavy => heavy.contains(this);
+}
+
+/// What the customer is told about a heavy vehicle, on the form, on the price
+/// and while they wait. Written by the owner; kept word for word.
+const String heavyServiceNotice =
+    'Este servicio requiere grúa especial. Se confirmará disponibilidad y '
+    'precio final con el operador';
+
+/// Where a heavy request stands with the operator.
+enum OperatorReviewState {
+  @JsonValue('pending')
+  pending('pending'),
+  @JsonValue('confirmed')
+  confirmed('confirmed'),
+  @JsonValue('unknown')
+  unknown('unknown');
+
+  const OperatorReviewState(this.wire);
+
+  final String wire;
 }
 
 /// Why the vehicle needs a grúa. Drives both pricing and truck-type inference.
@@ -414,6 +460,8 @@ enum ServiceEventName {
   noDriversFound('noDriversFound'),
   @JsonValue('assignServiceManually')
   assignServiceManually('assignServiceManually'),
+  @JsonValue('confirmHeavyService')
+  confirmHeavyService('confirmHeavyService'),
   @JsonValue('markArrived')
   markArrived('markArrived'),
   @JsonValue('startService')
@@ -430,6 +478,19 @@ enum ServiceEventName {
   cancelByDriver('cancelByDriver'),
   @JsonValue('failService')
   failService('failService'),
+
+  // Money, logged beside the transitions without moving the status.
+  @JsonValue('choosePaymentMethod')
+  choosePaymentMethod('choosePaymentMethod'),
+  @JsonValue('paymentAuthorized')
+  paymentAuthorized('paymentAuthorized'),
+  @JsonValue('paymentCaptured')
+  paymentCaptured('paymentCaptured'),
+  @JsonValue('paymentFailed')
+  paymentFailed('paymentFailed'),
+  @JsonValue('paymentVoided')
+  paymentVoided('paymentVoided'),
+
   @JsonValue('unknown')
   unknown('unknown');
 
@@ -544,6 +605,10 @@ enum PaymentMethod {
   card('card', 'Tarjeta'),
   @JsonValue('cash')
   cash('cash', 'Efectivo'),
+
+  /// Not chosen yet: the customer picks card or cash when the chofer arrives.
+  @JsonValue('pending')
+  pending('pending', 'Por elegir'),
   @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
@@ -561,27 +626,32 @@ enum PaymentStatus {
   @JsonValue('none')
   none('none', 'Sin procesar'),
 
-  /// Card hold placed at accept time.
+  /// The card is held for the job, when the chofer arrived. Nothing charged.
   @JsonValue('authorized')
-  authorized('authorized', 'Autorizado'),
+  authorized('authorized', 'Tarjeta retenida'),
 
-  /// Hold captured at completion.
+  /// Charged from the hold at completion, confirmed by Stripe.
   @JsonValue('captured')
-  captured('captured', 'Cobrado'),
+  captured('captured', 'Pagado con tarjeta'),
 
   /// Authorization or capture was declined.
   @JsonValue('failed')
-  failed('failed', 'Rechazado'),
+  failed('failed', 'Pago rechazado'),
 
   @JsonValue('refunded')
   refunded('refunded', 'Reembolsado'),
+
+  /// A hold released without charging: cancelled, or switched to cash.
+  @JsonValue('voided')
+  voided('voided', 'Retención liberada'),
 
   /// Completed cash job, chofer has not confirmed collection yet.
   @JsonValue('cash_pending')
   cashPending('cash_pending', 'Cobro en efectivo pendiente'),
 
+  /// The chofer confirmed "Cobrado en efectivo". Paid, outside Stripe.
   @JsonValue('cash_collected')
-  cashCollected('cash_collected', 'Efectivo recibido'),
+  cashCollected('cash_collected', 'Pagado en efectivo'),
 
   @JsonValue('unknown')
   unknown('unknown', 'Desconocido');

@@ -46,10 +46,11 @@ abstract class ServiceVehicle with _$ServiceVehicle {
   ///
   /// This same rule runs server-side in `quoteService`; the app computes it
   /// only to show the customer a price before they commit. If the two ever
-  /// disagree, the server wins.
+  /// disagree, the server wins. A heavy vehicle comes first: a flatbed cannot
+  /// lift a camión, rolled over or not.
   TruckType get inferredTruckType {
+    if (type.isHeavy) return TruckType.pesada;
     if (condition.requiresFlatbed) return TruckType.plataforma;
-    if (type == VehicleType.camion) return TruckType.pesada;
     return TruckType.gancho;
   }
 }
@@ -122,6 +123,86 @@ abstract class ServiceRoute with _$ServiceRoute {
       : '${durationMinutes ~/ 60} h ${durationMinutes % 60} min';
 }
 
+/// One run of a route that is all city or all carretera.
+typedef RoadStretch = ({int meters, bool highway});
+
+/// The trip as the tariff sees it: its length, and how many of the charged
+/// kilometres — those past the included ones — are city and how many carretera.
+///
+/// Mirrors `TripDistance` in `functions/src/lib/pricing.ts`, and travels back to
+/// the server with the request: the price was signed on it.
+class TripDistance {
+  const TripDistance({
+    required this.distanceKm,
+    required this.cityKm,
+    required this.highwayKm,
+  });
+
+  /// Which kilometres are charged, and on what kind of road.
+  ///
+  /// Literally "the first 5 km are included": the included distance is taken
+  /// from the start of the trip, in driving order. Worked in tenths of a
+  /// kilometre so the parts always add up to the whole.
+  factory TripDistance.fromStretches(
+    List<RoadStretch> stretches, {
+    required double includedKm,
+  }) {
+    var skip = includedKm * 1000;
+    var totalMeters = 0;
+    var highwayMeters = 0.0;
+    for (final stretch in stretches) {
+      totalMeters += stretch.meters;
+      final charged = (stretch.meters - skip).clamp(0, double.infinity);
+      skip = (skip - stretch.meters).clamp(0, double.infinity).toDouble();
+      if (stretch.highway) highwayMeters += charged;
+    }
+
+    final totalTenths = _roundHalfUp(totalMeters / 100);
+    final chargedTenths =
+        (totalTenths - _roundHalfUp(includedKm * 10)).clamp(0, 1 << 30);
+    final highwayTenths =
+        _roundHalfUp(highwayMeters / 100).clamp(0, chargedTenths);
+
+    return TripDistance(
+      distanceKm: totalTenths / 10,
+      cityKm: (chargedTenths - highwayTenths) / 10,
+      highwayKm: highwayTenths / 10,
+    );
+  }
+
+  /// A trip with no road information: all of it priced as city.
+  factory TripDistance.city(double distanceKm, {required double includedKm}) =>
+      TripDistance.fromStretches(
+        [(meters: (distanceKm * 1000).round(), highway: false)],
+        includedKm: includedKm,
+      );
+
+  /// Read back off a quote, to send with the request it was signed for.
+  factory TripDistance.of(Quote quote) => TripDistance(
+        distanceKm: quote.distanceKm,
+        cityKm: quote.cityKm,
+        highwayKm: quote.highwayKm,
+      );
+
+  final double distanceKm;
+  final double cityKm;
+  final double highwayKm;
+
+  Map<String, Object> toJson() => {
+        'distanceKm': distanceKm,
+        'cityKm': cityKm,
+        'highwayKm': highwayKm,
+      };
+
+  /// `Math.round` in JavaScript rounds halves up; Dart's `round` rounds them
+  /// away from zero. The same for the positive numbers here, but said once.
+  static int _roundHalfUp(double value) => (value + 0.5).floor();
+
+  @override
+  String toString() =>
+      'TripDistance($distanceKm km: $cityKm city, $highwayKm carretera)';
+}
+
 /// One line on the price breakdown beyond the base and distance charges.
 @freezed
 abstract class QuoteSurcharge with _$QuoteSurcharge {
@@ -142,11 +223,28 @@ abstract class QuoteSurcharge with _$QuoteSurcharge {
 abstract class Quote with _$Quote {
   const factory Quote({
     @Default(1) int pricingVersion,
+    @JsonKey(unknownEnumValue: VehicleType.unknown)
+    @Default(VehicleType.unknown) VehicleType vehicleType,
+
+    /// A heavy vehicle: the total is an estimate until the operator confirms.
+    @Default(false) bool heavy,
     @CentsConverter() @Default(0) int baseCents,
     @Default(0) double includedKm,
+
+    /// The city rate. Quotes from before the city/carretera split carry only
+    /// this one.
     @CentsConverter() @Default(0) int perKmCents,
+    @CentsConverter() @Default(0) int cityPerKmCents,
+    @CentsConverter() @Default(0) int highwayPerKmCents,
+
+    /// The whole trip.
     @Default(0) double distanceKm,
+
+    /// Charged kilometres, past the included ones, by kind of road.
+    @Default(0) double cityKm,
+    @Default(0) double highwayKm,
     @CentsConverter() @Default(0) int distanceCents,
+    @CentsConverter() @Default(0) int minimumAdjustmentCents,
     @Default(<QuoteSurcharge>[]) List<QuoteSurcharge> surcharges,
     @CentsConverter() @Default(0) int subtotalCents,
     @CentsConverter() @Default(0) int itbisCents,
@@ -165,17 +263,56 @@ abstract class Quote with _$Quote {
 
   String get totalLabel => totalCents.formatDOP;
 
+  /// The trip's length as the price summary says it: `8 km`, `12.4 km`.
+  String get distanceLabel => '${formatKm(distanceKm)} km';
+
   /// Every line the customer sees, in the order the receipt prints them.
-  List<({String label, int cents}) > get breakdown => [
-        (label: 'Banderazo', cents: baseCents),
-        if (distanceCents > 0)
+  List<({String label, int cents})> get breakdown {
+    final split = cityKm > 0 || highwayKm > 0;
+    // A heavy vehicle has one rate for every road: one line says it better.
+    final oneRate = cityPerKmCents == highwayPerKmCents;
+    return [
+      (
+        label: includedKm > 0
+            ? 'Tarifa base (incluye ${formatKm(includedKm)} km)'
+            : 'Tarifa base',
+        cents: baseCents,
+      ),
+      if (split && oneRate)
+        (
+          label: 'Recorrido ${formatKm(cityKm + highwayKm)} km × '
+              '${cityPerKmCents.formatDOPShort}',
+          cents: distanceCents,
+        )
+      else if (split) ...[
+        if (cityKm > 0)
           (
-            label: 'Recorrido ${distanceKm.toStringAsFixed(1)} km',
-            cents: distanceCents
+            label: 'Ciudad ${formatKm(cityKm)} km × ${cityPerKmCents.formatDOPShort}',
+            cents: (cityKm * cityPerKmCents).round(),
           ),
-        for (final s in surcharges) (label: s.label, cents: s.cents),
-        if (itbisCents > 0) (label: 'ITBIS (18%)', cents: itbisCents),
-      ];
+        if (highwayKm > 0)
+          (
+            label: 'Carretera ${formatKm(highwayKm)} km × '
+                '${highwayPerKmCents.formatDOPShort}',
+            cents: (highwayKm * highwayPerKmCents).round(),
+          ),
+      ] else if (distanceCents > 0)
+        (
+          label: 'Recorrido ${distanceKm.toStringAsFixed(1)} km',
+          cents: distanceCents,
+        ),
+      if (minimumAdjustmentCents > 0)
+        (label: 'Ajuste a tarifa mínima', cents: minimumAdjustmentCents),
+      for (final s in surcharges) (label: s.label, cents: s.cents),
+      if (itbisCents > 0) (label: 'ITBIS (18%)', cents: itbisCents),
+    ];
+  }
+
+  /// `8` for a whole number of kilometres, `8.4` otherwise.
+  static String formatKm(double km) {
+    final tenths = (km * 10).round();
+    return tenths % 10 == 0 ? '${tenths ~/ 10}' : (tenths / 10).toStringAsFixed(1);
+  }
 }
 
 /// Payment state for one service.
@@ -202,9 +339,16 @@ abstract class ServicePayment with _$ServicePayment {
 
     /// Set when the app must complete a 3-D Secure challenge.
     @Default(false) bool requiresAction,
+
+    /// What a card hold did not cover of the final price, for the office.
+    @CentsConverter() @Default(0) int shortfallCents,
+
+    /// The corte that counted this job's cash, once the office received it.
+    String? cashSettlementId,
     @NullableTimestampConverter() DateTime? authorizedAt,
     @NullableTimestampConverter() DateTime? capturedAt,
     @NullableTimestampConverter() DateTime? cashCollectedAt,
+    @NullableTimestampConverter() DateTime? cashSettledAt,
   }) = _ServicePayment;
 
   const ServicePayment._();
@@ -216,8 +360,18 @@ abstract class ServicePayment with _$ServicePayment {
 
   bool get isCash => method == PaymentMethod.cash;
 
-  /// A card job may not start until the hold is in place; a cash job always may.
-  bool get blocksStart => isCard && status != PaymentStatus.authorized;
+  /// The customer has not chosen yet; they do when the chofer arrives.
+  bool get isPending => !isCard && !isCash;
+
+  /// The card is held for this job.
+  bool get isHeld => isCard && status == PaymentStatus.authorized;
+
+  /// Charged to the card, or cash in the chofer's hand: "Pagado".
+  bool get isPaid => status.isSettled;
+
+  /// Nobody loads a vehicle before it is settled how the tow is paid: a choice
+  /// made, and for a card the hold in place.
+  bool get blocksStart => isPending || (isCard && !isHeld);
 
   String get cardLabel =>
       last4.isEmpty ? method.label : '${brand.isEmpty ? 'Tarjeta' : brand} ••••$last4';
@@ -301,6 +455,33 @@ abstract class ServiceTimeline with _$ServiceTimeline {
     final end = startedAt ?? now;
     return end.difference(arrivedAt!);
   }
+}
+
+/// The operator's check on a heavy job, at `services/{id}.operatorReview`.
+///
+/// A camión, patana or equipo pesado is only ever quoted an estimate: nobody is
+/// sent until an operator has confirmed a heavy grúa can do it and the price.
+@freezed
+abstract class OperatorReview with _$OperatorReview {
+  const factory OperatorReview({
+    @JsonKey(name: 'required') @Default(false) bool isRequired,
+    @JsonKey(unknownEnumValue: OperatorReviewState.unknown)
+    @Default(OperatorReviewState.pending) OperatorReviewState state,
+    @CentsConverter() @Default(0) int estimatedTotalCents,
+    @CentsConverter() int? confirmedTotalCents,
+    String? confirmedBy,
+    @NullableTimestampConverter() DateTime? confirmedAt,
+    @Default('') String note,
+  }) = _OperatorReview;
+
+  const OperatorReview._();
+
+  factory OperatorReview.fromJson(Map<String, dynamic> json) =>
+      _$OperatorReviewFromJson(json);
+
+  bool get isPending => isRequired && state == OperatorReviewState.pending;
+
+  bool get isConfirmed => state == OperatorReviewState.confirmed;
 }
 
 @freezed
@@ -395,6 +576,9 @@ abstract class Service with _$Service {
     @JsonKey(unknownEnumValue: AssignmentMode.unknown)
     @Default(AssignmentMode.auto) AssignmentMode assignmentMode,
     @Default(DispatchState()) DispatchState dispatch,
+
+    /// Present on a heavy job: the operator's confirmation of price and grúa.
+    OperatorReview? operatorReview,
     @Default(ServiceTimeline()) ServiceTimeline timeline,
     ServiceCancellation? cancellation,
     @Default(ServiceRatings()) ServiceRatings ratings,
@@ -417,6 +601,9 @@ abstract class Service with _$Service {
   bool get isTerminal => status.isTerminal;
 
   bool get hasDriver => driverId != null && driverId!.isNotEmpty;
+
+  /// A heavy job still waiting for the operator to confirm price and grúa.
+  bool get awaitsOperator => operatorReview?.isPending ?? false;
 
   /// The tow drawn on a map: the road the server routed, checked against the
   /// two ends it is supposed to join.

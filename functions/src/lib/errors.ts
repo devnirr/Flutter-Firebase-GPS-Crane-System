@@ -37,6 +37,7 @@ export const Code = {
   // Money
   paymentDeclined: 'payment_declined',
   cashLimitExceeded: 'cash_limit_exceeded',
+  paymentsNotConfigured: 'payments_not_configured',
 
   // Account
   accountBlocked: 'account_blocked',

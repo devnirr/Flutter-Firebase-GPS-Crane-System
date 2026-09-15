@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../../calls/voice_call.dart';
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
+import '../../domain/models/payments.dart';
 import '../../domain/models/service.dart';
 import '../../domain/repositories.dart';
 import '../../domain/value_objects.dart';
@@ -269,20 +270,22 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
     required ServiceLocation dropoff,
     required ServiceVehicle vehicle,
     required TruckType truckType,
-    required PaymentMethod paymentMethod,
     required String quoteSignature,
     required DateTime quoteExpiresAt,
+    required TripDistance distance,
+    PaymentMethod? paymentMethod,
     String? paymentMethodId,
     String? notes,
     String? preferredTruckRef,
   }) =>
       _call('requestService', {
+        'distance': distance.toJson(),
         'preferredTruckRef': ?preferredTruckRef,
         'pickup': pickup.toJson(),
         'dropoff': dropoff.toJson(),
         'vehicle': vehicle.toJson(),
         'truckType': truckType.wire,
-        'paymentMethod': paymentMethod.wire,
+        'paymentMethod': ?paymentMethod?.wire,
         'quoteSignature': quoteSignature,
         'quoteExpiresAtMs': quoteExpiresAt.millisecondsSinceEpoch,
         'paymentMethodId': ?paymentMethodId,
@@ -377,6 +380,35 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
       });
 
   @override
+  Future<Result<void>> choosePaymentMethod({
+    required String serviceId,
+    required PaymentMethod method,
+  }) =>
+      _callVoid('choosePaymentMethod', {
+        'serviceId': serviceId,
+        'method': method.wire,
+      });
+
+  @override
+  Future<Result<PreparedPayment>> preparePayment(String serviceId) =>
+      _call('preparePayment', {'serviceId': serviceId}, PreparedPayment.fromJson);
+
+  @override
+  Future<Result<void>> syncPayment(String serviceId) =>
+      _callVoid('syncPayment', {'serviceId': serviceId});
+
+  @override
+  Future<Result<int>> settleDriverCash({
+    required String driverId,
+    String note = '',
+  }) =>
+      _call(
+        'settleDriverCash',
+        {'driverId': driverId, 'note': note},
+        (data) => (data['totalCents'] as num? ?? 0).round(),
+      );
+
+  @override
   Future<Result<void>> cancelByDriver({
     required String serviceId,
     required DriverCancelReason reason,
@@ -425,6 +457,18 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   @override
   Future<Result<void>> archiveDriver(String driverId) =>
       _callVoid('archiveDriver', {'driverId': driverId});
+
+  @override
+  Future<Result<void>> confirmHeavyService({
+    required String serviceId,
+    required int totalCents,
+    String note = '',
+  }) =>
+      _callVoid('confirmHeavyService', {
+        'serviceId': serviceId,
+        'totalCents': totalCents,
+        'note': note,
+      });
 
   @override
   Future<Result<void>> assignServiceManually({

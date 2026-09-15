@@ -61,6 +61,7 @@ class _Sidebar extends ConsumerWidget {
     (label: 'Clientes', icon: Icons.people_outline, route: Routes.clients),
     (label: 'Choferes', icon: Icons.badge_outlined, route: Routes.drivers),
     (label: 'Grúas', icon: Icons.local_shipping_outlined, route: Routes.trucks),
+    (label: 'Efectivo', icon: Icons.payments_outlined, route: Routes.cash),
     (label: 'Reportes', icon: Icons.insights_outlined, route: Routes.reports),
   ];
 

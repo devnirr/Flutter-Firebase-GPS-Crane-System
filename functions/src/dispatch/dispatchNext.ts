@@ -270,9 +270,11 @@ async function findCandidates(options: {
     }
 
     // A chofer over the cash limit stops receiving cash work but keeps getting
-    // card work, so the limit throttles exposure without idling the truck.
+    // card work, so the limit throttles exposure without idling the truck. A
+    // job whose customer has not chosen yet may well end up cash, so it
+    // counts as cash here.
     if (
-      options.paymentMethod === 'cash' &&
+      options.paymentMethod !== 'card' &&
       (driver['cashOwedCents'] as number | undefined ?? 0) >= pricing.maxCashOwedCents
     ) {
       tally.cashCapped++;
@@ -337,7 +339,13 @@ export async function dispatchNext(
   const rejectedBy = (dispatch['rejectedBy'] as string[] | undefined) ?? [];
   const excluded = new Set([...offeredTo, ...rejectedBy]);
 
-  const createdAt = (service['createdAt'] as FirebaseFirestore.Timestamp | undefined)?.toMillis();
+  // The search window runs from when the job became searchable: a heavy job
+  // only does once the operator confirms it, maybe an hour after it was asked
+  // for, and would otherwise give up before offering it to anyone.
+  const review = service['operatorReview'] as Record<string, unknown> | undefined;
+  const createdAt =
+    (review?.['confirmedAt'] as FirebaseFirestore.Timestamp | undefined)?.toMillis() ??
+    (service['createdAt'] as FirebaseFirestore.Timestamp | undefined)?.toMillis();
   const now = Date.now();
   const elapsedMs = createdAt ? now - createdAt : 0;
 

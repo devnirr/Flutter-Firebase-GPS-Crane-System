@@ -19,14 +19,21 @@ import {
 } from '../src/dispatch/dispatchNext.js';
 import {
   DEFAULT_PRICING,
+  type TripDistance,
   authorizationAmountCents,
   bps,
   buildQuote,
   cancellationFeeCents,
+  cityTrip,
   commissionCents,
+  confirmedQuote,
+  finalQuote,
+  mergePricing,
   signQuote,
+  tripDistance,
   verifyQuote,
 } from '../src/lib/pricing.js';
+import { stretchesFrom } from '../src/lib/routes.js';
 import { isValidPlate, maxTruckYear, normalizePlate } from '../src/lib/trucks.js';
 import { isAvailableWithin } from '../src/lib/live.js';
 import { TRUCK_REF_TTL_MS, openTruckRef, sealTruckRef } from '../src/lib/truckRef.js';
@@ -56,95 +63,175 @@ const atLocalHour = (hour: number, day = 15): Date =>
   new Date(Date.UTC(2026, 5, day, hour) - -4 * 60 * 60 * 1000);
 
 describe('pricing', () => {
-  it('charges nothing for distance inside the included kilometres', () => {
-    const quote = buildQuote({
+  /** A trip entirely on city streets. */
+  const city = (km: number) => cityTrip(km, DEFAULT_PRICING.includedKm);
+
+  const quoteFor = (
+    vehicleType: VehicleType,
+    distance: TripDistance,
+    hour = 12,
+    extra: { waitingMinutes?: number; chargeItbis?: boolean } = {},
+  ) =>
+    buildQuote({
       config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: DEFAULT_PRICING.includedKm,
-      at: atLocalHour(12),
-      chargeItbis: false,
+      vehicleType,
+      distance,
+      at: atLocalHour(hour),
+      chargeItbis: extra.chargeItbis ?? false,
+      waitingMinutes: extra.waitingMinutes,
     });
-    expect(quote.distanceCents).toBe(0);
-    expect(quote.totalCents).toBe(DEFAULT_PRICING.baseCentsByTruckType['gancho']);
+
+  it('prices the example the owner gave: a carro, 8 km in the city, RD$1,710', () => {
+    const quote = quoteFor(VehicleType.sedan, city(8));
+    expect(quote.distanceKm).toBe(8);
+    expect(quote.cityKm).toBe(3);
+    expect(quote.highwayKm).toBe(0);
+    expect(quote.distanceCents).toBe(3 * 7000);
+    expect(quote.totalCents).toBe(171000);
   });
 
-  it('charges only the excess kilometres', () => {
-    const quote = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: DEFAULT_PRICING.includedKm + 10,
-      at: atLocalHour(12),
-      chargeItbis: false,
-    });
-    expect(quote.distanceCents).toBe(
-      10 * DEFAULT_PRICING.perKmCentsByTruckType['gancho']!,
+  it('includes the first 5 km in each tarifa base', () => {
+    expect(quoteFor(VehicleType.sedan, city(5)).totalCents).toBe(150000);
+    expect(quoteFor(VehicleType.suv, city(5)).totalCents).toBe(180000);
+    expect(quoteFor(VehicleType.camioneta, city(5)).totalCents).toBe(200000);
+    expect(quoteFor(VehicleType.sedan, city(2)).totalCents).toBe(150000);
+  });
+
+  it('charges carretera kilometres at RD$130 and city ones at RD$70', () => {
+    const distance = tripDistance(
+      [
+        { meters: 10000, highway: false },
+        { meters: 10000, highway: true },
+      ],
+      DEFAULT_PRICING.includedKm,
+    );
+    expect(distance).toEqual({ distanceKm: 20, cityKm: 5, highwayKm: 10 });
+    expect(quoteFor(VehicleType.sedan, distance).totalCents).toBe(
+      150000 + 5 * 7000 + 10 * 13000,
     );
   });
 
-  it('starts the night surcharge at 22:00 local, not 22:00 UTC', () => {
-    const evening = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: 10,
-      at: atLocalHour(21),
-      chargeItbis: false,
-    });
-    const night = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: 10,
-      at: atLocalHour(22),
-      chargeItbis: false,
-    });
+  it('takes the included kilometres from the start of the trip, in driving order', () => {
+    // Out of town first: the included 5 km are carretera, the rest is city.
+    const distance = tripDistance(
+      [
+        { meters: 5000, highway: true },
+        { meters: 10000, highway: false },
+      ],
+      5,
+    );
+    expect(distance).toEqual({ distanceKm: 15, cityKm: 10, highwayKm: 0 });
+  });
 
+  it('works in tenths of a kilometre, and the parts always add up', () => {
+    expect(tripDistance([{ meters: 8049, highway: false }], 5).distanceKm).toBe(8);
+    expect(tripDistance([{ meters: 8050, highway: false }], 5).distanceKm).toBe(8.1);
+    const odd = tripDistance(
+      [
+        { meters: 3333, highway: false },
+        { meters: 4444, highway: true },
+        { meters: 5555, highway: false },
+      ],
+      5,
+    );
+    expect(Math.round((odd.cityKm + odd.highwayKm) * 10)).toBe(
+      Math.round((odd.distanceKm - 5) * 10),
+    );
+  });
+
+  it('adds 30% to the total between 22:00 and 06:00 for a light vehicle', () => {
+    const night = quoteFor(VehicleType.sedan, city(8), 23);
+    const surcharge = night.surcharges.find((s) => s.code === 'nocturno');
+    expect(surcharge?.label).toBe('Recargo nocturno (30%)');
+    expect(surcharge?.cents).toBe(51300);
+    expect(night.totalCents).toBe(222300);
+  });
+
+  it('starts the night surcharge at 22:00 local, not 22:00 UTC', () => {
+    const evening = quoteFor(VehicleType.sedan, city(10), 21);
+    const night = quoteFor(VehicleType.sedan, city(10), 22);
     expect(evening.surcharges.some((s) => s.code === 'nocturno')).toBe(false);
     expect(night.surcharges.some((s) => s.code === 'nocturno')).toBe(true);
-    expect(night.totalCents).toBeGreaterThan(evening.totalCents);
   });
 
   it('applies the night surcharge across midnight and stops at 06:00', () => {
     for (const hour of [23, 0, 3, 5]) {
-      const quote = buildQuote({
-        config: DEFAULT_PRICING,
-        truckType: TruckType.gancho,
-        distanceKm: 10,
-        at: atLocalHour(hour),
-        chargeItbis: false,
-      });
       expect(
-        quote.surcharges.some((s) => s.code === 'nocturno'),
+        quoteFor(VehicleType.sedan, city(10), hour).surcharges.some(
+          (s) => s.code === 'nocturno',
+        ),
         `${hour}:00 local should be a night hour`,
       ).toBe(true);
     }
+    expect(
+      quoteFor(VehicleType.sedan, city(10), 6).surcharges.some((s) => s.code === 'nocturno'),
+    ).toBe(false);
+  });
 
-    const morning = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: 10,
-      at: atLocalHour(6),
+  it('rounds the night surcharge to whole pesos', () => {
+    // 8.1 km: 150000 + 3.1 × 7000 = 171700; 30% is 51510 → RD$515.
+    const quote = quoteFor(VehicleType.sedan, city(8.1), 23);
+    expect(quote.surcharges.find((s) => s.code === 'nocturno')?.cents).toBe(51500);
+  });
+
+  describe('vehículos pesados', () => {
+    it('starts each heavy type at its minimum', () => {
+      expect(quoteFor(VehicleType.camion, city(5)).totalCents).toBe(500000);
+      expect(quoteFor(VehicleType.patana, city(5)).totalCents).toBe(800000);
+      expect(quoteFor(VehicleType.equipoPesado, city(5)).totalCents).toBe(1000000);
+    });
+
+    it('charges RD$250, RD$400 and RD$600 a km past 5, city or carretera alike', () => {
+      const road = tripDistance(
+        [
+          { meters: 5000, highway: false },
+          { meters: 5000, highway: true },
+        ],
+        5,
+      );
+      expect(quoteFor(VehicleType.camion, road).totalCents).toBe(500000 + 5 * 25000);
+      expect(quoteFor(VehicleType.patana, road).totalCents).toBe(800000 + 5 * 40000);
+      expect(quoteFor(VehicleType.equipoPesado, road).totalCents).toBe(1000000 + 5 * 60000);
+    });
+
+    it('adds 40% at night', () => {
+      const night = quoteFor(VehicleType.camion, city(5), 23);
+      expect(night.surcharges.find((s) => s.code === 'nocturno')?.label).toBe(
+        'Recargo nocturno (40%)',
+      );
+      expect(night.totalCents).toBe(700000);
+    });
+
+    it('marks the quote as an estimate, and a light one as not', () => {
+      expect(quoteFor(VehicleType.patana, city(5)).heavy).toBe(true);
+      expect(quoteFor(VehicleType.camioneta, city(5)).heavy).toBe(false);
+    });
+  });
+
+  it('never charges less than the minimum', () => {
+    const cheap = {
+      ...DEFAULT_PRICING,
+      baseCentsByVehicleType: { ...DEFAULT_PRICING.baseCentsByVehicleType, motor: 90000 },
+    };
+    const quote = buildQuote({
+      config: cheap,
+      vehicleType: VehicleType.motor,
+      distance: city(6),
+      at: atLocalHour(12),
       chargeItbis: false,
     });
-    expect(morning.surcharges.some((s) => s.code === 'nocturno')).toBe(false);
+    expect(quote.minimumAdjustmentCents).toBe(150000 - 90000 - 7000);
+    expect(quote.totalCents).toBe(150000);
   });
 
   it('bills only waiting time past the free window', () => {
-    const free = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: 10,
-      at: atLocalHour(12),
+    const free = quoteFor(VehicleType.sedan, city(10), 12, {
       waitingMinutes: DEFAULT_PRICING.freeWaitingMinutes,
-      chargeItbis: false,
     });
     expect(free.surcharges.some((s) => s.code === 'espera')).toBe(false);
 
-    const over = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: 10,
-      at: atLocalHour(12),
+    const over = quoteFor(VehicleType.sedan, city(10), 12, {
       waitingMinutes: DEFAULT_PRICING.freeWaitingMinutes + 7,
-      chargeItbis: false,
     });
     expect(over.surcharges.find((s) => s.code === 'espera')?.cents).toBe(
       7 * DEFAULT_PRICING.perWaitingMinuteCents,
@@ -152,37 +239,50 @@ describe('pricing', () => {
   });
 
   it('applies ITBIS at 18% only when a fiscal receipt is issued', () => {
-    const fiscal = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: 20,
-      at: atLocalHour(12),
-    });
+    const fiscal = quoteFor(VehicleType.sedan, city(20), 12, { chargeItbis: true });
     expect(fiscal.itbisCents).toBe(Math.round(fiscal.subtotalCents * 0.18));
     expect(fiscal.totalCents).toBe(fiscal.subtotalCents + fiscal.itbisCents);
-
-    const consumo = buildQuote({
-      config: DEFAULT_PRICING,
-      truckType: TruckType.gancho,
-      distanceKm: 20,
-      at: atLocalHour(12),
-      chargeItbis: false,
-    });
-    expect(consumo.itbisCents).toBe(0);
+    expect(quoteFor(VehicleType.sedan, city(20)).itbisCents).toBe(0);
   });
 
-  it('prices heavier trucks above lighter ones for the same distance', () => {
-    const total = (type: TruckType): number =>
-      buildQuote({
-        config: DEFAULT_PRICING,
-        truckType: type,
-        distanceKm: 20,
-        at: atLocalHour(12),
-        chargeItbis: false,
-      }).totalCents;
+  it('finishes a job at the agreed price plus waiting, not a fresh quote', () => {
+    const quoted = quoteFor(VehicleType.sedan, city(8), 21);
+    // Finished after 22:00 with 15 minutes' wait: no night rate appears.
+    const final = finalQuote(quoted, DEFAULT_PRICING, DEFAULT_PRICING.freeWaitingMinutes + 15);
+    expect(final.surcharges.map((s) => s.code)).toEqual(['espera']);
+    expect(final.totalCents).toBe(171000 + 15 * DEFAULT_PRICING.perWaitingMinuteCents);
+    expect(finalQuote(quoted, DEFAULT_PRICING, 3)).toEqual(quoted);
+  });
 
-    expect(total(TruckType.pesada)).toBeGreaterThan(total(TruckType.plataforma));
-    expect(total(TruckType.plataforma)).toBeGreaterThan(total(TruckType.gancho));
+  it("keeps the estimate on the receipt when the operator confirms a heavy job's price", () => {
+    const estimate = quoteFor(VehicleType.camion, city(10));
+    const confirmed = confirmedQuote(estimate, 900000);
+    expect(confirmed.totalCents).toBe(900000);
+    expect(confirmed.baseCents).toBe(estimate.baseCents);
+    expect(confirmed.surcharges.find((s) => s.code === 'ajuste_operador')?.cents).toBe(
+      900000 - estimate.totalCents,
+    );
+
+    // Confirmed twice: one adjustment line, not two.
+    const again = confirmedQuote(confirmed, 800000);
+    expect(again.totalCents).toBe(800000);
+    expect(again.surcharges.filter((s) => s.code === 'ajuste_operador')).toHaveLength(1);
+
+    // With ITBIS the operator's figure is what the customer pays, tax included.
+    const fiscal = confirmedQuote(
+      quoteFor(VehicleType.camion, city(10), 12, { chargeItbis: true }),
+      1180000,
+    );
+    expect(fiscal.totalCents).toBe(1180000);
+    expect(fiscal.subtotalCents).toBe(1000000);
+    expect(fiscal.itbisCents).toBe(180000);
+  });
+
+  it('keeps default rates for types a stored tariff does not mention', () => {
+    const merged = mergePricing({ baseCentsByVehicleType: { patana: 900000 } });
+    expect(merged.baseCentsByVehicleType['patana']).toBe(900000);
+    expect(merged.baseCentsByVehicleType['sedan']).toBe(150000);
+    expect(merged.lightNightSurchargeBps).toBe(3000);
   });
 
   it('computes basis points exactly at awkward rates', () => {
@@ -212,6 +312,35 @@ describe('pricing', () => {
   });
 });
 
+describe('city and carretera on the route', () => {
+  it('counts a step driven at 60 km/h or more as carretera', () => {
+    expect(
+      stretchesFrom([
+        // 1 km in 2 minutes: 30 km/h.
+        { distanceMeters: 1000, staticDuration: '120s' },
+        // 10 km in 6 minutes: 100 km/h.
+        { distanceMeters: 10000, staticDuration: '360s' },
+        // 2 km in 2 minutes: exactly 60 km/h.
+        { distanceMeters: 2000, staticDuration: '120s' },
+        { distanceMeters: 500, staticDuration: '90s' },
+      ]),
+    ).toEqual([
+      { meters: 1000, highway: false },
+      { meters: 12000, highway: true },
+      { meters: 500, highway: false },
+    ]);
+  });
+
+  it('treats a step with no duration as city, and skips empty steps', () => {
+    expect(
+      stretchesFrom([
+        { distanceMeters: 800 },
+        { distanceMeters: 0, staticDuration: '10s' },
+      ]),
+    ).toEqual([{ meters: 800, highway: false }]);
+  });
+});
+
 describe('quote signature', () => {
   const payload = {
     clientId: 'client-1',
@@ -219,8 +348,10 @@ describe('quote signature', () => {
     dropoffGeohash: 'd7rj2',
     totalCents: 250000,
     expiresAtMs: 1_800_000_000_000,
-    pricingVersion: 1,
+    pricingVersion: 2,
     truckType: TruckType.gancho,
+    vehicleType: VehicleType.sedan,
+    distance: { distanceKm: 12.4, cityKm: 3.4, highwayKm: 4 },
   };
 
   it('verifies a signature it produced', () => {
@@ -242,6 +373,21 @@ describe('quote signature', () => {
     expect(
       verifyQuote({ ...payload, expiresAtMs: payload.expiresAtMs + 60000 }, signature),
     ).toBe(false);
+  });
+
+  it('rejects carretera kilometres passed off as city ones', () => {
+    const signature = signQuote(payload);
+    expect(
+      verifyQuote(
+        { ...payload, distance: { distanceKm: 12.4, cityKm: 7.4, highwayKm: 0 } },
+        signature,
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects a jeepeta quoted as a carro', () => {
+    const signature = signQuote(payload);
+    expect(verifyQuote({ ...payload, vehicleType: VehicleType.suv }, signature)).toBe(false);
   });
 
   it('rejects a malformed signature without throwing', () => {
@@ -416,11 +562,13 @@ describe('truck type inference', () => {
     );
   });
 
-  it('prefers the flatbed rule over the vehicle type', () => {
-    // A rolled-over camión still cannot roll; condition wins.
-    expect(inferTruckType(VehicleType.camion, VehicleCondition.volcado)).toBe(
-      TruckType.plataforma,
-    );
+  it('sends the heavy grúa for any heavy vehicle, whatever its condition', () => {
+    // A flatbed cannot lift a camión, a patana or a loader, rolled over or not.
+    for (const type of [VehicleType.camion, VehicleType.patana, VehicleType.equipoPesado]) {
+      for (const condition of Object.values(VehicleCondition)) {
+        expect(inferTruckType(type, condition)).toBe(TruckType.pesada);
+      }
+    }
   });
 });
 

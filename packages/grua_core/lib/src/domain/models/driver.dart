@@ -48,6 +48,12 @@ abstract class Driver with _$Driver {
     /// Cash the chofer has collected but not yet handed in. When this passes
     /// the configured limit they stop receiving cash jobs.
     @Default(0) int cashOwedCents,
+
+    /// Cash collected from customers and not yet handed to the office in a
+    /// corte. The whole amount, not the commission: the customer paid the
+    /// company, and the chofer is holding it.
+    @Default(0) int cashOnHandCents,
+    @NullableTimestampConverter() DateTime? lastCashSettlementAt,
     @Default(<String>[]) List<String> zones,
 
     /// Set when the chofer works under his own company rather than for the

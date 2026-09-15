@@ -16,7 +16,6 @@ class RequestDraft {
     this.dropoff,
     this.vehicle = const ServiceVehicle(),
     this.truckTypeOverride,
-    this.paymentMethod = PaymentMethod.cash,
     this.notes = '',
     this.photoPaths = const [],
     this.quote,
@@ -37,7 +36,9 @@ class RequestDraft {
   /// Set only when the customer disagrees with the inferred type and picks
   /// another. Null means "trust the inference".
   final TruckType? truckTypeOverride;
-  final PaymentMethod paymentMethod;
+
+  // No payment method here: the customer chooses card or cash on the tracking
+  // screen when the chofer arrives.
   final String notes;
   final List<String> photoPaths;
   final QuoteResult? quote;
@@ -64,7 +65,6 @@ class RequestDraft {
     ServiceVehicle? vehicle,
     TruckType? truckTypeOverride,
     bool clearTruckTypeOverride = false,
-    PaymentMethod? paymentMethod,
     String? notes,
     List<String>? photoPaths,
     QuoteResult? quote,
@@ -84,7 +84,6 @@ class RequestDraft {
       vehicle: vehicle ?? this.vehicle,
       truckTypeOverride:
           clearTruckTypeOverride ? null : (truckTypeOverride ?? this.truckTypeOverride),
-      paymentMethod: paymentMethod ?? this.paymentMethod,
       notes: notes ?? this.notes,
       photoPaths: photoPaths ?? this.photoPaths,
       quote: clearQuote ? null : (quote ?? this.quote),
@@ -222,9 +221,6 @@ class RequestController extends Notifier<RequestDraft> {
       ? state.copyWith(clearPreferredTruck: true)
       : state.copyWith(preferredTruck: value);
 
-  void setPaymentMethod(PaymentMethod value) =>
-      state = state.copyWith(paymentMethod: value);
-
   void setNotes(String value) => state = state.copyWith(notes: value);
 
   void addPhoto(String path) =>
@@ -294,9 +290,9 @@ class RequestController extends Notifier<RequestDraft> {
           dropoff: dropoff,
           vehicle: state.vehicle.copyWith(photoPaths: photoUrls),
           truckType: quote.truckType,
-          paymentMethod: state.paymentMethod,
           quoteSignature: quote.signature,
           quoteExpiresAt: quote.expiresAt,
+          distance: TripDistance.of(quote.quote),
           notes: state.notes.isEmpty ? null : state.notes,
           preferredTruckRef: state.preferredTruck?.ref,
         );

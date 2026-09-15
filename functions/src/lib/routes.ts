@@ -9,6 +9,56 @@ export interface RoadRoute {
   durationSeconds: number;
   /** Google's encoded polyline, drawn by every app that shows this service. */
   polyline: string;
+  /**
+   * The trip in driving order, as runs of city streets and open road. What the
+   * tariff reads: a kilometre of autopista is priced differently from one in
+   * town.
+   */
+  stretches: RoadStretch[];
+}
+
+/** One run of the route that is all city or all carretera. */
+export interface RoadStretch {
+  meters: number;
+  highway: boolean;
+}
+
+/**
+ * The speed at or above which a stretch counts as carretera.
+ *
+ * Google does not say what kind of road a step is on, but it does say how long
+ * it takes without traffic: an autopista or a carretera between towns is
+ * driven at 60 km/h and more, and a city street is not.
+ */
+export const HIGHWAY_KMH = 60;
+
+/**
+ * Turns Google's steps into city and carretera runs, in order.
+ *
+ * Consecutive steps of the same kind are merged: a route is dozens of steps
+ * and the tariff only cares where the kind changes.
+ */
+export function stretchesFrom(
+  steps: { distanceMeters?: number; staticDuration?: string }[],
+  highwayKmh = HIGHWAY_KMH,
+): RoadStretch[] {
+  const runs: RoadStretch[] = [];
+  for (const step of steps) {
+    const meters = Math.round(step.distanceMeters ?? 0);
+    if (meters <= 0) continue;
+    const seconds = Number.parseFloat(step.staticDuration ?? '0') || 0;
+    // No duration is no evidence of speed: priced as city, the lower rate.
+    const kmh = seconds > 0 ? (meters / seconds) * 3.6 : 0;
+    const highway = kmh >= highwayKmh;
+
+    const last = runs[runs.length - 1];
+    if (last && last.highway === highway) {
+      last.meters += meters;
+    } else {
+      runs.push({ meters, highway });
+    }
+  }
+  return runs;
 }
 
 const ENDPOINT = 'https://routes.googleapis.com/directions/v2:computeRoutes';
@@ -66,8 +116,11 @@ export async function roadRoute(from: LatLng, to: LatLng): Promise<RoadRoute | n
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': key,
         // Billed by field mask: only what is drawn and shown.
+        // The steps' distance and traffic-free duration are what split the
+        // trip into city and carretera for the tariff.
         'X-Goog-FieldMask':
-          'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline',
+          'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline,' +
+          'routes.legs.steps.distanceMeters,routes.legs.steps.staticDuration',
       },
       body: JSON.stringify({
         origin: waypoint(from),
@@ -98,6 +151,7 @@ export async function roadRoute(from: LatLng, to: LatLng): Promise<RoadRoute | n
         distanceMeters?: number;
         duration?: string;
         polyline?: { encodedPolyline?: string };
+        legs?: { steps?: { distanceMeters?: number; staticDuration?: string }[] }[];
       }[];
     };
 
@@ -105,11 +159,23 @@ export async function roadRoute(from: LatLng, to: LatLng): Promise<RoadRoute | n
     const polyline = route?.polyline?.encodedPolyline;
     if (!route || !polyline) return null;
 
+    const distance = Math.round(route.distanceMeters ?? 0);
+    const steps = (route.legs ?? []).flatMap((leg) => leg.steps ?? []);
+    let stretches = stretchesFrom(steps);
+    // Steps that do not add up to the route — missing, or trimmed — would
+    // price a shorter trip than the one driven. The whole distance as city is
+    // the honest fallback.
+    const stepped = stretches.reduce((sum, s) => sum + s.meters, 0);
+    if (Math.abs(stepped - distance) > Math.max(50, distance * 0.02)) {
+      stretches = [{ meters: distance, highway: false }];
+    }
+
     const answer: RoadRoute = {
-      distanceMeters: Math.round(route.distanceMeters ?? 0),
+      distanceMeters: distance,
       // "3600s" — seconds with a trailing s, per protobuf Duration.
       durationSeconds: Math.round(Number.parseFloat(route.duration ?? '0') || 0),
       polyline,
+      stretches,
     };
     if (answer.distanceMeters <= 0) return null;
 

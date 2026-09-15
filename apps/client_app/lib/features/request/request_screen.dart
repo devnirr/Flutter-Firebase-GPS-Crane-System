@@ -244,11 +244,38 @@ class _RequestScreenState extends ConsumerState<RequestScreen> {
                     Text('Detalles del vehículo', style: text.headlineSmall),
                     const SizedBox(height: Insets.lg),
                     _VehicleTypePicker(
+                      options: _VehicleTypePicker.light,
                       selected: draft.vehicle.type,
                       onChanged: (type) => ref
                           .read(requestControllerProvider.notifier)
                           .setVehicle(draft.vehicle.copyWith(type: type)),
                     ),
+                    const SizedBox(height: Insets.lg),
+                    Text(
+                      'VEHÍCULOS PESADOS',
+                      key: const Key('heavy-section'),
+                      style: text.labelMedium?.copyWith(
+                        color: BrandColors.grey600,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: Insets.sm),
+                    _VehicleTypePicker(
+                      options: _VehicleTypePicker.heavy,
+                      selected: draft.vehicle.type,
+                      onChanged: (type) => ref
+                          .read(requestControllerProvider.notifier)
+                          .setVehicle(draft.vehicle.copyWith(type: type)),
+                    ),
+                    if (draft.vehicle.type.isHeavy) ...[
+                      const SizedBox(height: Insets.md),
+                      const InlineNotice(
+                        key: Key('heavy-notice'),
+                        message: heavyServiceNotice,
+                        icon: Icons.warning_amber_rounded,
+                        tone: NoticeTone.warning,
+                      ),
+                    ],
                     const SizedBox(height: Insets.lg),
                     Row(
                       children: [
@@ -428,24 +455,36 @@ class _Header extends StatelessWidget {
   }
 }
 
+/// One row of vehicle types. The form shows two: the light vehicles, and under
+/// "Vehículos pesados" the ones an operator has to confirm.
 class _VehicleTypePicker extends StatelessWidget {
-  const _VehicleTypePicker({required this.selected, required this.onChanged});
+  const _VehicleTypePicker({
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+  });
 
+  final List<(VehicleType, IconData)> options;
   final VehicleType selected;
   final ValueChanged<VehicleType> onChanged;
 
-  static const List<(VehicleType, IconData)> _options = [
+  static const List<(VehicleType, IconData)> light = [
     (VehicleType.sedan, Icons.directions_car_outlined),
     (VehicleType.suv, Icons.airport_shuttle_outlined),
     (VehicleType.camioneta, Icons.local_shipping_outlined),
+  ];
+
+  static const List<(VehicleType, IconData)> heavy = [
     (VehicleType.camion, Icons.fire_truck_outlined),
+    (VehicleType.patana, Icons.rv_hookup_outlined),
+    (VehicleType.equipoPesado, Icons.agriculture_outlined),
   ];
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        for (final (type, icon) in _options) ...[
+        for (final (type, icon) in options) ...[
           Expanded(
             child: _ChoiceTile(
               icon: icon,
@@ -454,7 +493,7 @@ class _VehicleTypePicker extends StatelessWidget {
               onTap: () => onChanged(type),
             ),
           ),
-          if (type != _options.last.$1) const SizedBox(width: Insets.sm),
+          if (type != options.last.$1) const SizedBox(width: Insets.sm),
         ],
       ],
     );
@@ -573,7 +612,7 @@ class _TruckTypeNotice extends StatelessWidget {
       TruckType.plataforma =>
         'Tu vehículo no puede rodar, así que enviamos una plataforma.',
       TruckType.pesada => 'Por el tamaño del vehículo enviamos una grúa pesada.',
-      TruckType.gancho => 'Enviamos una grúa de gancho, la más económica.',
+      TruckType.gancho => 'Enviamos una grúa de gancho.',
       TruckType.unknown => 'Definiremos el tipo de grúa según tu vehículo.',
     };
 

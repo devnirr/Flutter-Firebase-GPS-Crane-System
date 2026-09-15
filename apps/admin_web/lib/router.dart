@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import 'features/auth/admin_login_screen.dart';
+import 'features/cash/cash_screen.dart';
 import 'features/clients/clients_screen.dart';
 import 'features/drivers/drivers_screen.dart';
 import 'features/operations/operations_screen.dart';
@@ -20,6 +21,7 @@ abstract final class Routes {
   static const drivers = '/choferes';
   static const trucks = '/gruas';
   static const reports = '/reportes';
+  static const cash = '/efectivo';
 
   /// The Servicios page with one service's record open.
   static String serviceDetail(String id) => '/servicios?id=$id';
@@ -95,6 +97,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: Routes.drivers, builder: (_, _) => const DriversScreen()),
           GoRoute(path: Routes.trucks, builder: (_, _) => const TrucksScreen()),
           GoRoute(path: Routes.reports, builder: (_, _) => const ReportsScreen()),
+          GoRoute(path: Routes.cash, builder: (_, _) => const CashScreen()),
         ],
       ),
     ],

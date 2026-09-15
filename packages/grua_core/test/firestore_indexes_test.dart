@@ -88,6 +88,14 @@ void main() {
     );
   });
 
+  test("one chofer's cortes have theirs", () {
+    // `watchCashSettlements(driverId: …)`: equality plus newest first.
+    expect(
+      declared(),
+      contains('cashSettlements: driverId ASCENDING + createdAt DESCENDING'),
+    );
+  });
+
   test("the offer sweep and the chofer's open offer have theirs", () {
     expect(
       declared(),

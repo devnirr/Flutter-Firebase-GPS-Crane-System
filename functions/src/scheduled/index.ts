@@ -2,7 +2,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 
 import { releaseIfFinished } from '../lib/driverRelease.js';
-import { OfferState, ServiceStatus } from '../lib/enums.js';
+import { OfferState, OperatorReviewState, ServiceStatus } from '../lib/enums.js';
 import { FieldValue, Paths, Timestamp } from '../lib/firestore.js';
 import { alertAdmins } from '../lib/push.js';
 import { loadDispatchConfig } from '../dispatch/dispatchNext.js';
@@ -155,6 +155,9 @@ export const releaseFinishedDrivers = onSchedule(
   },
 );
 
+/** How long a heavy job may wait for the operator before it is given up on. */
+const HEAVY_REVIEW_WINDOW_MS = 6 * 60 * 60 * 1000;
+
 /**
  * Gives up on services nobody ever took.
  *
@@ -175,7 +178,24 @@ export const expireAbandonedServices = onSchedule(
 
     if (abandoned.empty) return;
 
+    let expired = 0;
     for (const doc of abandoned.docs) {
+      // A heavy job counts from when the operator confirmed it, and one still
+      // waiting on the operator gets longer: confirming means calling the
+      // customer and finding a heavy grúa, which is not a five-minute job.
+      const review = doc.data()['operatorReview'] as Record<string, unknown> | undefined;
+      const confirmedAt = (review?.['confirmedAt'] as FirebaseFirestore.Timestamp | undefined)
+        ?.toMillis();
+      if (confirmedAt && confirmedAt > cutoff.toMillis()) continue;
+      const createdAt = (doc.data()['createdAt'] as FirebaseFirestore.Timestamp).toMillis();
+      if (
+        review?.['state'] === OperatorReviewState.pending &&
+        createdAt > Date.now() - HEAVY_REVIEW_WINDOW_MS
+      ) {
+        continue;
+      }
+      expired++;
+
       await doc.ref.update({
         status: ServiceStatus.expired,
         updatedAt: FieldValue.serverTimestamp(),
@@ -198,7 +218,7 @@ export const expireAbandonedServices = onSchedule(
       }
     }
 
-    logger.warn('sweep.abandonedServices', { count: abandoned.size });
+    if (expired > 0) logger.warn('sweep.abandonedServices', { count: expired });
   },
 );
 

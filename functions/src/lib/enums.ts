@@ -57,6 +57,7 @@ export const ServiceEventName = {
   expireOffer: 'expireOffer',
   noDriversFound: 'noDriversFound',
   assignServiceManually: 'assignServiceManually',
+  confirmHeavyService: 'confirmHeavyService',
   markArrived: 'markArrived',
   startService: 'startService',
   completeService: 'completeService',
@@ -65,6 +66,13 @@ export const ServiceEventName = {
   cancelService: 'cancelService',
   cancelByDriver: 'cancelByDriver',
   failService: 'failService',
+
+  // Money, logged beside the transitions. None of these move the status.
+  choosePaymentMethod: 'choosePaymentMethod',
+  paymentAuthorized: 'paymentAuthorized',
+  paymentCaptured: 'paymentCaptured',
+  paymentFailed: 'paymentFailed',
+  paymentVoided: 'paymentVoided',
 } as const;
 
 export type ServiceEventName =
@@ -127,14 +135,42 @@ export const TruckType = {
 export type TruckType = (typeof TruckType)[keyof typeof TruckType];
 
 export const VehicleType = {
+  /** Carro. */
   sedan: 'sedan',
+  /** Jeepeta. */
   suv: 'suv',
   camioneta: 'camioneta',
+  /** Camión de 2 ejes. */
   camion: 'camion',
+  /** Patana / tráiler. */
+  patana: 'patana',
+  equipoPesado: 'equipo_pesado',
   motor: 'motor',
 } as const;
 
 export type VehicleType = (typeof VehicleType)[keyof typeof VehicleType];
+
+/**
+ * Vehículos pesados: a special grúa, a price that is only an estimate, and an
+ * operator who confirms both before anybody drives out.
+ */
+export const HEAVY_VEHICLE_TYPES: readonly VehicleType[] = [
+  VehicleType.camion,
+  VehicleType.patana,
+  VehicleType.equipoPesado,
+];
+
+export const isHeavyVehicle = (type: VehicleType | string | undefined): boolean =>
+  HEAVY_VEHICLE_TYPES.includes(type as VehicleType);
+
+/** Where a heavy request stands with the operator. */
+export const OperatorReviewState = {
+  pending: 'pending',
+  confirmed: 'confirmed',
+} as const;
+
+export type OperatorReviewState =
+  (typeof OperatorReviewState)[keyof typeof OperatorReviewState];
 
 export const VehicleCondition = {
   noArranca: 'no_arranca',
@@ -165,15 +201,25 @@ export const OfferState = {
 
 export type OfferState = (typeof OfferState)[keyof typeof OfferState];
 
-export const PaymentMethod = { card: 'card', cash: 'cash' } as const;
+/**
+ * How the customer pays. `pending` until they choose, which they do when the
+ * chofer arrives: the price can still change on the way (an operator's
+ * confirmation, a longer wait), and a card is only held once there is a truck
+ * at the curb.
+ */
+export const PaymentMethod = { card: 'card', cash: 'cash', pending: 'pending' } as const;
 export type PaymentMethod = (typeof PaymentMethod)[keyof typeof PaymentMethod];
 
 export const PaymentStatus = {
   none: 'none',
+  /** The card is held for the job; nothing charged yet. */
   authorized: 'authorized',
+  /** Charged. Shown to everyone as "Pagado". */
   captured: 'captured',
   failed: 'failed',
   refunded: 'refunded',
+  /** A hold released without charging: cancelled, or switched to cash. */
+  voided: 'voided',
   cashPending: 'cash_pending',
   cashCollected: 'cash_collected',
 } as const;
@@ -222,8 +268,10 @@ export function inferTruckType(
   vehicleType: VehicleType,
   condition: VehicleCondition,
 ): TruckType {
+  // First, whatever the condition: a flatbed cannot lift a camión, let alone a
+  // patana or a loader, rolled over or not.
+  if (isHeavyVehicle(vehicleType)) return TruckType.pesada;
   if (FLATBED_CONDITIONS.includes(condition)) return TruckType.plataforma;
-  if (vehicleType === VehicleType.camion) return TruckType.pesada;
   return TruckType.gancho;
 }
 

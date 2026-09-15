@@ -16,6 +16,7 @@ import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
+import '../../domain/models/payments.dart';
 import '../../domain/models/remote_config_models.dart';
 import '../../domain/models/service.dart';
 import '../../domain/models/truck.dart';
@@ -1216,6 +1217,36 @@ class FirestoreEarningsRepository implements EarningsRepository {
             .get();
         return snap.docs.map((d) => d.data()).toList();
       });
+
+  @override
+  Stream<List<CashSettlement>> watchCashSettlements({
+    String? driverId,
+    int limit = 50,
+  }) {
+    Query<CashSettlement> query = Paths.cashSettlements();
+    if (driverId != null) query = query.where('driverId', isEqualTo: driverId);
+    return query
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList())
+        .guarded('watchCashSettlements');
+  }
+
+  @override
+  Stream<List<Service>> watchUncountedCash(String driverId) => Paths.services()
+      // Equality on both: served by the single-field indexes, no composite.
+      .where('driverId', isEqualTo: driverId)
+      .where('payment.status', isEqualTo: PaymentStatus.cashCollected.wire)
+      .limit(400)
+      .snapshots()
+      .map(
+        (snap) => snap.docs
+            .map((d) => d.data())
+            .where((s) => s.payment.isCash && s.payment.cashSettlementId == null)
+            .toList(),
+      )
+      .guarded('watchUncountedCash');
 }
 
 class FirestoreInvoiceRepository implements InvoiceRepository {

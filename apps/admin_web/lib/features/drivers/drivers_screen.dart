@@ -392,12 +392,14 @@ class _DriverTable extends StatelessWidget {
                     ),
                     DataCell(Text('${driver.completedServices}')),
                     DataCell(
+                      // The cash the chofer holds for the company, not only
+                      // the commission on it: what the next corte collects.
                       Text(
-                        driver.cashOwedCents == 0
+                        driver.cashOnHandCents == 0
                             ? '—'
-                            : driver.cashOwedCents.formatDOP,
+                            : driver.cashOnHandCents.formatDOP,
                         style: text.bodyMedium?.copyWith(
-                          color: driver.cashOwedCents > 0
+                          color: driver.cashOnHandCents > 0
                               ? BrandColors.warning
                               : BrandColors.grey600,
                         ),

@@ -12,8 +12,12 @@ import '../utils/money.dart';
 /// they disagree the server wins, and the customer sees a price change at the
 /// worst possible moment — so any edit here is an edit there.
 ///
-/// Everything is integer DOP cents. The only division is in the surcharge
-/// helpers, and each rounds before it returns.
+/// The tariff: a tarifa base per vehicle type that includes the first 5 km and
+/// is never below the minimum; each kilometre after that at the city or the
+/// carretera rate; and at night, 30% on top for a light vehicle and 40% for a
+/// heavy one, whose price is only an estimate until the operator confirms it.
+///
+/// Everything is integer DOP cents.
 abstract final class Pricing {
   /// Builds a full quote for a tow.
   ///
@@ -22,29 +26,34 @@ abstract final class Pricing {
   /// implementation quietly applies the 22:00 surcharge at 6 p.m.
   static Quote quoteFor({
     required PricingConfig config,
-    required TruckType truckType,
-    required double distanceKm,
+    required VehicleType vehicleType,
+    required TripDistance distance,
     required DateTime at,
     bool chargeItbis = true,
     int waitingMinutes = 0,
     int tollsCents = 0,
   }) {
-    final baseCents = config.baseCentsFor(truckType);
-    final perKmCents = config.perKmCentsFor(truckType);
+    final baseCents = config.baseCentsFor(vehicleType);
+    final cityPerKmCents = config.cityPerKmCentsFor(vehicleType);
+    final highwayPerKmCents = config.highwayPerKmCentsFor(vehicleType);
 
-    final billableKm =
-        (distanceKm - config.includedKm).clamp(0.0, double.infinity);
-    final distanceCents = (billableKm * perKmCents).round();
+    final distanceCents = (distance.cityKm * cityPerKmCents).round() +
+        (distance.highwayKm * highwayPerKmCents).round();
+    final minimumAdjustment =
+        (config.minimumCents - (baseCents + distanceCents)).clamp(0, 1 << 40);
+    // What the percentages are taken from: the tow itself.
+    final fareCents = baseCents + distanceCents + minimumAdjustment;
 
     final surcharges = <QuoteSurcharge>[];
 
     final local = DoTime.toLocal(at);
     if (config.isNightHour(local.hour)) {
+      final rate = config.nightSurchargeBpsFor(vehicleType);
       surcharges.add(
         QuoteSurcharge(
           code: 'nocturno',
-          label: 'Recargo nocturno',
-          cents: Money.bps(baseCents, config.nightSurchargeBps),
+          label: 'Recargo nocturno (${_percent(rate)}%)',
+          cents: toPeso(Money.bps(fareCents, rate)),
         ),
       );
     }
@@ -54,7 +63,7 @@ abstract final class Pricing {
         QuoteSurcharge(
           code: 'feriado',
           label: 'Recargo por día feriado',
-          cents: Money.bps(baseCents, config.holidaySurchargeBps),
+          cents: toPeso(Money.bps(fareCents, config.holidaySurchargeBps)),
         ),
       );
     }
@@ -78,20 +87,60 @@ abstract final class Pricing {
     }
 
     final surchargeTotal = surcharges.fold(0, (sum, s) => sum + s.cents);
-    final subtotal = baseCents + distanceCents + surchargeTotal;
+    final subtotal = fareCents + surchargeTotal;
     final itbis = (chargeItbis && config.chargeItbis) ? Money.itbis(subtotal) : 0;
 
     return Quote(
       pricingVersion: config.version,
+      vehicleType: vehicleType,
+      heavy: vehicleType.isHeavy,
       baseCents: baseCents,
       includedKm: config.includedKm,
-      perKmCents: perKmCents,
-      distanceKm: distanceKm,
+      perKmCents: cityPerKmCents,
+      cityPerKmCents: cityPerKmCents,
+      highwayPerKmCents: highwayPerKmCents,
+      distanceKm: distance.distanceKm,
+      cityKm: distance.cityKm,
+      highwayKm: distance.highwayKm,
       distanceCents: distanceCents,
+      minimumAdjustmentCents: minimumAdjustment,
       surcharges: surcharges,
       subtotalCents: subtotal,
       itbisCents: itbis,
       totalCents: subtotal + itbis,
+    );
+  }
+
+  /// To the nearest whole peso: nobody hands a chofer 51 centavos.
+  static int toPeso(int cents) => ((cents + 50) ~/ 100) * 100;
+
+  static String _percent(int bps) =>
+      bps % 100 == 0 ? '${bps ~/ 100}' : (bps / 100).toStringAsFixed(1);
+
+  /// The quote with the total an operator confirmed for a heavy job. Mirrors
+  /// `confirmedQuote` on the server: the difference is its own line, and the
+  /// figure is what the customer pays, ITBIS included when there is any.
+  static Quote confirmed(Quote quote, int totalCents) {
+    final subtotal = quote.itbisCents > 0
+        ? (totalCents * 10000 / (10000 + 1800)).round()
+        : totalCents;
+    final previous = quote.surcharges
+        .where((s) => s.code == 'ajuste_operador')
+        .fold(0, (sum, s) => sum + s.cents);
+    final line = subtotal - quote.subtotalCents + previous;
+    return quote.copyWith(
+      surcharges: [
+        ...quote.surcharges.where((s) => s.code != 'ajuste_operador'),
+        if (line != 0)
+          QuoteSurcharge(
+            code: 'ajuste_operador',
+            label: 'Ajuste confirmado por el operador',
+            cents: line,
+          ),
+      ],
+      subtotalCents: subtotal,
+      itbisCents: quote.itbisCents > 0 ? totalCents - subtotal : 0,
+      totalCents: totalCents,
     );
   }
 
@@ -129,8 +178,8 @@ abstract final class Pricing {
     required VehicleType vehicleType,
     required VehicleCondition condition,
   }) {
+    if (vehicleType.isHeavy) return TruckType.pesada;
     if (condition.requiresFlatbed) return TruckType.plataforma;
-    if (vehicleType == VehicleType.camion) return TruckType.pesada;
     return TruckType.gancho;
   }
 }

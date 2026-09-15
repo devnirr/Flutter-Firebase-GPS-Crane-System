@@ -10,10 +10,13 @@ import {
   DriverDocumentType,
   DriverLiveState,
   DriverStatus,
+  OperatorReviewState,
   ServiceEventName,
   TruckType,
   UserRole,
 } from '../lib/enums.js';
+import { dispatchNext } from '../dispatch/dispatchNext.js';
+import { type Quote, confirmedQuote } from '../lib/pricing.js';
 import { Code, invalidArgument, permissionDenied, precondition } from '../lib/errors.js';
 import { FieldValue, Paths, db } from '../lib/firestore.js';
 import { requireAdmin, requireAppCheck, requireAuth, requireStaff } from '../lib/guards.js';
@@ -795,6 +798,74 @@ export const assignServiceManually = onCall({ region, cors: true }, async (reque
   });
 
   await audit(caller.uid, 'assignServiceManually', serviceId, { driverId, note });
+  return { ok: true };
+});
+
+/**
+ * The operator's go-ahead on a heavy job.
+ *
+ * A camión, patana or equipo pesado is only ever quoted an estimate. The
+ * operator talks to the customer, makes sure a heavy grúa can do it, and
+ * enters the price they agreed — what the customer pays, ITBIS included when
+ * there is any. Only then does the job look for a grúa: dispatch starts
+ * straight away, and the office can still assign one by hand.
+ */
+export const confirmHeavyService = onCall({ region, cors: true }, async (request) => {
+  const parsed = z
+    .object({
+      serviceId: z.string().min(1).max(64),
+      // RD$100 to RD$1,000,000: a typo of two zeros either way is refused.
+      totalCents: z.number().int().min(10000).max(100000000),
+      note: z.string().max(300).default(''),
+    })
+    .safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Revisa el precio e intenta de nuevo.');
+
+  const caller = requireStaff(request);
+  const { serviceId, totalCents, note } = parsed.data;
+  let estimatedCents = 0;
+
+  await applyTransition({
+    serviceId,
+    event: ServiceEventName.confirmHeavyService,
+    actorId: caller.uid,
+    actorRole: caller.role as UserRole,
+    meta: { totalCents, note },
+
+    inTransaction: ({ service, transaction }) => {
+      const quote = service['quote'] as Quote;
+      estimatedCents = quote.totalCents;
+      transaction.update(Paths.service(serviceId), {
+        quote: confirmedQuote(quote, totalCents),
+        'operatorReview.state': OperatorReviewState.confirmed,
+        'operatorReview.confirmedTotalCents': totalCents,
+        'operatorReview.confirmedBy': caller.uid,
+        'operatorReview.confirmedAt': FieldValue.serverTimestamp(),
+        'operatorReview.note': note,
+        'dispatch.lastReason': '',
+      });
+    },
+
+    afterCommit: async ({ service }) => {
+      const clientId = service['clientId'] as string | undefined;
+      if (clientId) {
+        await notify({
+          uid: clientId,
+          audience: 'client',
+          title: 'Servicio confirmado',
+          body: 'Confirmamos tu grúa especial y el precio. Ya estamos buscando la grúa.',
+          data: { serviceId, type: 'heavy_confirmed' },
+        });
+      }
+      await dispatchNext(serviceId);
+    },
+  });
+
+  await audit(caller.uid, 'confirmHeavyService', serviceId, {
+    estimatedCents,
+    totalCents,
+    note,
+  });
   return { ok: true };
 });
 

@@ -217,6 +217,61 @@ Future<void> main() async {
     await tester.pump();
   });
 
+  testWidgets('a heavy request waits for the operator to confirm the price',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend(dispatchDelay: const Duration(minutes: 5))
+      ..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    final service = backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(
+        geo: LatLng(18.4795, -69.9420),
+        address: 'Zona industrial de Haina',
+      ),
+      dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
+      vehicle: const ServiceVehicle(make: 'Mack', type: VehicleType.patana),
+      truckType: TruckType.pesada,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 1000000, subtotalCents: 1000000),
+      route: const ServiceRoute(distanceMeters: 10000),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // In the queue as something to confirm, naming what kind of vehicle.
+    expect(find.text('Por confirmar'), findsWidgets);
+    expect(find.textContaining('Patana / Tráiler'), findsWidgets);
+
+    await tester.tap(find.text('Zona industrial de Haina'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // No chofer list: nobody goes before the price is agreed.
+    expect(find.byKey(const Key('heavy-review-notice')), findsOneWidget);
+    expect(find.text('Asignar manualmente'), findsNothing);
+    expect(find.text('Confirmar precio final'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('heavy-price')), '12,500');
+    await tester.ensureVisible(find.byKey(const Key('heavy-confirm')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('heavy-confirm')));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+
+    final confirmed = backend.service(service.id)!;
+    expect(confirmed.status, ServiceStatus.pendingDispatch);
+    expect(confirmed.totalCents, 1250000);
+    expect(confirmed.operatorReview!.isConfirmed, isTrue);
+    expect(find.textContaining('Precio confirmado'), findsOneWidget);
+    // Confirmed, it is an ordinary request: the office can assign by hand.
+    expect(find.text('Confirmar precio final'), findsNothing);
+
+    backend.dispose();
+    await tester.pump();
+  });
+
   testWidgets('Asignar actually sends the chofer, and says so', (tester) async {
     // The bug: this button showed "Asignando a …" and called nothing at all.
     // No `assignServiceManually` existed in the app, so the chofer it named
@@ -1211,6 +1266,64 @@ Future<void> main() async {
 
     expect(find.text('CÓDIGO'), findsOneWidget);
     expect(find.text('4 de 4 cargados'), findsOneWidget);
+  });
+
+  testWidgets('Efectivo shows the cash a chofer holds, and a corte takes it in',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend(dispatchDelay: const Duration(hours: 1))..seed();
+
+    // A cash job, collected by its chofer.
+    final service = backend.createService(
+      clientId: 'demo-client-1',
+      pickup: const ServiceLocation(geo: LatLng(18.4795, -69.9420), address: 'Gazcue'),
+      dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
+      vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
+      truckType: TruckType.gancho,
+      paymentMethod: PaymentMethod.cash,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 8000),
+    );
+    final driver = backend.allDrivers
+        .firstWhere((d) => d.truckType == TruckType.gancho && d.status.canWork && !d.isBusy);
+    expect(backend.assignServiceManually(serviceId: service.id, driverId: driver.id), isNull);
+    for (final (to, event) in [
+      (ServiceStatus.arrived, ServiceEventName.markArrived),
+      (ServiceStatus.inProgress, ServiceEventName.startService),
+      (ServiceStatus.completed, ServiceEventName.completeService),
+    ]) {
+      backend.transition(service.id, to, event, driver.id, UserRole.driver);
+    }
+    backend.confirmCashCollected(service.id, driver.id, 250000);
+    final holding = backend.driver(driver.id)!.cashOnHandCents;
+
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    await tester.tap(find.text('Efectivo').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(Key('settle-${driver.id}')), findsOneWidget);
+    expect(find.text(holding.formatDOP), findsWidgets);
+
+    await tester.tap(find.byKey(Key('settle-${driver.id}')));
+    await tester.pumpAndSettle();
+    // The jobs the corte is made of are listed before anything is recorded.
+    expect(find.text('Total a recibir'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('confirm-settle')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(backend.driver(driver.id)!.cashOnHandCents, 0);
+    expect(backend.cashSettlements(driverId: driver.id), hasLength(1));
+    expect(find.byKey(Key('settle-${driver.id}')), findsNothing);
+    expect(find.textContaining('Corte registrado'), findsOneWidget);
+
+    // The demo's dispatch timer, stopped inside the test body.
+    await tester.pumpWidget(const SizedBox());
+    backend.dispose();
+    await tester.pump();
   });
 
   testWidgets('a narrow window says so instead of reflowing', (tester) async {

@@ -7,6 +7,7 @@ import '../domain/models/billing.dart';
 import '../domain/models/chat_request.dart';
 import '../domain/models/dispatch_models.dart';
 import '../domain/models/driver.dart';
+import '../domain/models/payments.dart';
 import '../domain/models/remote_config_models.dart';
 import '../domain/models/service.dart';
 import '../domain/models/truck.dart';
@@ -37,6 +38,7 @@ abstract final class Paths {
   static const String reportsCollection = 'reports';
   static const String auditCollection = 'audit';
   static const String chatRequestsCollection = 'chatRequests';
+  static const String cashSettlementsCollection = 'cashSettlements';
 
   static const String offersSubcollection = 'offers';
   static const String messagesSubcollection = 'messages';
@@ -291,6 +293,17 @@ abstract final class Paths {
           'driverId': driverId,
         }),
         toFirestore: (value, _) => _strip(value.toJson(), const ['serviceId', 'driverId']),
+      );
+
+  /// Cortes. Server-written; read-only here, so there is nothing to convert
+  /// back.
+  static CollectionReference<CashSettlement> cashSettlements() => _db
+      .collection(cashSettlementsCollection)
+      .withConverter<CashSettlement>(
+        fromFirestore: (snap, _) =>
+            CashSettlement.fromJson(snap.id, snap.data() ?? const {}),
+        toFirestore: (_, _) =>
+            throw UnsupportedError('Cortes are written by settleDriverCash.'),
       );
 
   // -------------------------------------------------------------------------

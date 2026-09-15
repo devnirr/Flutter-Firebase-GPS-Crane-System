@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import '../payment/payment_choice_card.dart';
 
 /// What the customer watches while they wait on the shoulder.
 ///
@@ -84,7 +85,9 @@ class _TrackingBody extends ConsumerWidget {
               vertical: Insets.md,
             ),
             child: Text(
-              service.status.label,
+              service.awaitsOperator
+                  ? 'Esperando confirmación'
+                  : service.status.label,
               textAlign: TextAlign.center,
               style: text.headlineLarge?.copyWith(color: BrandColors.white),
             ),
@@ -105,6 +108,15 @@ class _TrackingBody extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
             child: _DriverCard(service: service, tracking: tracking, now: now),
           ),
+          // The grúa is at the curb: how the tow is paid is settled now,
+          // before the vehicle is loaded.
+          if (service.status == ServiceStatus.arrived) ...[
+            const SizedBox(height: Insets.md),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
+              child: PaymentChoiceCard(service: service),
+            ),
+          ],
           const SizedBox(height: Insets.lg),
           Padding(
             padding: const EdgeInsets.fromLTRB(
@@ -342,7 +354,10 @@ class _DriverCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
 
+    if (service.awaitsOperator) return _OperatorReviewCard(service: service);
+
     if (!service.hasDriver) {
+      final confirmed = service.operatorReview?.isConfirmed ?? false;
       return FloatingCard(
         child: Row(
           children: [
@@ -359,7 +374,10 @@ class _DriverCard extends StatelessWidget {
                   Text('Buscando la grúa más cercana', style: text.titleSmall),
                   const SizedBox(height: 2),
                   Text(
-                    'Te avisamos apenas un chofer acepte.',
+                    confirmed
+                        ? 'Precio confirmado: ${service.totalCents.formatDOPShort}. '
+                            'Te avisamos apenas un chofer acepte.'
+                        : 'Te avisamos apenas un chofer acepte.',
                     style: text.bodySmall?.copyWith(color: BrandColors.grey600),
                   ),
                 ],
@@ -441,11 +459,69 @@ class _DriverCard extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  service.payment.method.label,
+                  service.payment.isHeld || service.payment.isPaid
+                      ? (service.payment.isCard
+                          ? service.payment.cardLabel
+                          : service.payment.status.label)
+                      : service.payment.isPending
+                          ? 'Pagas al llegar el chofer'
+                          : service.payment.method.label,
                   style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
                 ),
               ),
               Text(service.totalCents.formatDOP, style: text.titleMedium),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A heavy request, waiting for the operator to confirm a grúa and the price.
+///
+/// Said plainly, with the estimate: nobody is on the way yet, and the price
+/// the customer saw can still change.
+class _OperatorReviewCard extends StatelessWidget {
+  const _OperatorReviewCard({required this.service});
+
+  final Service service;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return FloatingCard(
+      key: const Key('operator-review-card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.support_agent, color: BrandColors.red),
+              const SizedBox(width: Insets.md),
+              Expanded(
+                child: Text(
+                  'Esperando confirmación del operador',
+                  style: text.titleSmall,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Insets.sm),
+          Text(
+            heavyServiceNotice,
+            style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+          ),
+          const SizedBox(height: Insets.md),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Precio estimado',
+                  style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+                ),
+              ),
+              Text(service.totalCents.formatDOPShort, style: text.titleMedium),
             ],
           ),
         ],

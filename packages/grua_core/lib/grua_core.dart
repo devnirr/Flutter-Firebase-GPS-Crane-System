@@ -36,6 +36,7 @@ export 'src/domain/models/chat_prefs.dart';
 export 'src/domain/models/chat_request.dart';
 export 'src/domain/models/dispatch_models.dart';
 export 'src/domain/models/driver.dart';
+export 'src/domain/models/payments.dart';
 export 'src/domain/models/remote_config_models.dart';
 export 'src/domain/models/service.dart';
 export 'src/domain/models/truck.dart';

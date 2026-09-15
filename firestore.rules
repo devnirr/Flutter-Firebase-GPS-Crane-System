@@ -360,6 +360,13 @@ service cloud.firestore {
       }
     }
 
+    // Cortes: cash a chofer handed in to the office. Written only by
+    // settleDriverCash; the office and the chofer it concerns can read it.
+    match /cashSettlements/{settlementId} {
+      allow read: if isStaff() || (ok() && uid() == resource.data.driverId);
+      allow write: if false;
+    }
+
     // Idempotency records for gateway webhooks. Server-only, both ways.
     match /webhook_events/{eventId} {
       allow read, write: if false;

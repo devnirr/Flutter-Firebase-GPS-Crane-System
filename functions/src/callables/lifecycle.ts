@@ -15,9 +15,16 @@ import { FieldValue, Paths } from '../lib/firestore.js';
 import { releaseIfFinished } from '../lib/driverRelease.js';
 import { distanceMeters, type LatLng } from '../lib/geo.js';
 import { requireActiveDriver, requireAuth, requireRole } from '../lib/guards.js';
-import { buildQuote, cancellationFeeCents, loadPricing } from '../lib/pricing.js';
+import {
+  type Quote,
+  cancellationFeeCents,
+  finalQuote,
+  loadPricing,
+} from '../lib/pricing.js';
 import { notify } from '../lib/push.js';
+import { stripeSecretKey } from '../lib/secrets.js';
 import { applyTransition } from '../lib/stateMachine.js';
+import { captureForService, releaseHold } from '../payments/apply.js';
 import { acceptOffer, rejectOffer } from '../dispatch/offers.js';
 import { dispatchNext } from '../dispatch/dispatchNext.js';
 import { loadDispatchConfig } from '../dispatch/dispatchNext.js';
@@ -284,7 +291,10 @@ export const startService = onCall({ region, cors: true }, async (request) => {
  * downstream — the invoice, the ledger, the chofer's cash balance — reads
  * `final`, so this is the number that matters.
  */
-export const completeService = onCall({ region, cors: true }, async (request) => {
+export const completeService = onCall(
+  // The key, for charging the card hold at the end.
+  { region, cors: true, secrets: [stripeSecretKey] },
+  async (request) => {
   const parsed = withPosition
     .extend({
       photoPaths: z.array(z.string().max(400)).max(6).default([]),
@@ -333,17 +343,13 @@ export const completeService = onCall({ region, cors: true }, async (request) =>
       ? Math.max(0, Math.round((startedAt.getTime() - arrivedAt.getTime()) / 60000))
       : 0;
 
-  const quote = (service['quote'] ?? {}) as Record<string, unknown>;
+  const quote = (service['quote'] ?? {}) as Quote;
   const payment = (service['payment'] ?? {}) as Record<string, unknown>;
 
-  const final = buildQuote({
-    config: pricing,
-    truckType: service['truckTypeRequired'],
-    distanceKm: (quote['distanceKm'] as number | undefined) ?? 0,
-    at: new Date(),
-    chargeItbis: ((quote['itbisCents'] as number | undefined) ?? 0) > 0,
-    waitingMinutes,
-  });
+  // The price the customer agreed to, plus billable waiting. Not the tariff
+  // run again: that would add a night surcharge to a tow quoted at 21:50, and
+  // undo the price an operator confirmed on a heavy job.
+  const final = finalQuote(quote, pricing, waitingMinutes);
 
   const isCash = payment['method'] === PaymentMethod.cash;
 
@@ -357,8 +363,8 @@ export const completeService = onCall({ region, cors: true }, async (request) =>
       final,
       dropoffPhotoPaths: photoPaths,
       driverNotes: notes ?? service['driverNotes'] ?? '',
-      // Cash stays with the chofer until they confirm collection; a card is
-      // captured by the payment gateway, which is not wired yet.
+      // Cash stays with the chofer until they confirm collection. A card hold
+      // is charged below, once the final price is written.
       'payment.status': isCash ? PaymentStatus.cashPending : payment['status'],
     },
 
@@ -389,21 +395,28 @@ export const completeService = onCall({ region, cors: true }, async (request) =>
       });
 
       const clientId = s['clientId'] as string | undefined;
-      if (!clientId) return;
-      await notify({
-        uid: clientId,
-        audience: 'client',
-        title: 'Servicio completado',
-        body: isCash
-          ? `Total a pagar: RD$ ${(final.totalCents / 100).toFixed(2)}`
-          : 'Gracias por usar Grúas RD.',
-        data: { serviceId, type: 'service_completed' },
-      });
+      if (clientId) {
+        await notify({
+          uid: clientId,
+          audience: 'client',
+          title: 'Servicio completado',
+          body: isCash
+            ? `Total a pagar en efectivo: RD$ ${(final.totalCents / 100).toFixed(2)}`
+            : `Total: RD$ ${(final.totalCents / 100).toFixed(2)}, cobrado a tu tarjeta.`,
+          data: { serviceId, type: 'service_completed' },
+        });
+      }
     },
   });
 
+  // The final price charged from the hold. Stripe's confirmation marks the job
+  // paid and closes it; a capture that fails still closes it, flagged for the
+  // office, so the chofer is not left waiting.
+  if (!isCash) await captureForService(serviceId);
+
   return { ok: true, finalCents: final.totalCents, waitingMinutes };
-});
+  },
+);
 
 /**
  * Confirms cash in hand and closes the job.
@@ -427,6 +440,15 @@ export const confirmCashCollected = onCall({ region, cors: true }, async (reques
   const service = await loadService(serviceId);
   assertAssigned(service, uid);
 
+  // A card job is charged through Stripe; a chofer confirming cash on one
+  // would mark it paid twice over.
+  if ((service['payment'] as Record<string, unknown> | undefined)?.['method'] !== PaymentMethod.cash) {
+    throw precondition(
+      Code.invalidTransition,
+      'Este servicio se cobra con tarjeta. No hay efectivo que recibir.',
+    );
+  }
+
   const expected =
     ((service['final'] as Record<string, unknown> | undefined)?.['totalCents'] as number) ??
     ((service['quote'] as Record<string, unknown> | undefined)?.['totalCents'] as number) ??
@@ -449,7 +471,16 @@ export const confirmCashCollected = onCall({ region, cors: true }, async (reques
     meta: { amountCents, expected, discrepancyReason: discrepancyReason ?? null },
     patch: {
       'payment.capturedCents': amountCents,
+      'payment.cashCollectedBy': uid,
       ...(mismatch ? { needsReview: true } : {}),
+    },
+    // What the chofer now holds for the company, in the same write as the job
+    // being marked paid: the office's corte reads this.
+    inTransaction: ({ transaction }) => {
+      transaction.update(Paths.driver(uid), {
+        cashOnHandCents: FieldValue.increment(amountCents),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
     },
   });
 
@@ -467,7 +498,10 @@ export const confirmCashCollected = onCall({ region, cors: true }, async (reques
  * longer than the grace period — cancelling ten seconds after requesting costs
  * nothing, because nobody has done any work.
  */
-export const cancelService = onCall({ region, cors: true }, async (request) => {
+export const cancelService = onCall(
+  // The key, for releasing a card hold — or charging the fee from it.
+  { region, cors: true, secrets: [stripeSecretKey] },
+  async (request) => {
   const parsed = serviceOnly
     .extend({ reason: z.string().max(300).default('client_request') })
     .safeParse(request.data);
@@ -530,7 +564,14 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
       }
     },
 
-    afterCommit: async () => {
+    afterCommit: async ({ service: s }) => {
+      // A card held for this job is let go — or charged only the fee, when
+      // one is owed.
+      const intentId = (s['payment'] as Record<string, unknown> | undefined)?.['intentId'];
+      if (typeof intentId === 'string' && intentId) {
+        await releaseHold(serviceId, intentId, feeCents);
+      }
+
       if (!driverId) return;
       await Paths.live(driverId).update({
         state: DriverLiveState.idle,
@@ -548,7 +589,8 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
   });
 
   return { ok: true, feeCents };
-});
+  },
+);
 
 /**
  * The chofer drops the job.

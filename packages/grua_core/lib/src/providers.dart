@@ -16,6 +16,7 @@ import 'domain/models/chat_prefs.dart';
 import 'domain/models/chat_request.dart';
 import 'domain/models/dispatch_models.dart';
 import 'domain/models/driver.dart';
+import 'domain/models/payments.dart';
 import 'domain/models/remote_config_models.dart';
 import 'domain/models/service.dart';
 import 'domain/models/truck.dart';
@@ -493,6 +494,18 @@ final driverEarningsProvider = StreamProvider<EarningsSummary?>((ref) {
   if (uid == null) return Stream.value(null);
   return ref.watch(earningsRepositoryProvider).watchSummary(uid);
 });
+
+/// Every chofer's cortes, newest first. The office's cash screen.
+final cashSettlementsProvider = StreamProvider<List<CashSettlement>>(
+  (ref) => ref.watch(earningsRepositoryProvider).watchCashSettlements(),
+);
+
+/// The cash jobs a chofer collected and no corte counted yet.
+final StreamProviderFamily<List<Service>, String> uncountedCashProvider =
+    StreamProvider.family<List<Service>, String>(
+  (ref, driverId) =>
+      ref.watch(earningsRepositoryProvider).watchUncountedCash(driverId),
+);
 
 /// The one open offer addressed to this chofer. Drives the ringing screen.
 final incomingOfferProvider = StreamProvider<Offer?>((ref) {

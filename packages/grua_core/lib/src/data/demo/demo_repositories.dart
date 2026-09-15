@@ -15,6 +15,7 @@ import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
+import '../../domain/models/payments.dart';
 import '../../domain/models/remote_config_models.dart';
 import '../../domain/models/service.dart';
 import '../../domain/models/truck.dart';
@@ -732,6 +733,19 @@ class DemoEarningsRepository implements EarningsRepository {
               .toList(),
         ),
       );
+
+  @override
+  Stream<List<CashSettlement>> watchCashSettlements({
+    String? driverId,
+    int limit = 50,
+  }) =>
+      _backend.serviceUpdates.map(
+        (_) => _backend.cashSettlements(driverId: driverId).take(limit).toList(),
+      );
+
+  @override
+  Stream<List<Service>> watchUncountedCash(String driverId) =>
+      _backend.serviceUpdates.map((_) => _backend.uncountedCash(driverId));
 }
 
 class DemoInvoiceRepository implements InvoiceRepository {
@@ -895,16 +909,23 @@ class DemoFunctionsGateway implements FunctionsGateway {
       return _delayed(const Result.err(Failure(FailureCode.outsideCoverage)));
     }
 
-    final truckType = truckTypeOverride ?? vehicle.inferredTruckType;
+    final truckType = vehicle.type.isHeavy
+        ? vehicle.inferredTruckType
+        : truckTypeOverride ?? vehicle.inferredTruckType;
     // Straight-line distance with a 1.35 detour factor stands in for the
-    // Routes API, which the real implementation calls server-side.
+    // Routes API, which the real implementation calls server-side. With no
+    // road to read, all of it is city — as the server does without Google.
     final distanceKm = pickup.geo.distanceKmTo(dropoff.geo) * 1.35;
     final now = DateTime.now().toUtc();
+    final distance = TripDistance.city(
+      distanceKm,
+      includedKm: _backend.pricing.includedKm,
+    );
 
     final quote = Pricing.quoteFor(
       config: _backend.pricing,
-      truckType: truckType,
-      distanceKm: distanceKm,
+      vehicleType: vehicle.type,
+      distance: distance,
       at: now,
       chargeItbis: false,
     );
@@ -914,7 +935,7 @@ class DemoFunctionsGateway implements FunctionsGateway {
         QuoteResult(
           quote: quote,
           route: ServiceRoute(
-            distanceMeters: (distanceKm * 1000).round(),
+            distanceMeters: (distance.distanceKm * 1000).round(),
             durationSeconds: (distanceKm / 28 * 3600).round(),
             provider: 'demo',
             fetchedAt: now,
@@ -933,9 +954,10 @@ class DemoFunctionsGateway implements FunctionsGateway {
     required ServiceLocation dropoff,
     required ServiceVehicle vehicle,
     required TruckType truckType,
-    required PaymentMethod paymentMethod,
     required String quoteSignature,
     required DateTime quoteExpiresAt,
+    required TripDistance distance,
+    PaymentMethod? paymentMethod,
     String? paymentMethodId,
     String? notes,
     String? preferredTruckRef,
@@ -965,7 +987,10 @@ class DemoFunctionsGateway implements FunctionsGateway {
           dropoff: dropoff,
           vehicle: vehicle,
           truckType: truckType,
-          paymentMethod: paymentMethod,
+          // Chosen when the chofer arrives, as the server does.
+          paymentMethod: paymentMethod == PaymentMethod.cash
+              ? PaymentMethod.cash
+              : PaymentMethod.pending,
           quote: quote.quote,
           route: quote.route,
           preferredDriverId: preferredTruckRef != null &&
@@ -1113,13 +1138,38 @@ class DemoFunctionsGateway implements FunctionsGateway {
     String? discrepancyReason,
   }) async =>
       _delayed(
-        _backend.transition(
+        _backend.confirmCashCollected(
           serviceId,
-          ServiceStatus.closed,
-          ServiceEventName.confirmCashCollected,
           _backend.currentUserId,
-          UserRole.driver,
+          amountCents,
         ),
+      );
+
+  @override
+  Future<Result<void>> choosePaymentMethod({
+    required String serviceId,
+    required PaymentMethod method,
+  }) async =>
+      _delayed(
+        _backend.choosePaymentMethod(serviceId, _backend.currentUserId, method),
+      );
+
+  @override
+  Future<Result<PreparedPayment>> preparePayment(String serviceId) async =>
+      _delayed(_backend.holdDemoCard(serviceId, _backend.currentUserId));
+
+  @override
+  // The demo hold is in place the moment it is asked for; nothing to read.
+  Future<Result<void>> syncPayment(String serviceId) async =>
+      const Result.ok(null);
+
+  @override
+  Future<Result<int>> settleDriverCash({
+    required String driverId,
+    String note = '',
+  }) async =>
+      _delayed(
+        _backend.settleDriverCash(driverId, _backend.currentUserId, note: note),
       );
 
   @override
@@ -1232,6 +1282,22 @@ class DemoFunctionsGateway implements FunctionsGateway {
   @override
   Future<Result<void>> archiveDriver(String driverId) =>
       _delayed(_refusedOr(_backend.archiveDriver(driverId)));
+
+  @override
+  Future<Result<void>> confirmHeavyService({
+    required String serviceId,
+    required int totalCents,
+    String note = '',
+  }) =>
+      _delayed(
+        _refusedOr(
+          _backend.confirmHeavyService(
+            serviceId: serviceId,
+            totalCents: totalCents,
+            note: note,
+          ),
+        ),
+      );
 
   @override
   Future<Result<void>> assignServiceManually({

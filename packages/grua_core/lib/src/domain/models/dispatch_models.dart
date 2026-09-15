@@ -202,6 +202,8 @@ abstract class ServiceEvent with _$ServiceEvent {
         ServiceEventName.expireOffer => 'La oferta expiró',
         ServiceEventName.noDriversFound => 'Sin choferes disponibles',
         ServiceEventName.assignServiceManually => 'Asignado manualmente',
+        ServiceEventName.confirmHeavyService =>
+          'Precio y disponibilidad confirmados por el operador',
         ServiceEventName.markArrived => 'Chofer llegó al punto de recogida',
         ServiceEventName.startService => 'Servicio iniciado',
         ServiceEventName.completeService => 'Servicio finalizado',
@@ -210,6 +212,15 @@ abstract class ServiceEvent with _$ServiceEvent {
         ServiceEventName.cancelService => 'Cancelado por el cliente',
         ServiceEventName.cancelByDriver => 'Cancelado por el chofer',
         ServiceEventName.failService => 'Servicio marcado con problema',
+        ServiceEventName.choosePaymentMethod => switch (meta['method']) {
+            'card' => 'Eligió pagar con tarjeta',
+            'cash' => 'Eligió pagar en efectivo',
+            _ => 'Eligió la forma de pago',
+          },
+        ServiceEventName.paymentAuthorized => 'Tarjeta retenida para el servicio',
+        ServiceEventName.paymentCaptured => 'Pagado con tarjeta',
+        ServiceEventName.paymentFailed => 'El pago con tarjeta falló',
+        ServiceEventName.paymentVoided => 'Retención de la tarjeta liberada',
         ServiceEventName.unknown => 'Evento desconocido',
       };
 }

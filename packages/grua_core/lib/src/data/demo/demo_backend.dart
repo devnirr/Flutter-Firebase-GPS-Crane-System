@@ -10,6 +10,7 @@ import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
+import '../../domain/models/payments.dart';
 import '../../domain/models/remote_config_models.dart';
 import '../../domain/models/service.dart';
 import '../../domain/models/truck.dart';
@@ -292,6 +293,13 @@ class DemoBackend {
     }
 
     _seedHistoricalServices();
+    // What each chofer holds agrees with the cash jobs seeded for them, so the
+    // office's Efectivo screen and its corte add up from the first launch.
+    for (final entry in _drivers.entries.toList()) {
+      final held = uncountedCash(entry.key)
+          .fold(0, (sum, s) => sum + s.payment.capturedCents);
+      _drivers[entry.key] = entry.value.copyWith(cashOnHandCents: held);
+    }
     _emitServices();
     _emitDrivers();
     _emitLive();
@@ -348,8 +356,8 @@ class DemoBackend {
       );
       final quote = Pricing.quoteFor(
         config: _pricing,
-        truckType: serviceVehicle.inferredTruckType,
-        distanceKm: 8.5 + i * 4.2,
+        vehicleType: serviceVehicle.type,
+        distance: TripDistance.city(8.5 + i * 4.2, includedKm: _pricing.includedKm),
         at: completedAt,
         chargeItbis: false,
       );
@@ -1467,13 +1475,26 @@ class DemoBackend {
     final id = 'svc-${now.millisecondsSinceEpoch}';
     _serviceCounter++;
 
+    // A heavy job waits for the operator, exactly as `requestService` does it.
+    final heavy = vehicle.type.isHeavy;
+    final status = heavy ? ServiceStatus.needsManual : ServiceStatus.pendingDispatch;
+
     final service = Service(
       id: id,
       clientId: clientId,
       clientName: user?.name ?? 'Cliente',
       clientPhone: user?.phone ?? '',
       code: 'GR-${_dateCode(now)}-0$_serviceCounter',
-      status: ServiceStatus.pendingDispatch,
+      status: status,
+      operatorReview: heavy
+          ? OperatorReview(isRequired: true, estimatedTotalCents: quote.totalCents)
+          : null,
+      dispatch: heavy
+          ? const DispatchState(
+              lastReason: 'Vehículo pesado: confirma disponibilidad y precio '
+                  'final con el cliente.',
+            )
+          : const DispatchState(),
       vehicle: vehicle,
       truckTypeRequired: truckType,
       pickup: pickup,
@@ -1487,12 +1508,51 @@ class DemoBackend {
 
     _services[id] = service;
     _appendEvent(id, ServiceEventName.requestService, ServiceStatus.unknown,
-        ServiceStatus.pendingDispatch, clientId, UserRole.client);
+        status, clientId, UserRole.client);
     if (user != null) _users[clientId] = user.copyWith(activeServiceId: id);
     _emitServices();
 
-    _scheduleDispatch(id, preferredDriverId: preferredDriverId);
+    if (!heavy) _scheduleDispatch(id, preferredDriverId: preferredDriverId);
     return service;
+  }
+
+  /// Mirrors `confirmHeavyService`: the operator's price goes on the quote,
+  /// and only then does the job look for a grúa. Returns the refusal, or null.
+  String? confirmHeavyService({
+    required String serviceId,
+    required int totalCents,
+    String note = '',
+  }) {
+    final service = _services[serviceId];
+    if (service == null) return 'Este servicio ya no existe.';
+    final review = service.operatorReview;
+    if (review == null ||
+        !review.isPending ||
+        service.status != ServiceStatus.needsManual) {
+      return 'Este servicio no tiene un precio por confirmar.';
+    }
+    if (totalCents < 10000) return 'Revisa el precio e intenta de nuevo.';
+
+    final now = _now();
+    _services[serviceId] = service.copyWith(
+      status: ServiceStatus.pendingDispatch,
+      quote: Pricing.confirmed(service.quote, totalCents),
+      operatorReview: review.copyWith(
+        state: OperatorReviewState.confirmed,
+        confirmedTotalCents: totalCents,
+        confirmedBy: currentUserId,
+        confirmedAt: now,
+        note: note,
+      ),
+      dispatch: service.dispatch.copyWith(lastReason: ''),
+      updatedAt: now,
+    );
+    _appendEvent(serviceId, ServiceEventName.confirmHeavyService,
+        ServiceStatus.needsManual, ServiceStatus.pendingDispatch, currentUserId,
+        UserRole.admin);
+    _emitServices();
+    _scheduleDispatch(serviceId);
+    return null;
   }
 
   /// Walks the service through the real state machine on a compressed clock, so
@@ -1611,6 +1671,9 @@ class DemoBackend {
     if (service == null) return 'Este servicio ya no existe.';
     if (!service.status.isAwaitingDriver) {
       return 'Este servicio ya no está esperando chofer.';
+    }
+    if (service.awaitsOperator) {
+      return 'Confirma primero la disponibilidad y el precio con el cliente.';
     }
 
     final driver = _drivers[driverId];
@@ -1769,6 +1832,16 @@ class DemoBackend {
         ),
       );
       _recordEarnings(updated);
+      // A card is charged at completion, and Stripe's confirmation closes the
+      // job a moment later — as the webhook does for real.
+      if (service.payment.isCard) {
+        _after(const Duration(milliseconds: 600), () {
+          if (_services[serviceId]?.status == ServiceStatus.completed) {
+            _transition(serviceId, ServiceStatus.closed,
+                ServiceEventName.closeService, 'system', UserRole.unknown);
+          }
+        });
+      }
     }
 
     if (to.isTerminal) {
@@ -1804,6 +1877,188 @@ class DemoBackend {
         _driveToward(serviceId, dropoff, onArrive: () {});
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Payments — mirrors functions/src/callables/payments.ts
+  // -------------------------------------------------------------------------
+
+  final List<CashSettlement> _settlements = [];
+  var _settlementCounter = 0;
+
+  /// Newest first.
+  List<CashSettlement> cashSettlements({String? driverId}) => List.unmodifiable(
+        _settlements.reversed.where((s) => driverId == null || s.driverId == driverId),
+      );
+
+  /// The cash jobs [driverId] collected that no corte counted yet.
+  List<Service> uncountedCash(String driverId) => [
+        for (final s in _services.values)
+          if (s.driverId == driverId &&
+              s.payment.isCash &&
+              s.payment.status == PaymentStatus.cashCollected &&
+              s.payment.cashSettlementId == null)
+            s,
+      ];
+
+  Result<void> _replacePayment(
+    String serviceId,
+    ServicePayment Function(ServicePayment payment) change,
+  ) {
+    final service = _services[serviceId];
+    if (service == null) return const Err(Failure(FailureCode.notFound));
+    _services[serviceId] =
+        service.copyWith(payment: change(service.payment), updatedAt: _now());
+    _emitServices();
+    return const Ok(null);
+  }
+
+  /// "Pagar en efectivo" / "Pagar con tarjeta". The chofer may only mark cash.
+  Result<void> choosePaymentMethod(
+    String serviceId,
+    String actorId,
+    PaymentMethod method,
+  ) {
+    final service = _services[serviceId];
+    if (service == null) return const Err(Failure(FailureCode.notFound));
+    final isClient = actorId == service.clientId;
+    final isDriver = actorId == service.driverId;
+    if (!isClient && !(isDriver && method == PaymentMethod.cash)) {
+      return const Err(
+        Failure(
+          FailureCode.permissionDenied,
+          message: 'Solo el cliente puede elegir pagar con tarjeta.',
+        ),
+      );
+    }
+    if (service.status != ServiceStatus.accepted &&
+        service.status != ServiceStatus.arrived) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'La forma de pago ya no se puede cambiar en este servicio.',
+        ),
+      );
+    }
+    return _replacePayment(
+      serviceId,
+      (p) => method == PaymentMethod.cash
+          ? p.copyWith(
+              method: PaymentMethod.cash,
+              status: PaymentStatus.none,
+              intentId: null,
+              authorizedCents: 0,
+            )
+          : p.copyWith(method: PaymentMethod.card),
+    );
+  }
+
+  /// Demo mode has no Stripe to hold a card with: the test card is held as
+  /// soon as the customer asks, with the same headroom the server holds.
+  Result<PreparedPayment> holdDemoCard(String serviceId, String clientId) {
+    final service = _services[serviceId];
+    if (service == null) return const Err(Failure(FailureCode.notFound));
+    if (service.clientId != clientId) {
+      return const Err(Failure(FailureCode.permissionDenied));
+    }
+    final held = service.quote.totalCents +
+        Money.bps(service.quote.totalCents, _pricing.authorizationBufferBps);
+    _replacePayment(
+      serviceId,
+      (p) => p.copyWith(
+        method: PaymentMethod.card,
+        status: PaymentStatus.authorized,
+        gateway: 'demo',
+        intentId: 'pi_demo_$serviceId',
+        authorizedCents: held,
+        authorizedAt: _now(),
+        brand: 'Visa',
+        last4: '4242',
+      ),
+    );
+    return Ok(
+      PreparedPayment(
+        alreadyAuthorized: true,
+        amountCents: held,
+        quoteCents: service.quote.totalCents,
+        testMode: true,
+      ),
+    );
+  }
+
+  /// "Cobrado en efectivo": the job is paid, and the chofer now holds the cash.
+  Result<void> confirmCashCollected(String serviceId, String driverId, int amountCents) {
+    final service = _services[serviceId];
+    if (service == null) return const Err(Failure(FailureCode.notFound));
+    if (!service.payment.isCash) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Este servicio se cobra con tarjeta. No hay efectivo que recibir.',
+        ),
+      );
+    }
+    final now = _now();
+    _services[serviceId] = service.copyWith(
+      payment: service.payment.copyWith(
+        status: PaymentStatus.cashCollected,
+        capturedCents: amountCents,
+        cashCollectedAt: now,
+      ),
+    );
+    final driver = _drivers[driverId];
+    if (driver != null) {
+      _drivers[driverId] =
+          driver.copyWith(cashOnHandCents: driver.cashOnHandCents + amountCents);
+    }
+    _transition(serviceId, ServiceStatus.closed,
+        ServiceEventName.confirmCashCollected, driverId, UserRole.driver);
+    return const Ok(null);
+  }
+
+  /// The corte: the office receives the cash [driverId] holds.
+  Result<int> settleDriverCash(String driverId, String staffId, {String note = ''}) {
+    final driver = _drivers[driverId];
+    if (driver == null) return const Err(Failure(FailureCode.notFound));
+    final jobs = uncountedCash(driverId);
+    if (jobs.isEmpty) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Este chofer no tiene efectivo por entregar.',
+        ),
+      );
+    }
+    final total = jobs.fold(0, (sum, s) => sum + s.payment.capturedCents);
+    final id = 'corte-${++_settlementCounter}';
+    final now = _now();
+    for (final job in jobs) {
+      _services[job.id] = job.copyWith(
+        payment: job.payment.copyWith(cashSettlementId: id, cashSettledAt: now),
+      );
+    }
+    _settlements.add(
+      CashSettlement(
+        id: id,
+        driverId: driverId,
+        driverName: driver.name,
+        amountCents: total,
+        serviceCount: jobs.length,
+        note: note,
+        settledBy: staffId,
+        createdAt: now,
+      ),
+    );
+    _drivers[driverId] = driver.copyWith(
+      cashOnHandCents: math.max(0, driver.cashOnHandCents - total),
+      cashOwedCents: 0,
+      lastCashSettlementAt: now,
+    );
+    final summary = _earnings[driverId];
+    if (summary != null) _earnings[driverId] = summary.copyWith(cashOwedCents: 0);
+    _emitServices();
+    _emitDrivers();
+    return Ok(total);
   }
 
   void _recordEarnings(Service service) {

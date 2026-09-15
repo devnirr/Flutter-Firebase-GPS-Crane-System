@@ -9,6 +9,7 @@ import 'models/chat_prefs.dart';
 import 'models/chat_request.dart';
 import 'models/dispatch_models.dart';
 import 'models/driver.dart';
+import 'models/payments.dart';
 import 'models/remote_config_models.dart';
 import 'models/service.dart';
 import 'models/truck.dart';
@@ -406,6 +407,16 @@ abstract interface class EarningsRepository {
     required DateTime from,
     required DateTime to,
   });
+
+  /// Cortes, newest first — every chofer's for the office, or one chofer's.
+  Stream<List<CashSettlement>> watchCashSettlements({
+    String? driverId,
+    int limit = 50,
+  });
+
+  /// The cash jobs [driverId] collected that no corte has counted yet: what
+  /// the next corte will be made of.
+  Stream<List<Service>> watchUncountedCash(String driverId);
 }
 
 abstract interface class InvoiceRepository {
@@ -756,11 +767,17 @@ abstract interface class FunctionsGateway {
     required ServiceLocation dropoff,
     required ServiceVehicle vehicle,
     required TruckType truckType,
-    required PaymentMethod paymentMethod,
     required String quoteSignature,
     /// Echoed back from [quoteService]. The signature covers it, so the server
     /// can tell an expired quote from a tampered one.
     required DateTime quoteExpiresAt,
+    /// The road split the quote was priced on — [TripDistance.of] the quote.
+    /// Signed with it too: the server prices the request from this rather than
+    /// routing the trip a second time.
+    required TripDistance distance,
+    /// Not asked when requesting any more: the customer chooses card or cash
+    /// when the chofer arrives. Left for callers that already know.
+    PaymentMethod? paymentMethod,
     String? paymentMethodId,
     String? notes,
     /// [NearbyTruck.ref] of the truck picked on the map, offered the job
@@ -806,6 +823,30 @@ abstract interface class FunctionsGateway {
     required String serviceId,
     required int amountCents,
     String? discrepancyReason,
+  });
+
+  /// "Pagar en efectivo" / "Pagar con tarjeta", before the vehicle is loaded.
+  ///
+  /// The customer may choose either; the chofer may only mark cash. Choosing
+  /// cash releases a card hold already in place.
+  Future<Result<void>> choosePaymentMethod({
+    required String serviceId,
+    required PaymentMethod method,
+  });
+
+  /// Starts holding the customer's card for [serviceId], and returns what the
+  /// checkout needs to finish it.
+  Future<Result<PreparedPayment>> preparePayment(String serviceId);
+
+  /// Reads the job's card payment from Stripe now, rather than waiting for
+  /// the webhook. Called right after the checkout closes.
+  Future<Result<void>> syncPayment(String serviceId);
+
+  /// The corte: records the cash [driverId] handed in, and marks those jobs
+  /// so no later corte counts them again. Staff only. Returns the amount.
+  Future<Result<int>> settleDriverCash({
+    required String driverId,
+    String note = '',
   });
 
   Future<Result<void>> cancelByDriver({
@@ -874,6 +915,14 @@ abstract interface class FunctionsGateway {
   Future<Result<void>> assignServiceManually({
     required String serviceId,
     required String driverId,
+    String note = '',
+  });
+
+  /// The operator's go-ahead on a heavy job: a heavy grúa can do it, at
+  /// [totalCents] — what the customer pays. The job then looks for a grúa.
+  Future<Result<void>> confirmHeavyService({
+    required String serviceId,
+    required int totalCents,
     String note = '',
   });
 

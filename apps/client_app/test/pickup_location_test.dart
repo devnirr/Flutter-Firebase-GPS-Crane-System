@@ -136,6 +136,37 @@ Future<void> main() async {
     expect(find.text('18.47950, -69.94200'), findsOneWidget);
     expect(find.text('Obteniendo tu ubicación…'), findsNothing);
   });
+
+  testWidgets('heavy vehicles have their own section, and say the operator '
+      'confirms', (tester) async {
+    await signIn(tester);
+    await tester.tap(find.text('PEDIR GRÚA 24/7'));
+    await advance(tester, const Duration(seconds: 1));
+
+    // The light vehicles the tariff names, then the heavy ones under their
+    // own heading.
+    for (final label in ['Carro', 'Jeepeta', 'Camioneta']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    expect(find.text('VEHÍCULOS PESADOS'), findsOneWidget);
+    expect(find.byKey(const Key('heavy-notice')), findsNothing);
+
+    await tester.tap(find.text('Patana / Tráiler'));
+    await advance(tester, const Duration(milliseconds: 500));
+
+    expect(find.text(heavyServiceNotice), findsOneWidget);
+    final container = ProviderScope.containerOf(
+      tester.element(find.text('VEHÍCULOS PESADOS')),
+    );
+    final draft = container.read(requestControllerProvider);
+    expect(draft.vehicle.type, VehicleType.patana);
+    expect(draft.truckType, TruckType.pesada);
+
+    // Back to a light vehicle, and the warning goes with it.
+    await tester.tap(find.text('Jeepeta'));
+    await advance(tester, const Duration(milliseconds: 500));
+    expect(find.text(heavyServiceNotice), findsNothing);
+  });
 }
 
 /// A phone that cannot say where it is: permission granted, no fix ever. The

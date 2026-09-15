@@ -515,13 +515,20 @@ class _RequestRow extends StatelessWidget {
                   StatusChip(
                     request.status,
                     compact: true,
-                    label: request.status.officeLabel,
+                    label: request.awaitsOperator
+                        ? 'Por confirmar'
+                        : request.status.officeLabel,
                   ),
                 ],
               ),
               const SizedBox(height: Insets.xs),
               Text(
-                '${request.clientName} · ${request.vehicle.displayName}',
+                [
+                  request.clientName,
+                  // "Mack Granite" does not say it is a patana; the type does.
+                  if (request.vehicle.type.isHeavy) request.vehicle.type.label,
+                  request.vehicle.displayName,
+                ].join(' · '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: text.bodySmall?.copyWith(color: BrandColors.grey600),
@@ -1145,10 +1152,24 @@ class _ServiceDrawer extends ConsumerWidget {
               IconButton(onPressed: onClose, icon: const Icon(Icons.close)),
             ],
           ),
-          StatusChip(service.status, label: service.status.officeLabel),
+          StatusChip(
+            service.status,
+            label: service.awaitsOperator
+                ? 'Por confirmar'
+                : service.status.officeLabel,
+          ),
           const SizedBox(height: Insets.lg),
 
-          if (service.status == ServiceStatus.needsManual)
+          if (service.awaitsOperator)
+            const InlineNotice(
+              key: Key('heavy-review-notice'),
+              message: 'Vehículo pesado. Llama al cliente, confirma que hay una '
+                  'grúa pesada disponible y acuerda el precio final. Nadie sale '
+                  'hasta que lo confirmes.',
+              icon: Icons.support_agent,
+              tone: NoticeTone.warning,
+            )
+          else if (service.status == ServiceStatus.needsManual)
             InlineNotice(
               message: service.dispatch.lastReason.isEmpty
                   ? 'La búsqueda automática no encontró chofer. Asigna uno '
@@ -1176,6 +1197,7 @@ class _ServiceDrawer extends ConsumerWidget {
 
           DetailRow(label: 'Cliente', value: service.clientName),
           DetailRow(label: 'Teléfono', value: service.clientPhone),
+          DetailRow(label: 'Tipo', value: service.vehicle.type.label),
           DetailRow(label: 'Vehículo', value: service.vehicle.displayName),
           DetailRow(label: 'Problema', value: service.vehicle.condition.label),
           if (service.vehicle.photoPaths.isNotEmpty) ...[
@@ -1196,13 +1218,20 @@ class _ServiceDrawer extends ConsumerWidget {
                 '${service.payment.status.label}',
           ),
           DetailRow(
-            label: 'Total',
+            label: service.awaitsOperator ? 'Total estimado' : 'Total',
             value: service.totalCents.formatDOP,
             emphasise: true,
           ),
+          if (service.operatorReview?.isConfirmed ?? false)
+            DetailRow(
+              label: 'Estimado original',
+              value: service.operatorReview!.estimatedTotalCents.formatDOP,
+            ),
 
           const SizedBox(height: Insets.lg),
-          if (!service.hasDriver)
+          if (service.awaitsOperator)
+            _HeavyReviewPanel(service: service)
+          else if (!service.hasDriver)
             _AssignPanel(service: service)
           else
             OutlinedButton.icon(
@@ -1250,6 +1279,121 @@ class _ServiceDrawer extends ConsumerWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// The operator's confirmation of a heavy job: the price agreed with the
+/// customer, then the search for a heavy grúa starts.
+class _HeavyReviewPanel extends ConsumerStatefulWidget {
+  const _HeavyReviewPanel({required this.service});
+
+  final Service service;
+
+  @override
+  ConsumerState<_HeavyReviewPanel> createState() => _HeavyReviewPanelState();
+}
+
+class _HeavyReviewPanelState extends ConsumerState<_HeavyReviewPanel> {
+  late final TextEditingController _price = TextEditingController(
+    // Starts at the estimate, in whole pesos: most often it is the price.
+    text: '${(widget.service.totalCents / 100).round()}',
+  );
+  final TextEditingController _note = TextEditingController();
+  var _sending = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _price.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  /// Pesos as the operator types them: `9500`, `9,500` or `9500.50`.
+  int? get _cents {
+    final pesos = double.tryParse(_price.text.replaceAll(',', '').trim());
+    if (pesos == null || pesos < 100) return null;
+    return (pesos * 100).round();
+  }
+
+  Future<void> _confirm() async {
+    final cents = _cents;
+    if (cents == null) {
+      setState(() => _error = r'Escribe el precio en pesos, desde RD$100.');
+      return;
+    }
+    if (_sending) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await ref.read(functionsGatewayProvider).confirmHeavyService(
+          serviceId: widget.service.id,
+          totalCents: cents,
+          note: _note.text.trim(),
+        );
+
+    if (mounted) setState(() => _sending = false);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          switch (result) {
+            Ok<void>() =>
+              'Precio confirmado: ${cents.formatDOP}. Buscando grúa pesada.',
+            Err<void>(:final failure) => failure.userMessage,
+          },
+        ),
+        backgroundColor: result.isOk ? BrandColors.success : BrandColors.danger,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: result.isOk ? 3 : 6),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Confirmar precio final', style: text.titleSmall),
+        const SizedBox(height: Insets.sm),
+        TextField(
+          key: const Key('heavy-price'),
+          controller: _price,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            prefixText: r'RD$ ',
+            labelText: 'Precio acordado con el cliente',
+            helperText: 'Lo que paga el cliente'
+                '${widget.service.quote.itbisCents > 0 ? ', ITBIS incluido' : ''}.',
+            errorText: _error,
+          ),
+          onSubmitted: (_) => _confirm(),
+        ),
+        const SizedBox(height: Insets.sm),
+        TextField(
+          controller: _note,
+          maxLength: 300,
+          decoration: const InputDecoration(labelText: 'Nota (opcional)'),
+        ),
+        const SizedBox(height: Insets.sm),
+        ElevatedButton.icon(
+          key: const Key('heavy-confirm'),
+          onPressed: _sending ? null : _confirm,
+          icon: _sending
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                )
+              : const Icon(Icons.check, size: 18),
+          label: const Text('Confirmar y buscar grúa'),
+        ),
+      ],
     );
   }
 }

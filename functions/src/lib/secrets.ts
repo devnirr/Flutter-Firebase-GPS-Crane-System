@@ -44,6 +44,21 @@ export const mapsApiKey = defineSecret('MAPS_API_KEY');
  *
  * Unset, calls are refused with a message pointing to the chat.
  */
+/**
+ * Stripe, for card payments to GRUAS RD 24/7 SRL.
+ *
+ * The secret key moves money and never leaves the server. The webhook secret
+ * (`whsec_…`) is what proves an incoming event came from Stripe; it belongs to
+ * one webhook endpoint, so test mode and live mode each have their own.
+ *
+ *     firebase functions:secrets:set STRIPE_SECRET_KEY        # sk_test_… then sk_live_…
+ *     firebase functions:secrets:set STRIPE_WEBHOOK_SECRET    # whsec_…
+ *
+ * Unset, choosing a card is refused with a message offering cash.
+ */
+export const stripeSecretKey = defineSecret('STRIPE_SECRET_KEY');
+export const stripeWebhookSecret = defineSecret('STRIPE_WEBHOOK_SECRET');
+
 export const livekitUrl = defineSecret('LIVEKIT_URL');
 export const livekitApiKey = defineSecret('LIVEKIT_API_KEY');
 export const livekitApiSecret = defineSecret('LIVEKIT_API_SECRET');

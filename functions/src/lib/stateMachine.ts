@@ -1,6 +1,7 @@
 import { logger } from 'firebase-functions/v2';
 
 import {
+  OperatorReviewState,
   ServiceEventName,
   ServiceStatus,
   TERMINAL_STATUSES,
@@ -114,6 +115,25 @@ export const TRANSITIONS: readonly Transition[] = [
     ],
     to: ServiceStatus.accepted,
     actors: [UserRole.admin, UserRole.ops],
+    guard: ({ service }) => assertOperatorConfirmed(service),
+  }),
+
+  t({
+    // A heavy job's price and availability, confirmed by the operator. Only
+    // then does it go looking for a grúa.
+    event: ServiceEventName.confirmHeavyService,
+    from: [ServiceStatus.needsManual],
+    to: ServiceStatus.pendingDispatch,
+    actors: [UserRole.admin, UserRole.ops],
+    guard: ({ service }) => {
+      const review = service['operatorReview'] as Record<string, unknown> | undefined;
+      if (review?.['state'] !== OperatorReviewState.pending) {
+        throw precondition(
+          Code.invalidTransition,
+          'Este servicio no tiene un precio por confirmar.',
+        );
+      }
+    },
   }),
 
   t({
@@ -130,14 +150,23 @@ export const TRANSITIONS: readonly Transition[] = [
     to: ServiceStatus.inProgress,
     actors: [UserRole.driver, UserRole.admin, UserRole.ops],
     guard: ({ service }) => {
-      // A card job may not start until the hold is in place. Starting without
-      // one means towing a vehicle with no way to charge for it.
+      // Nobody loads a vehicle before it is settled how the tow is paid. A
+      // card job waits for the hold: starting without one means towing a
+      // vehicle with no way to charge for it.
       const payment = service['payment'] as Record<string, unknown> | undefined;
-      if (payment?.['method'] === 'card' && payment['status'] !== 'authorized') {
+      const method = payment?.['method'];
+      if (method !== 'card' && method !== 'cash') {
         throw precondition(
           Code.blockedPayment,
-          'El pago no está autorizado todavía. Pídele al cliente que lo ' +
-            'corrija o cambia a efectivo.',
+          'El cliente todavía no ha elegido cómo pagar. Pídele que elija en su ' +
+            'app, o marca que pagará en efectivo.',
+        );
+      }
+      if (method === 'card' && payment?.['status'] !== 'authorized') {
+        throw precondition(
+          Code.blockedPayment,
+          'El pago con tarjeta no está aprobado todavía. Pídele al cliente que ' +
+            'lo complete en su app, o marca que pagará en efectivo.',
         );
       }
     },
@@ -202,6 +231,20 @@ export const TRANSITIONS: readonly Transition[] = [
     patch: () => ({ 'timeline.cancelledAt': FieldValue.serverTimestamp() }),
   }),
 ];
+
+/**
+ * Refuses to send a grúa to a heavy job whose price the operator has not
+ * confirmed. The customer was told it would be confirmed first.
+ */
+export function assertOperatorConfirmed(service: FirebaseFirestore.DocumentData): void {
+  const review = service['operatorReview'] as Record<string, unknown> | undefined;
+  if (review?.['state'] === OperatorReviewState.pending) {
+    throw precondition(
+      Code.invalidTransition,
+      'Confirma primero la disponibilidad y el precio con el cliente.',
+    );
+  }
+}
 
 function ACTIVE_EXCEPT_TERMINAL(): ServiceStatus[] {
   return Object.values(ServiceStatus).filter(

@@ -1,0 +1,125 @@
+================================================================================
+INSURANCE MODULE - BUDGET NOTE
+
+WHY PHASE 2 COSTS WHAT IT DOES
+================================================================================
+
+Phase 1 puts the insurance companies on the platform.
+Phase 2 takes your office out of the middle of it.
+
+That is the whole difference, and it is where the money goes.
+
+    Prepared for ..........  ______________________________
+    Scope .................  Insurance module, phase 2
+    Investment ............  US$5,500
+    Delivery ..............  3 weeks
+
+
+THE SHORT ANSWER
+--------------------------------------------------------------------------------
+
+Phase 2 is not a set of extra screens. It is the work that lets the system
+do, correctly and unsupervised, what a person in your office is doing by hand
+after Phase 1 - and it is what makes a second, third and fourth insurance
+company possible without hiring anyone.
+
+
+WHAT ACTUALLY CHANGES
+--------------------------------------------------------------------------------
+
+THE MONTHLY INVOICE
+  After phase 1   Someone in your office generates the Excel, checks it line
+                  by line, and sends it.
+  After phase 2   The system closes the month and issues the invoice on its
+                  own. Nobody touches it.
+
+INSURANCE COMPANIES
+  After phase 1   One, with its prices configured by us on request.
+  After phase 2   As many as you sign, each with its own users, its own
+                  zones, its own invoice.
+
+THEIR STAFF
+  After phase 1   Share a single login for the company.
+  After phase 2   Each person has their own account, and no company can ever
+                  see another's services.
+
+PRICE ZONES
+  After phase 1   Changed by the developer when a tariff changes.
+  After phase 2   Managed by you from the panel, per company, the same day
+                  they ask.
+
+CORRECTIONS
+  After phase 1   Edited by hand, with no record of what changed.
+  After phase 2   Closed periods are locked; a correction is a numbered
+                  credit note with an audit trail.
+
+COMFORTABLE VOLUME
+  After phase 1   Around 50 services a month, one company.
+  After phase 2   500+ a month across several companies, with no extra
+                  admin time.
+
+
+WHERE THE THREE WEEKS GO
+--------------------------------------------------------------------------------
+
+1. AN INVOICE NOBODY HAS TO CHECK
+
+   While you generate the Excel yourself, you are the safety net - you would
+   notice a service billed twice. When the system closes the month alone,
+   there is no net. So it needs the period locked once it closes, corrections
+   issued as credit notes instead of quiet edits, and invoice numbers that
+   never skip or repeat. These are accounting rules, not design work, and
+   they are slow and unforgiving to build.
+
+2. KEEPING THE COMPANIES APART
+
+   Every insurance company must see its own services and nothing else - not a
+   filter on a screen, but a rule enforced underneath, on every request. It is
+   invisible when it works, and it is the first thing an insurer's own IT
+   department asks about before they sign.
+
+3. PRICES IN YOUR HANDS, NOT OURS
+
+   Each insurer negotiates its own tariff by kilometre zone, and they revise
+   it. Phase 2 puts that table in your panel so a change takes you ten
+   minutes, instead of an email to us and a wait.
+
+4. ROOM TO SIGN THE NEXT THREE
+
+   Phase 1 proves the model with one client. Phase 2 is what lets you answer
+   "yes" when the next one asks whether you can absorb 200 services a month -
+   without that answer costing you a salary.
+
+
+THE INVESTMENT
+--------------------------------------------------------------------------------
+
+    US$5,500    fixed price - 3 weeks
+                2 weeks of support after launch included
+
+If you prefer to spread it, phase 2 can be split in two, in this order:
+
+    Automatic monthly close and invoicing ........  US$3,000 - 2 weeks
+    Self-service portal, users and zone tariffs ..  US$2,800 - 2 weeks
+
+Split, it comes to US$300 more and takes a week longer - setting the work
+down and picking it up again is not free. It is still the right choice if the
+cash flow matters more than the total.
+
+
+IF YOU WOULD RATHER NOT, THAT IS A REAL OPTION
+--------------------------------------------------------------------------------
+
+Phase 1 works on its own. You can stay on it indefinitely. The cost simply
+moves: instead of a one-time fee, it becomes a few days of somebody's time
+every month, forever, plus the invoices that get disputed because they were
+typed by a person at the end of a long week. Practically, it caps you at one
+or two insurance clients.
+
+Phase 2 is the decision to stop paying that monthly cost, and to make room
+for the clients after the first one.
+
+
+================================================================================
+Prepared by ______________________   Date ____________   Valid 30 days
+================================================================================

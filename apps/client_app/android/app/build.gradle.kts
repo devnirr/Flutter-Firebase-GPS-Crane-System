@@ -18,6 +18,13 @@ val localProperties = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 
+// The repo-root .env (git-ignored) shares the key across both apps. Its
+// KEY=VALUE lines are valid .properties syntax, so Properties parses it as is.
+val envProperties = Properties().apply {
+    val file = rootProject.file("../../../.env")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.gruasrd.client_app"
     compileSdk = flutter.compileSdkVersion
@@ -29,11 +36,13 @@ android {
     }
 
     defaultConfig {
-        // Supplied by the build environment (CI) or local.properties, never
-        // committed. An empty value is fine: the app falls back to the drawn map.
+        // Supplied by the build environment (CI), local.properties or .env,
+        // never committed. An empty value is fine: the app falls back to the
+        // drawn map.
         manifestPlaceholders["MAPS_API_KEY"] =
             System.getenv("MAPS_API_KEY")
                 ?: localProperties.getProperty("MAPS_API_KEY")
+                ?: envProperties.getProperty("MAPS_API_KEY")
                 ?: ""
 
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).

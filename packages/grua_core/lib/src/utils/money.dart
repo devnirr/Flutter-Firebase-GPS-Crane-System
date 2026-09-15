@@ -37,6 +37,15 @@ extension MoneyCents on int {
   /// figure someone is about to pay or be paid.
   String get formatDOPCompact => _dopCompact.format((this / 100).round());
 
+  /// `171000` -> `RD$1,710`, and `171050` -> `RD$1,710.50`: the tight form
+  /// the price summary reads in, with centavos only when there are some.
+  String get formatDOPShort {
+    final whole = this % 100 == 0;
+    final amount = NumberFormat(whole ? '#,##0' : '#,##0.00', _numberLocale)
+        .format(this / 100);
+    return 'RD\$$amount';
+  }
+
   /// The peso part only, for split displays like a large "2,500" over a small
   /// "RD$".
   String get formatDOPAmountOnly =>

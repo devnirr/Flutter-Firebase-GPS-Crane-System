@@ -14,154 +14,238 @@ void main() {
   DateTime atLocalHour(int hour, {int day = 15}) =>
       DoTime.fromLocal(DateTime.utc(2026, 6, day, hour));
 
-  group('night surcharge', () {
-    test('is not applied during the day', () {
-      final quote = Pricing.quoteFor(
+  /// A trip entirely on city streets.
+  TripDistance city(double km) => TripDistance.city(km, includedKm: config.includedKm);
+
+  Quote quote(
+    VehicleType type,
+    TripDistance distance, {
+    int hour = 12,
+    int waitingMinutes = 0,
+    bool chargeItbis = false,
+  }) =>
+      Pricing.quoteFor(
         config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 10,
-        at: atLocalHour(14),
-        chargeItbis: false,
+        vehicleType: type,
+        distance: distance,
+        at: atLocalHour(hour),
+        waitingMinutes: waitingMinutes,
+        chargeItbis: chargeItbis,
       );
-      expect(quote.surcharges.any((s) => s.code == 'nocturno'), isFalse);
+
+  group('the tariff', () {
+    test(r"prices the owner's example: a carro, 8 km in the city, RD$1,710", () {
+      final q = quote(VehicleType.sedan, city(8));
+      expect(q.distanceKm, 8);
+      expect(q.cityKm, 3);
+      expect(q.highwayKm, 0);
+      expect(q.totalCents, 171000);
+      expect(q.totalCents.formatDOPShort, r'RD$1,710');
+      expect(q.distanceLabel, '8 km');
+    });
+
+    test('the first 5 km are in each tarifa base', () {
+      expect(quote(VehicleType.sedan, city(5)).totalCents, 150000);
+      expect(quote(VehicleType.suv, city(5)).totalCents, 180000);
+      expect(quote(VehicleType.camioneta, city(5)).totalCents, 200000);
+      expect(quote(VehicleType.sedan, city(1)).totalCents, 150000);
+    });
+
+    test(r'carretera kilometres cost RD$130 and city ones RD$70', () {
+      final distance = TripDistance.fromStretches(
+        [(meters: 10000, highway: false), (meters: 10000, highway: true)],
+        includedKm: 5,
+      );
+      expect(distance.cityKm, 5);
+      expect(distance.highwayKm, 10);
+      expect(
+        quote(VehicleType.sedan, distance).totalCents,
+        150000 + 5 * 7000 + 10 * 13000,
+      );
+    });
+
+    test('the included kilometres come off the start of the trip', () {
+      final distance = TripDistance.fromStretches(
+        [(meters: 5000, highway: true), (meters: 10000, highway: false)],
+        includedKm: 5,
+      );
+      expect(distance.distanceKm, 15);
+      expect(distance.cityKm, 10);
+      expect(distance.highwayKm, 0);
+    });
+
+    test('agrees with the server on rounding to tenths of a kilometre', () {
+      expect(TripDistance.city(8.049, includedKm: 5).distanceKm, 8);
+      expect(TripDistance.city(8.05, includedKm: 5).distanceKm, 8.1);
+    });
+
+    test('the breakdown names each road and its rate', () {
+      final distance = TripDistance.fromStretches(
+        [(meters: 10000, highway: false), (meters: 10000, highway: true)],
+        includedKm: 5,
+      );
+      final lines = quote(VehicleType.sedan, distance).breakdown;
+      expect(lines.map((l) => l.label), [
+        'Tarifa base (incluye 5 km)',
+        r'Ciudad 5 km × RD$70',
+        r'Carretera 10 km × RD$130',
+      ]);
+      expect(lines.map((l) => l.cents), [150000, 35000, 130000]);
+    });
+  });
+
+  group('night surcharge', () {
+    test('is 30% of the total for a light vehicle', () {
+      final q = quote(VehicleType.sedan, city(8), hour: 23);
+      final night = q.surcharges.firstWhere((s) => s.code == 'nocturno');
+      expect(night.label, 'Recargo nocturno (30%)');
+      expect(night.cents, 51300);
+      expect(q.totalCents, 222300);
+    });
+
+    test('is not applied during the day', () {
+      expect(
+        quote(VehicleType.sedan, city(10), hour: 14)
+            .surcharges
+            .any((s) => s.code == 'nocturno'),
+        isFalse,
+      );
     });
 
     test('starts exactly at 22:00 local, not 22:00 UTC', () {
-      final justBefore = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 10,
-        at: atLocalHour(21),
-        chargeItbis: false,
-      );
-      final atBoundary = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 10,
-        at: atLocalHour(22),
-        chargeItbis: false,
-      );
-
+      final justBefore = quote(VehicleType.sedan, city(10), hour: 21);
+      final atBoundary = quote(VehicleType.sedan, city(10), hour: 22);
       expect(justBefore.surcharges.any((s) => s.code == 'nocturno'), isFalse);
       expect(atBoundary.surcharges.any((s) => s.code == 'nocturno'), isTrue);
-      expect(atBoundary.totalCents, greaterThan(justBefore.totalCents));
     });
 
     test('spans midnight and ends at 06:00 local', () {
       for (final hour in [23, 0, 3, 5]) {
-        final quote = Pricing.quoteFor(
-          config: config,
-          truckType: TruckType.gancho,
-          distanceKm: 10,
-          at: atLocalHour(hour),
-          chargeItbis: false,
-        );
         expect(
-          quote.surcharges.any((s) => s.code == 'nocturno'),
+          quote(VehicleType.sedan, city(10), hour: hour)
+              .surcharges
+              .any((s) => s.code == 'nocturno'),
           isTrue,
           reason: '$hour:00 local should be a night hour',
         );
       }
-
-      final morning = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 10,
-        at: atLocalHour(6),
-        chargeItbis: false,
+      expect(
+        quote(VehicleType.sedan, city(10), hour: 6)
+            .surcharges
+            .any((s) => s.code == 'nocturno'),
+        isFalse,
       );
-      expect(morning.surcharges.any((s) => s.code == 'nocturno'), isFalse);
+    });
+
+    test('is rounded to whole pesos', () {
+      final q = quote(VehicleType.sedan, city(8.1), hour: 23);
+      expect(q.surcharges.firstWhere((s) => s.code == 'nocturno').cents, 51500);
     });
   });
 
-  group('distance', () {
-    test('the included kilometres are free', () {
-      final short = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: config.includedKm,
-        at: atLocalHour(12),
-        chargeItbis: false,
+  group('vehículos pesados', () {
+    test('start at their minimums', () {
+      expect(quote(VehicleType.camion, city(5)).totalCents, 500000);
+      expect(quote(VehicleType.patana, city(5)).totalCents, 800000);
+      expect(quote(VehicleType.equipoPesado, city(5)).totalCents, 1000000);
+    });
+
+    test(r'charge RD$250, RD$400 and RD$600 a km past 5, on any road', () {
+      final distance = TripDistance.fromStretches(
+        [(meters: 5000, highway: false), (meters: 5000, highway: true)],
+        includedKm: 5,
       );
-      expect(short.distanceCents, 0);
-      expect(short.totalCents, config.baseCentsFor(TruckType.gancho));
-    });
-
-    test('only the excess is charged', () {
-      final quote = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: config.includedKm + 10,
-        at: atLocalHour(12),
-        chargeItbis: false,
+      expect(quote(VehicleType.camion, distance).totalCents, 500000 + 5 * 25000);
+      expect(quote(VehicleType.patana, distance).totalCents, 800000 + 5 * 40000);
+      expect(
+        quote(VehicleType.equipoPesado, distance).totalCents,
+        1000000 + 5 * 60000,
       );
-      expect(quote.distanceCents, 10 * config.perKmCentsFor(TruckType.gancho));
+      // One rate, so one line.
+      expect(
+        quote(VehicleType.patana, distance).breakdown.map((l) => l.label),
+        ['Tarifa base (incluye 5 km)', r'Recorrido 5 km × RD$400'],
+      );
     });
 
-    test('a heavy tow costs more than a hook tow for the same distance', () {
-      int totalFor(TruckType type) => Pricing.quoteFor(
-            config: config,
-            truckType: type,
-            distanceKm: 20,
-            at: atLocalHour(12),
-            chargeItbis: false,
-          ).totalCents;
-
-      expect(totalFor(TruckType.pesada), greaterThan(totalFor(TruckType.plataforma)));
-      expect(totalFor(TruckType.plataforma), greaterThan(totalFor(TruckType.gancho)));
+    test('add 40% at night', () {
+      final q = quote(VehicleType.camion, city(5), hour: 23);
+      expect(
+        q.surcharges.firstWhere((s) => s.code == 'nocturno').label,
+        'Recargo nocturno (40%)',
+      );
+      expect(q.totalCents, 700000);
     });
+
+    test('are estimates, and a light vehicle is not', () {
+      expect(quote(VehicleType.equipoPesado, city(5)).heavy, isTrue);
+      expect(quote(VehicleType.suv, city(5)).heavy, isFalse);
+    });
+
+    test("the operator's price replaces the total and keeps the estimate", () {
+      final estimate = quote(VehicleType.camion, city(10));
+      final confirmed = Pricing.confirmed(estimate, 900000);
+      expect(confirmed.totalCents, 900000);
+      expect(confirmed.baseCents, estimate.baseCents);
+      expect(
+        confirmed.surcharges.singleWhere((s) => s.code == 'ajuste_operador').cents,
+        900000 - estimate.totalCents,
+      );
+      final again = Pricing.confirmed(confirmed, 800000);
+      expect(again.totalCents, 800000);
+      expect(again.surcharges.where((s) => s.code == 'ajuste_operador'), hasLength(1));
+    });
+  });
+
+  test('no service costs less than the minimum', () {
+    final cheap = config.copyWith(
+      baseCentsByVehicleType: {...config.baseCentsByVehicleType, 'motor': 90000},
+    );
+    final q = Pricing.quoteFor(
+      config: cheap,
+      vehicleType: VehicleType.motor,
+      distance: city(6),
+      at: atLocalHour(12),
+      chargeItbis: false,
+    );
+    expect(q.minimumAdjustmentCents, 150000 - 90000 - 7000);
+    expect(q.totalCents, 150000);
   });
 
   group('waiting time', () {
     test('the free window costs nothing', () {
-      final quote = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 10,
-        at: atLocalHour(12),
-        waitingMinutes: config.freeWaitingMinutes,
-        chargeItbis: false,
+      expect(
+        quote(VehicleType.sedan, city(10), waitingMinutes: config.freeWaitingMinutes)
+            .surcharges
+            .any((s) => s.code == 'espera'),
+        isFalse,
       );
-      expect(quote.surcharges.any((s) => s.code == 'espera'), isFalse);
     });
 
     test('only the minutes past the free window are billed', () {
-      final quote = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 10,
-        at: atLocalHour(12),
+      final q = quote(
+        VehicleType.sedan,
+        city(10),
         waitingMinutes: config.freeWaitingMinutes + 7,
-        chargeItbis: false,
       );
-      final espera =
-          quote.surcharges.firstWhere((s) => s.code == 'espera');
-      expect(espera.cents, 7 * config.perWaitingMinuteCents);
+      expect(
+        q.surcharges.firstWhere((s) => s.code == 'espera').cents,
+        7 * config.perWaitingMinuteCents,
+      );
     });
   });
 
   group('ITBIS', () {
     test('is 18% of the subtotal when a fiscal receipt is issued', () {
-      final quote = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 20,
-        at: atLocalHour(12),
-      );
-      expect(quote.itbisCents, (quote.subtotalCents * 0.18).round());
-      expect(quote.totalCents, quote.subtotalCents + quote.itbisCents);
+      final q = quote(VehicleType.sedan, city(20), chargeItbis: true);
+      expect(q.itbisCents, (q.subtotalCents * 0.18).round());
+      expect(q.totalCents, q.subtotalCents + q.itbisCents);
     });
 
     test('is omitted otherwise', () {
-      final quote = Pricing.quoteFor(
-        config: config,
-        truckType: TruckType.gancho,
-        distanceKm: 20,
-        at: atLocalHour(12),
-        chargeItbis: false,
-      );
-      expect(quote.itbisCents, 0);
-      expect(quote.totalCents, quote.subtotalCents);
+      final q = quote(VehicleType.sedan, city(20));
+      expect(q.itbisCents, 0);
+      expect(q.totalCents, q.subtotalCents);
     });
   });
 
@@ -205,6 +289,9 @@ void main() {
       // layout intl's es_DO data would produce.
       expect(249999.formatDOP, r'RD$ 2,499.99');
       expect(1500000.formatDOPCompact, r'RD$ 15,000');
+      // The price summary's tight form: centavos only when there are some.
+      expect(171000.formatDOPShort, r'RD$1,710');
+      expect(171050.formatDOPShort, r'RD$1,710.50');
     });
 
     test('basis points are exact at awkward rates', () {
@@ -240,6 +327,17 @@ void main() {
   });
 
   group('truck type inference', () {
+    test('a heavy vehicle always needs the heavy grúa', () {
+      for (final type in VehicleType.heavy) {
+        for (final condition in VehicleCondition.values) {
+          expect(
+            ServiceVehicle(type: type, condition: condition).inferredTruckType,
+            TruckType.pesada,
+          );
+        }
+      }
+    });
+
     test('matches the model-level rule', () {
       for (final condition in VehicleCondition.values) {
         for (final type in VehicleType.values) {

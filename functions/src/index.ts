@@ -62,11 +62,19 @@ export {
   updateDriver,
   archiveDriver,
   assignServiceManually,
+  confirmHeavyService,
   bootstrapFirstAdmin,
   setAdminRole,
   whoAmI,
 } from './callables/admin.js';
 export { createTruck, updateTruck, archiveTruck } from './callables/trucks.js';
+export {
+  choosePaymentMethod,
+  preparePayment,
+  syncPayment,
+  settleDriverCash,
+  stripeWebhook,
+} from './callables/payments.js';
 
 // ---------------------------------------------------------------------------
 // Triggers and scheduled work

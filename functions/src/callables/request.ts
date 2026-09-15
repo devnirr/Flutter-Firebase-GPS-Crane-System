@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import {
   ACTIVE_STATUSES,
+  OperatorReviewState,
   PaymentMethod,
   PaymentStatus,
   ServiceEventName,
@@ -13,6 +14,7 @@ import {
   VehicleCondition,
   VehicleType,
   inferTruckType,
+  isHeavyVehicle,
 } from '../lib/enums.js';
 import { Code, invalidArgument, precondition } from '../lib/errors.js';
 import { GeoPoint } from 'firebase-admin/firestore';
@@ -26,8 +28,16 @@ import {
   type LatLng,
 } from '../lib/geo.js';
 import { requireClient, requireNotInMaintenance } from '../lib/guards.js';
-import { buildQuote, loadPricing, signQuote, verifyQuote } from '../lib/pricing.js';
-import { roadRoute } from '../lib/routes.js';
+import {
+  type TripDistance,
+  buildQuote,
+  loadPricing,
+  signQuote,
+  tripDistance,
+  verifyQuote,
+} from '../lib/pricing.js';
+import { alertAdmins } from '../lib/push.js';
+import { type RoadStretch, roadRoute } from '../lib/routes.js';
 import { mapsApiKey, quoteSigningSecret } from '../lib/secrets.js';
 import { MAX_VEHICLE_PHOTOS, isVehiclePhotoUrl } from '../lib/servicePhoto.js';
 import { serviceCode } from '../lib/time.js';
@@ -85,7 +95,9 @@ const quoteInput = z.object({
 
 const requestInput = quoteInput.extend({
   truckType: z.nativeEnum(TruckType),
-  paymentMethod: z.nativeEnum(PaymentMethod),
+  // No longer asked when requesting: the customer chooses card or cash when
+  // the chofer arrives. Still accepted from older builds.
+  paymentMethod: z.nativeEnum(PaymentMethod).nullish(),
   quoteSignature: z.string().min(16).max(200),
   // Echoed back from quoteService. It is covered by the signature, so a client
   // cannot extend its own quote by editing this.
@@ -95,9 +107,20 @@ const requestInput = quoteInput.extend({
   // From "Pedir esta grúa" on the map: a sealed handle on the truck the
   // customer tapped, which dispatch offers the job to first.
   preferredTruckRef: z.string().max(400).nullish(),
+  // Echoed from quoteService, and covered by its signature: the road split
+  // the price was worked out on.
+  distance: z.object({
+    distanceKm: z.number().min(0).max(5000),
+    cityKm: z.number().min(0).max(5000),
+    highwayKm: z.number().min(0).max(5000),
+  }),
 });
 
 const QUOTE_TTL_MS = 10 * 60 * 1000;
+
+/** What the office reads on a heavy job nobody has confirmed yet. */
+const HEAVY_REVIEW_REASON =
+  'Vehículo pesado: confirma disponibilidad y precio final con el cliente.';
 
 const toLatLng = (p: z.infer<typeof point>): LatLng => ({
   latitude: p.latitude,
@@ -112,8 +135,8 @@ const toLatLng = (p: z.infer<typeof point>): LatLng => ({
  * the dispatcher's all draw the same path: before this each of them fetched
  * its own, on every device, on every session, and none of them agreed.
  *
- * `estimatedRoadKm` stays the *priced* distance either way — see the note in
- * `quoteService`.
+ * Its `stretches` are what the tariff prices: which kilometres are city and
+ * which carretera.
  */
 async function tripRoute(
   from: LatLng,
@@ -125,17 +148,22 @@ async function tripRoute(
   polyline: string;
   provider: string;
   fetchedAt: Timestamp;
+  stretches: RoadStretch[];
 }> {
   const road = await roadRoute(from, to);
   const estimateKm = estimatedRoadKm(from, to);
+  const estimateMeters = Math.round(estimateKm * 1000);
 
   return {
-    distanceMeters: road?.distanceMeters ?? Math.round(estimateKm * 1000),
+    distanceMeters: road?.distanceMeters ?? estimateMeters,
     durationSeconds:
       road?.durationSeconds ?? Math.round((estimateKm / 28) * 3600),
     polyline: road?.polyline ?? '',
     provider: road ? 'routes_api' : 'estimate',
     fetchedAt: Timestamp.fromDate(now),
+    // Without Google there is no telling city from carretera: all of it is
+    // priced as city, the lower rate, rather than guessed at.
+    stretches: road?.stretches ?? [{ meters: estimateMeters, highway: false }],
   };
 }
 
@@ -182,12 +210,10 @@ async function assertCovered(pickup: LatLng, dropoff: LatLng): Promise<void> {
 }
 
 /**
- * Prices a tow.
+ * Prices a tow, on the road Google routes between the two points.
  *
- * Distance is currently a straight line inflated by a detour factor. Swapping in
- * the Routes API is a change to this one function: everything downstream reads
- * `route.distanceMeters`, and the signature covers the resulting total either
- * way.
+ * Without an answer from Google the distance is the straight line inflated by
+ * a detour factor, all of it priced as city.
  */
 export const quoteService = onCall(
   { region, cors: true, secrets: [quoteSigningSecret, mapsApiKey] },
@@ -202,20 +228,24 @@ export const quoteService = onCall(
   const to = toLatLng(dropoff.geo);
   await assertCovered(from, to);
 
-  const truckType = truckTypeOverride ?? inferTruckType(v.type, v.condition);
-  // The priced distance stays the deterministic estimate on purpose. It is
-  // covered by the signature, and `requestService` recomputes it a minute
-  // later to check that signature — two live Routes API calls that disagree by
-  // a hundred metres would refuse every request as a price mismatch. The real
-  // road goes on `route`, which is what the maps draw.
-  const distanceKm = estimatedRoadKm(from, to);
+  // A heavy vehicle always needs the heavy grúa, whatever the app sent.
+  const truckType = isHeavyVehicle(v.type)
+    ? inferTruckType(v.type, v.condition)
+    : truckTypeOverride ?? inferTruckType(v.type, v.condition);
   const now = new Date();
 
   const pricing = await loadPricing();
+  // Priced on the real road: its length, and which of it is city and which
+  // carretera. The split is signed and sent back with the request, which
+  // prices from it rather than asking Google again — two answers a minute
+  // apart can differ by a few hundred metres and refuse the request.
+  const route = await tripRoute(from, to, now);
+  const distance = tripDistance(route.stretches, pricing.includedKm);
+
   const quote = buildQuote({
     config: pricing,
-    truckType,
-    distanceKm,
+    vehicleType: v.type,
+    distance,
     at: now,
     // ITBIS only applies to a fiscal receipt, which is only issued when the
     // customer has given an RNC.
@@ -231,12 +261,13 @@ export const quoteService = onCall(
     expiresAtMs: expiresAt.getTime(),
     pricingVersion: quote.pricingVersion,
     truckType,
+    vehicleType: v.type,
+    distance,
   });
-
-  const route = await tripRoute(from, to, now);
 
   return {
     quote,
+    distance,
     route: {
       distanceMeters: route.distanceMeters,
       durationSeconds: route.durationSeconds,
@@ -278,7 +309,15 @@ export const requestService = onCall(
     quoteExpiresAtMs,
     notes,
     preferredTruckRef,
+    distance: echoed,
   } = parsed.data;
+  const heavy = isHeavyVehicle(v.type);
+  // Normalised to the tenths the quote was signed with.
+  const distance: TripDistance = {
+    distanceKm: Math.round(echoed.distanceKm * 10) / 10,
+    cityKm: Math.round(echoed.cityKm * 10) / 10,
+    highwayKm: Math.round(echoed.highwayKm * 10) / 10,
+  };
 
   // A stale or altered handle is not an error worth failing a tow over: the
   // request simply goes to whoever dispatch finds, as any other would.
@@ -309,13 +348,12 @@ export const requestService = onCall(
 
   const now = new Date();
   const pricing = await loadPricing();
-  const distanceKm = estimatedRoadKm(from, to);
   const chargeItbis = Boolean((caller.user['rnc'] as string | undefined)?.trim());
 
   const quote = buildQuote({
     config: pricing,
-    truckType,
-    distanceKm,
+    vehicleType: v.type,
+    distance,
     at: now,
     chargeItbis,
   });
@@ -337,6 +375,8 @@ export const requestService = onCall(
       expiresAtMs,
       pricingVersion: quote.pricingVersion,
       truckType,
+      vehicleType: v.type,
+      distance,
     },
     quoteSignature,
   );
@@ -358,7 +398,18 @@ export const requestService = onCall(
   await db.runTransaction(async (transaction) => {
     transaction.create(serviceRef, {
       code,
-      status: ServiceStatus.pendingDispatch,
+      // A heavy job waits for the operator: nobody is sent until they have
+      // confirmed a grúa can do it and at what price.
+      status: heavy ? ServiceStatus.needsManual : ServiceStatus.pendingDispatch,
+      ...(heavy
+        ? {
+            operatorReview: {
+              required: true,
+              state: OperatorReviewState.pending,
+              estimatedTotalCents: quote.totalCents,
+            },
+          }
+        : {}),
       clientId: caller.uid,
       clientName: caller.user['name'] ?? '',
       clientPhone: caller.user['phone'] ?? '',
@@ -386,14 +437,22 @@ export const requestService = onCall(
       route,
       quote,
       payment: {
-        method: paymentMethod,
+        // A card picked on an older build is only a preference now; the
+        // customer confirms it, and the card is held, when the chofer arrives.
+        method: paymentMethod === PaymentMethod.cash ? PaymentMethod.cash : PaymentMethod.pending,
         status: PaymentStatus.none,
         gateway: '',
         authorizedCents: 0,
         capturedCents: 0,
         refundedCents: 0,
       },
-      dispatch: { round: 0, radiusKm: 5, offeredTo: [], rejectedBy: [] },
+      dispatch: {
+        round: 0,
+        radiusKm: 5,
+        offeredTo: [],
+        rejectedBy: [],
+        ...(heavy ? { lastReason: HEAVY_REVIEW_REASON } : {}),
+      },
       timeline: { createdAt: FieldValue.serverTimestamp() },
       driverNotes: notes ?? '',
       unreadForClient: 0,
@@ -405,10 +464,10 @@ export const requestService = onCall(
     transaction.create(Paths.events(serviceRef.id).doc(), {
       event: ServiceEventName.requestService,
       from: '',
-      to: ServiceStatus.pendingDispatch,
+      to: heavy ? ServiceStatus.needsManual : ServiceStatus.pendingDispatch,
       actorId: caller.uid,
       actorRole: UserRole.client,
-      meta: { truckType, paymentMethod },
+      meta: { truckType, paymentMethod, vehicleType: v.type, heavy },
       at: FieldValue.serverTimestamp(),
     });
 
@@ -427,6 +486,16 @@ export const requestService = onCall(
     truckType,
     totalCents: quote.totalCents,
   });
+
+  if (heavy) {
+    // Straight to the office: the operator confirms before any grúa goes.
+    await alertAdmins(
+      'Vehículo pesado por confirmar',
+      `${code}: confirma disponibilidad y precio final con el cliente.`,
+      { serviceId: serviceRef.id, type: 'heavy_review' },
+    );
+    return { serviceId: serviceRef.id, code };
+  }
 
   // Started immediately rather than by a trigger: the customer is watching a
   // "buscando grúa" screen and every second of latency is visible. The chosen

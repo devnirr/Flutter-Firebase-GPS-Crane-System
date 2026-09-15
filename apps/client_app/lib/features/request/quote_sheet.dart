@@ -37,6 +37,7 @@ class _QuoteSheetState extends ConsumerState<QuoteSheet> {
     }
 
     final stale = quote.isStale(DateTime.now().toUtc());
+    final heavy = quote.quote.heavy;
 
     return BottomActionSheet(
       child: SingleChildScrollView(
@@ -58,23 +59,43 @@ class _QuoteSheetState extends ConsumerState<QuoteSheet> {
             ),
             const SizedBox(height: Insets.lg),
 
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            // The one line the customer reads before confirming, in the words
+            // the owner asked for.
+            Text(
+              'Distancia: ${Quote.formatKm(quote.quote.distanceKm)}km | '
+              'Total estimado: ${quote.quote.totalCents.formatDOPShort}',
+              key: const Key('quote-summary'),
+              style: text.titleMedium,
+            ),
+            const SizedBox(height: Insets.sm),
+            // A Wrap: a heavy job's five-figure total in display type does not
+            // fit beside the time on a narrow phone.
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.end,
+              spacing: Insets.sm,
               children: [
                 Text(
                   quote.quote.totalCents.formatDOP,
                   style: text.displaySmall?.copyWith(color: BrandColors.red),
                 ),
-                const SizedBox(width: Insets.sm),
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
-                    '${quote.route.distanceLabel} · ${quote.route.durationLabel}',
+                    quote.route.durationLabel,
                     style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
                   ),
                 ),
               ],
             ),
+            if (heavy) ...[
+              const SizedBox(height: Insets.md),
+              const InlineNotice(
+                key: Key('quote-heavy-notice'),
+                message: heavyServiceNotice,
+                icon: Icons.warning_amber_rounded,
+                tone: NoticeTone.warning,
+              ),
+            ],
 
             const SizedBox(height: Insets.lg),
             const Divider(),
@@ -82,19 +103,19 @@ class _QuoteSheetState extends ConsumerState<QuoteSheet> {
               DetailRow(label: line.label, value: line.cents.formatDOP),
             const Divider(),
             DetailRow(
-              label: 'Total',
+              label: 'Total estimado',
               value: quote.quote.totalCents.formatDOP,
               emphasise: true,
             ),
 
             const SizedBox(height: Insets.lg),
-            const FieldLabel('Forma de pago'),
-            const SizedBox(height: Insets.sm),
-            _PaymentPicker(
-              selected: draft.paymentMethod,
-              onChanged: ref
-                  .read(requestControllerProvider.notifier)
-                  .setPaymentMethod,
+            // Chosen at the curb, not here: the price can still change on the
+            // way, and a card is only held once a grúa is there.
+            const InlineNotice(
+              key: Key('quote-payment-later'),
+              icon: Icons.credit_card,
+              message: 'Pagas cuando llegue el chofer: con tarjeta (Apple Pay, '
+                  'Google Pay) o en efectivo.',
             ),
 
             if (stale) ...[
@@ -128,97 +149,18 @@ class _QuoteSheetState extends ConsumerState<QuoteSheet> {
                         color: BrandColors.white,
                       ),
                     )
-                  : const Text('CONFIRMAR Y PEDIR GRÚA'),
+                  // A heavy request asks the operator; nobody is sent yet.
+                  : Text(heavy ? 'ENVIAR SOLICITUD' : 'CONFIRMAR Y PEDIR GRÚA'),
             ),
             const SizedBox(height: Insets.sm),
             Text(
-              'El precio final puede variar si hay tiempo de espera o cambia '
-              'el destino.',
+              heavy
+                  ? 'El operador te confirmará el precio final antes de enviar '
+                      'la grúa.'
+                  : 'El precio final puede variar si hay tiempo de espera o '
+                      'cambia el destino.',
               textAlign: TextAlign.center,
               style: text.bodySmall?.copyWith(color: BrandColors.grey600),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PaymentPicker extends StatelessWidget {
-  const _PaymentPicker({required this.selected, required this.onChanged});
-
-  final PaymentMethod selected;
-  final ValueChanged<PaymentMethod> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _PaymentTile(
-            icon: Icons.payments_outlined,
-            label: 'Efectivo',
-            selected: selected == PaymentMethod.cash,
-            onTap: () => onChanged(PaymentMethod.cash),
-          ),
-        ),
-        const SizedBox(width: Insets.md),
-        Expanded(
-          child: _PaymentTile(
-            icon: Icons.credit_card,
-            label: 'Tarjeta',
-            selected: selected == PaymentMethod.card,
-            onTap: () => onChanged(PaymentMethod.card),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PaymentTile extends StatelessWidget {
-  const _PaymentTile({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: Corners.brMd,
-      child: AnimatedContainer(
-        duration: Motion.fast,
-        padding: const EdgeInsets.symmetric(vertical: Insets.lg),
-        decoration: BoxDecoration(
-          color: selected ? BrandColors.redTint : BrandColors.grey100,
-          borderRadius: Corners.brMd,
-          border: Border.all(
-            color: selected ? BrandColors.red : Colors.transparent,
-            width: 1.4,
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: selected ? BrandColors.red : BrandColors.grey800,
-            ),
-            const SizedBox(width: Insets.sm),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: selected ? BrandColors.redDeep : BrandColors.grey800,
-                  ),
             ),
           ],
         ),

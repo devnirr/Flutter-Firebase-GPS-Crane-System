@@ -43,6 +43,7 @@ dependencies:
   wakelock_plus: ^1.8.0
   package_info_plus: ^10.2.1
   device_info_plus: ^13.2.0
+  flutter_stripe_web: ^8.2.0
 
 dev_dependencies:
   flutter_test:

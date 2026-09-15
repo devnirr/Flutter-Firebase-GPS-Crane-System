@@ -43,6 +43,7 @@ enum FailureCode {
   paymentDeclined('payment_declined'),
   paymentRequiresAction('payment_requires_action'),
   cashLimitExceeded('cash_limit_exceeded'),
+  paymentsNotConfigured('payments_not_configured'),
 
   // Account
   accountBlocked('account_blocked'),
@@ -139,6 +140,8 @@ class Failure implements Exception {
         'Tu banco pide confirmar el pago. Sigue los pasos en pantalla.',
       FailureCode.cashLimitExceeded =>
         'Tienes mucho efectivo pendiente de entregar. Liquida para seguir recibiendo servicios en efectivo.',
+      FailureCode.paymentsNotConfigured =>
+        'El pago con tarjeta no está disponible ahora. Puedes pagar en efectivo.',
       FailureCode.accountBlocked =>
         'Tu cuenta está bloqueada. Comunícate con soporte.',
       FailureCode.accountSuspended =>
