@@ -179,10 +179,10 @@ class _BottomBar extends StatelessWidget {
           backgroundColor: BrandColors.white,
           surfaceTintColor: Colors.transparent,
           indicatorColor: BrandColors.redTint,
-          // Icons only. The labels stay on each destination for screen
-          // readers and the long-press tooltip.
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
-          height: 56,
+          // Labelled: an icon alone leaves somebody guessing which tab holds
+          // their services and which their conversations.
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          height: 68,
           elevation: 0,
           iconTheme: WidgetStateProperty.resolveWith(
             (states) => IconThemeData(

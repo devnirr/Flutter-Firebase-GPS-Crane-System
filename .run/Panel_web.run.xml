@@ -1,0 +1,15 @@
+<component name="ProjectRunConfigurationManager">
+  <!-- El panel de operaciones, que corre en el navegador.
+
+       El argumento de abajo es lo que entrega las llaves al lado Dart. Sin
+       GOOGLE_MAPS_API_KEY toda la app dibuja el mapa de demostración y la
+       búsqueda de direcciones se queda sin llave con que llamar. La ruta es
+       relativa a la carpeta de la app, que es desde donde el plugin de
+       Flutter ejecuta. -->
+  <configuration default="false" name="Panel (web)" type="FlutterRunConfigurationType" factoryName="Flutter">
+    <option name="additionalArgs" value="-d chrome --dart-define-from-file=../../.env" />
+    <option name="buildFlavor" value="" />
+    <option name="filePath" value="$PROJECT_DIR$/apps/admin_web/lib/main.dart" />
+    <method v="2" />
+  </configuration>
+</component>

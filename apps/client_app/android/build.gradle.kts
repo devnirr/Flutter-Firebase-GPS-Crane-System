@@ -37,6 +37,16 @@ subprojects {
                 android.compileOptions.sourceCompatibility = JavaVersion.VERSION_17
                 android.compileOptions.targetCompatibility = JavaVersion.VERSION_17
             }
+            // Plugin modules live in the pub cache (C:) while their build
+            // output lives under this project (F:). Registering a unit-test
+            // variant makes AGP relativize one path against the other, which
+            // Windows cannot do across drives, and Gradle sync fails with
+            // "this and base files have different roots". Nobody runs a
+            // plugin's own unit tests from here, so they are not registered.
+            beforeVariants { variant ->
+                variant.hostTests[com.android.build.api.variant.HostTestBuilder.UNIT_TEST_TYPE]
+                    ?.enable = false
+            }
         }
     }
     tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {

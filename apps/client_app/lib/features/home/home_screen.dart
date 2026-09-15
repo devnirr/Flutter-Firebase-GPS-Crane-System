@@ -11,7 +11,7 @@ import 'truck_search_widgets.dart';
 
 /// The customer's home, and the Inicio tab.
 ///
-/// A live map fills the screen under the greeting, and the bottom
+/// A live map fills the screen, the mark sits at the top, and the bottom
 /// carries the only two things somebody who has just broken down needs: the
 /// search for grúas nearby, and the button that asks for one. Everything else
 /// a customer might want — their services, their conversations, their account
@@ -98,6 +98,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   greeting: user == null ? 'Hola' : 'Hola, ${user.shortName}',
                   onProfile: () => context.go(Routes.profile),
                 ),
+                const SizedBox(height: Insets.sm),
+                // The mark over the map, as on the chofer's home. It lets
+                // touches through, so the map still pans under it.
+                const IgnorePointer(child: GruaLogo(size: 120)),
                 const Spacer(),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
