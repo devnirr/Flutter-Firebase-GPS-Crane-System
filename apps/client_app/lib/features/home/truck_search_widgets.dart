@@ -68,13 +68,24 @@ class _NearbyTrucksRowState extends ConsumerState<NearbyTrucksRow> {
       key: const Key('nearby-trucks-row'),
       onTap: ref.read(truckSearchProvider.notifier).toggle,
       dense: true,
-      leading: const Icon(Icons.local_shipping_outlined, color: BrandColors.grey800),
-      title: Text('Grúas cerca de ti', style: text.titleSmall),
+      leading: const Icon(
+        Icons.local_shipping_outlined,
+        size: 20,
+        color: BrandColors.grey800,
+      ),
+      minLeadingWidth: 20,
+      title: Text(
+        'Grúas cerca de ti',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: text.titleSmall?.copyWith(fontSize: 13),
+      ),
       subtitle: Text(
         search.error ?? subtitle,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: text.bodySmall?.copyWith(
+          fontSize: 11,
           color: search.error != null
               ? BrandColors.danger
               : count > 0
@@ -96,6 +107,7 @@ class _NearbyTrucksRowState extends ConsumerState<NearbyTrucksRow> {
           Text(
             status,
             style: text.labelMedium?.copyWith(
+              fontSize: 11,
               color: search.isSearching ? BrandColors.grey600 : BrandColors.success,
             ),
           ),
@@ -103,7 +115,7 @@ class _NearbyTrucksRowState extends ConsumerState<NearbyTrucksRow> {
             tooltip: 'Ajustes de búsqueda',
             visualDensity: VisualDensity.compact,
             onPressed: () => unawaited(_openSettings(settings)),
-            icon: const Icon(Icons.tune, size: 20),
+            icon: const Icon(Icons.tune, size: 18),
           ),
         ],
       ),

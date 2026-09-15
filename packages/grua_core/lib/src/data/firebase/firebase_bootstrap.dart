@@ -24,6 +24,10 @@ abstract final class FirebaseBootstrap {
   static bool get isReady => _ready;
   static bool _ready = false;
 
+  /// Why the last [initialize] gave up, for the screen that reports it.
+  static Object? get initializationError => _error;
+  static Object? _error;
+
   /// Initializes Firebase and, in a dev build, points the SDKs at the local
   /// emulator suite.
   ///
@@ -39,9 +43,11 @@ abstract final class FirebaseBootstrap {
     try {
       await Firebase.initializeApp(options: options);
     } on Object catch (error) {
+      _error = error;
       debugPrint(
-        'Firebase not configured ($error). '
-        'Running against the in-memory demo backend instead. '
+        'Firebase could not be initialized ($error). '
+        'A build with firebase_options.dart stops here; one without it runs '
+        'against the in-memory demo backend. '
         'Run `flutterfire configure` to connect a project.',
       );
       return false;

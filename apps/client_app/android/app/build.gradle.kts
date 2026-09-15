@@ -27,12 +27,15 @@ val envProperties = Properties().apply {
 
 android {
     namespace = "com.gruasrd.client_app"
-    compileSdk = flutter.compileSdkVersion
+    // permission_handler_android compiles against 37; SDKs are backward compatible.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // flutter_local_notifications uses java.time APIs missing on older Android.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
@@ -72,6 +75,10 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
 flutter {

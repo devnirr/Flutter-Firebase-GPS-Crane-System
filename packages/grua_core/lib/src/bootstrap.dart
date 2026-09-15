@@ -25,13 +25,15 @@ import 'theme/brand.dart';
 /// The data layer is chosen at startup, in this order:
 ///
 /// 1. [backendOverrides], when a caller passes one — tests and demos do.
-/// 2. Firebase, when [firebaseOptions] is supplied and initialization succeeds.
-/// 3. The in-memory demo backend.
+/// 2. The in-memory demo backend, with `--dart-define=USE_DEMO_BACKEND=true`.
+/// 3. Firebase, when [firebaseOptions] is supplied.
+/// 4. The in-memory demo backend, when there are no [firebaseOptions] at all.
 ///
-/// Falling back rather than failing is deliberate. A fresh clone has no
-/// `firebase_options.dart`, and somebody evaluating the repo should see the
-/// product, not a crash screen telling them to run a CLI they have not heard
-/// of yet.
+/// A fresh clone has no `firebase_options.dart`, and somebody evaluating the
+/// repo should see the product rather than a crash screen naming a CLI they
+/// have not heard of. A build that does ship one is a different case: it means
+/// to talk to a project, and the demo backend lets anybody in with any
+/// password, so failing to reach Firebase stops on an error screen instead.
 Future<void> runGruaApp({
   required AppKind appKind,
   required Widget Function() builder,
@@ -79,11 +81,27 @@ Future<void> runGruaApp({
         ),
       );
 
-      final usingFirebase = backendOverrides == null &&
+      // The demo backend signs anyone in who types four characters as a
+      // password, so it is only ever reached on purpose: a test harness, the
+      // USE_DEMO_BACKEND define, or a clone with no firebase_options.dart to
+      // pass. A build that ships one and cannot reach Firebase says so below
+      // rather than turning into an app with no password check.
+      final wantsDemo = backendOverrides != null || config.useDemoBackend;
+      final usingFirebase = !wantsDemo &&
           await FirebaseBootstrap.initialize(
             config: config,
             options: firebaseOptions,
           );
+
+      if (!wantsDemo && !usingFirebase && firebaseOptions != null) {
+        runApp(
+          _BackendUnavailableApp(
+            error: FirebaseBootstrap.initializationError,
+            flavor: config.flavor,
+          ),
+        );
+        return;
+      }
 
       final overrides = <Override>[
         appConfigProvider.overrideWithValue(config),
@@ -99,6 +117,69 @@ Future<void> runGruaApp({
     },
     (error, stack) => debugPrint('Zone error: $error\n$stack'),
   );
+}
+
+/// What a build configured for Firebase shows when it cannot reach it.
+///
+/// The alternative — the in-memory backend — would accept any email with any
+/// password and then report that the account has no chofer, which reads as two
+/// unrelated bugs instead of one connection that never came up.
+class _BackendUnavailableApp extends StatelessWidget {
+  const _BackendUnavailableApp({required this.error, required this.flavor});
+
+  final Object? error;
+  final Flavor flavor;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: BrandColors.white,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(Insets.xxl),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.cloud_off_outlined,
+                  size: 56,
+                  color: BrandColors.red,
+                ),
+                const SizedBox(height: Insets.lg),
+                Text(
+                  'No pudimos conectar con el servidor',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: Insets.md),
+                const Text(
+                  'Revisa tu conexión y vuelve a abrir la app. Si el problema '
+                  'sigue, avisa a la oficina.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: BrandColors.grey600),
+                ),
+                // The reason, where a tester can read it and nobody else is
+                // looking: a production build says only that it failed.
+                if (error != null && !flavor.isProduction) ...[
+                  const SizedBox(height: Insets.lg),
+                  Text(
+                    '$error',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: BrandColors.grey600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Frames a phone app inside a phone-sized viewport when it is previewed in a

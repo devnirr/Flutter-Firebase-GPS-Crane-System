@@ -92,10 +92,15 @@ Future<void> main() async {
     // Back out of the conversation and into the list of them.
     await tester.tap(find.byType(BackButton));
     await advance(tester, const Duration(seconds: 1));
+    // Icons only in the bar: a hidden label has no size to tap, so the tap
+    // goes to the destination around it.
     await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('Chat'),
+      find.ancestor(
+        of: find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text('Chat'),
+        ),
+        matching: find.byType(NavigationDestination),
       ),
     );
     await advance(tester, const Duration(seconds: 1));
@@ -117,10 +122,15 @@ Future<void> main() async {
 
     await tester.tap(find.byType(BackButton));
     await advance(tester, const Duration(seconds: 1));
+    // Icons only in the bar: a hidden label has no size to tap, so the tap
+    // goes to the destination around it.
     await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('Chat'),
+      find.ancestor(
+        of: find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text('Chat'),
+        ),
+        matching: find.byType(NavigationDestination),
       ),
     );
     await advance(tester, const Duration(seconds: 1));

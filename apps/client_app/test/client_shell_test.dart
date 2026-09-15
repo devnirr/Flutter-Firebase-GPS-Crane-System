@@ -73,8 +73,11 @@ Future<void> main() async {
     matching: find.text(label),
   );
 
+  // The labels are hidden, so the tap goes to the destination they name.
   Future<void> openTab(WidgetTester tester, String label) async {
-    await tester.tap(tab(label));
+    await tester.tap(
+      find.ancestor(of: tab(label), matching: find.byType(NavigationDestination)),
+    );
     await advance(tester, const Duration(seconds: 1));
   }
 

@@ -11,7 +11,7 @@ import 'truck_search_widgets.dart';
 
 /// The customer's home, and the Inicio tab.
 ///
-/// A live map fills the screen, the mark sits at the top, and the bottom
+/// A live map fills the screen under the greeting, and the bottom
 /// carries the only two things somebody who has just broken down needs: the
 /// search for grúas nearby, and the button that asks for one. Everything else
 /// a customer might want — their services, their conversations, their account
@@ -98,8 +98,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   greeting: user == null ? 'Hola' : 'Hola, ${user.shortName}',
                   onProfile: () => context.go(Routes.profile),
                 ),
-                const SizedBox(height: Insets.sm),
-                const GruaLogo(size: 120),
                 const Spacer(),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
@@ -228,7 +226,8 @@ class _RequestBar extends StatelessWidget {
       child: ElevatedButton.icon(
         onPressed: onRequest,
         style: ElevatedButton.styleFrom(
-          minimumSize: const Size.fromHeight(62),
+          minimumSize: const Size.fromHeight(50),
+          padding: const EdgeInsets.symmetric(vertical: Insets.sm),
           shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
         ),
         icon: const Icon(Icons.local_shipping, size: 22),
