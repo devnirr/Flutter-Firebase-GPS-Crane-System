@@ -156,15 +156,6 @@ abstract final class Pricing {
     return config.cancellationFeeCents;
   }
 
-  /// How much to hold on the card at accept time: the quote plus headroom for
-  /// waiting and reroutes, so a normal job needs one authorization and one
-  /// capture rather than a second charge the customer did not expect.
-  static int authorizationAmountCents({
-    required PricingConfig config,
-    required int quoteTotalCents,
-  }) =>
-      quoteTotalCents + Money.bps(quoteTotalCents, config.authorizationBufferBps);
-
   /// The company's cut of a completed job.
   static int commissionCents({
     required PricingConfig config,

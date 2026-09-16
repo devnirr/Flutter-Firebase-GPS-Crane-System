@@ -25,10 +25,9 @@ enum AppKind { client, driver, admin }
 /// Build-time configuration, supplied by `--dart-define-from-file=config/<flavor>.json`.
 ///
 /// Nothing secret belongs here beyond public client keys: the Firebase web API
-/// key and the Maps browser key are both restricted by referrer/package, and
-/// the Stripe key is the publishable one. Anything that can move money or read
-/// another user's data lives in Secret Manager and is only ever touched by a
-/// Cloud Function.
+/// key and the Maps browser key are both restricted by referrer/package.
+/// Anything that can move money or read another user's data lives in Secret
+/// Manager and is only ever touched by a Cloud Function.
 @immutable
 class AppConfig {
   const AppConfig({
@@ -36,7 +35,6 @@ class AppConfig {
     required this.appKind,
     required this.firebaseProjectId,
     required this.googleMapsApiKey,
-    required this.stripePublishableKey,
     required this.useEmulators,
     required this.emulatorHost,
     required this.functionsRegion,
@@ -61,7 +59,6 @@ class AppConfig {
         defaultValue: 'grua-rd-dev',
       ),
       googleMapsApiKey: const String.fromEnvironment('GOOGLE_MAPS_API_KEY'),
-      stripePublishableKey: const String.fromEnvironment('STRIPE_PUBLISHABLE_KEY'),
       recaptchaSiteKey: const String.fromEnvironment('RECAPTCHA_SITE_KEY'),
       // Only a debug build uses a debug provider at all, so a token that leaks
       // into a release build does nothing.
@@ -90,7 +87,6 @@ class AppConfig {
   final AppKind appKind;
   final String firebaseProjectId;
   final String googleMapsApiKey;
-  final String stripePublishableKey;
 
   /// reCAPTCHA Enterprise site key, the one the web app is registered with
   /// under App Check > Apps in the console.
@@ -141,7 +137,6 @@ class AppConfig {
     if (!flavor.isProduction) return;
     final missing = <String>[
       if (googleMapsApiKey.isEmpty) 'GOOGLE_MAPS_API_KEY',
-      if (stripePublishableKey.isEmpty) 'STRIPE_PUBLISHABLE_KEY',
       // Web is the only platform with no device attestation to fall back on.
       if (kIsWeb && recaptchaSiteKey.isEmpty) 'RECAPTCHA_SITE_KEY',
       if (firebaseProjectId.endsWith('-dev')) 'FIREBASE_PROJECT_ID (points at dev)',

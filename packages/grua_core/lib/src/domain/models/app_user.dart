@@ -9,10 +9,9 @@ part 'app_user.g.dart';
 /// A customer profile at `users/{uid}`.
 ///
 /// Only a whitelist of these fields is writable from the app — see
-/// `firestore.rules`. Everything financial or moderation-related
-/// ([gatewayCustomerId], [blocked], [activeServiceId]) is written by Cloud
-/// Functions alone, so a modified client cannot unblock itself or attach
-/// someone else's saved card.
+/// `firestore.rules`. Everything moderation-related ([blocked],
+/// [activeServiceId]) is written by Cloud Functions alone, so a modified
+/// client cannot unblock itself or claim somebody else's service.
 @freezed
 abstract class AppUser with _$AppUser {
   const factory AppUser({
@@ -42,9 +41,6 @@ abstract class AppUser with _$AppUser {
     /// service in flight without a query.
     String? activeServiceId,
 
-    /// Payment-gateway customer id (Stripe `cus_...`, or the Azul equivalent).
-    String? gatewayCustomerId,
-    String? defaultPaymentMethodId,
     @JsonKey(unknownEnumValue: PaymentMethod.unknown)
     @Default(PaymentMethod.cash) PaymentMethod preferredPaymentMethod,
     @Default(0) int completedServices,

@@ -75,19 +75,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Usamos tu ubicación para saber dónde enviarte la grúa.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Usamos la cámara para que puedas fotografiar tu vehículo, escanear tu tarjeta y para las videollamadas con el chofer.</string>
-	<!-- Back into the app after a bank's 3-D Secure page (Stripe's returnURL). -->
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.gruasrd.client.stripe</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>gruasrd</string>
-			</array>
-		</dict>
-	</array>
+	<string>Usamos la cámara para que puedas fotografiar tu vehículo y para las videollamadas con el chofer.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Usamos tus fotos para que puedas adjuntar imágenes de tu vehículo a la solicitud.</string>
 	<key>MapsApiKey</key>

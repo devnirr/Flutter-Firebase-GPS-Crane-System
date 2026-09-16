@@ -52,7 +52,6 @@ export interface PricingConfig {
   commissionBps: number;
   cancellationFeeCents: number;
   cancellationGraceMinutes: number;
-  authorizationBufferBps: number;
   maxCashOwedCents: number;
   chargeItbis: boolean;
 }
@@ -99,7 +98,6 @@ export const DEFAULT_PRICING: PricingConfig = {
   commissionBps: 2000,
   cancellationFeeCents: 50000,
   cancellationGraceMinutes: 3,
-  authorizationBufferBps: 1500,
   maxCashOwedCents: 1500000,
   chargeItbis: true,
 };
@@ -381,16 +379,6 @@ export function cancellationFeeCents(
   if (now.getTime() - acceptedAt.getTime() <= graceMs) return 0;
   return config.cancellationFeeCents;
 }
-
-/**
- * What to hold on the card at accept time: the quote plus headroom for waiting
- * and reroutes, so a normal job needs one authorization and one capture rather
- * than a second charge the customer did not expect.
- */
-export const authorizationAmountCents = (
-  config: PricingConfig,
-  quoteTotalCents: number,
-): number => quoteTotalCents + bps(quoteTotalCents, config.authorizationBufferBps);
 
 export const commissionCents = (
   config: PricingConfig,

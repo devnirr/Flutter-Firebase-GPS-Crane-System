@@ -82,7 +82,6 @@ void main() {
             condition: VehicleCondition.noArranca,
           ),
           truckType: TruckType.gancho,
-          paymentMethod: PaymentMethod.cash,
           quote: const Quote(totalCents: 250000),
           route: const ServiceRoute(distanceMeters: 4200),
         );
@@ -137,7 +136,6 @@ void main() {
           condition: VehicleCondition.volcado,
         ),
         truckType: TruckType.plataforma,
-        paymentMethod: PaymentMethod.cash,
         quote: const Quote(totalCents: 250000),
         route: const ServiceRoute(distanceMeters: 4200),
       );

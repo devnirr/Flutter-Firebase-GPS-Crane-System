@@ -387,11 +387,8 @@ class DemoBackend {
         quote: quote,
         finalQuote: quote,
         payment: ServicePayment(
-          method: i.isEven ? PaymentMethod.cash : PaymentMethod.card,
-          status: i.isEven ? PaymentStatus.cashCollected : PaymentStatus.captured,
+          status: PaymentStatus.cashCollected,
           capturedCents: quote.totalCents,
-          last4: i.isEven ? '' : '4242',
-          brand: i.isEven ? '' : 'Visa',
         ),
         driverId: 'driver-${(i % 4) + 1}',
         driverName: _drivers['driver-${(i % 4) + 1}']?.name ?? '',
@@ -430,7 +427,7 @@ class DemoBackend {
         subtotalCents: quote.subtotalCents,
         itbisCents: quote.itbisCents,
         totalCents: quote.totalCents,
-        paymentMethod: i.isEven ? PaymentMethod.cash : PaymentMethod.card,
+        paymentMethod: PaymentMethod.cash,
         issuedAt: completedAt,
       );
     }
@@ -1465,7 +1462,6 @@ class DemoBackend {
     required ServiceLocation dropoff,
     required ServiceVehicle vehicle,
     required TruckType truckType,
-    required PaymentMethod paymentMethod,
     required Quote quote,
     required ServiceRoute route,
     String? preferredDriverId,
@@ -1501,7 +1497,7 @@ class DemoBackend {
       dropoff: dropoff,
       route: route,
       quote: quote,
-      payment: ServicePayment(method: paymentMethod),
+      payment: const ServicePayment(),
       timeline: ServiceTimeline(createdAt: now),
       createdAt: now,
     );
@@ -1822,26 +1818,9 @@ class DemoBackend {
     if (to == ServiceStatus.completed) {
       updated = updated.copyWith(
         finalQuote: service.quote,
-        payment: service.payment.copyWith(
-          status: service.payment.isCash
-              ? PaymentStatus.cashPending
-              : PaymentStatus.captured,
-          capturedCents:
-              service.payment.isCash ? 0 : service.quote.totalCents,
-          capturedAt: service.payment.isCash ? null : now,
-        ),
+        payment: service.payment.copyWith(status: PaymentStatus.cashPending),
       );
       _recordEarnings(updated);
-      // A card is charged at completion, and Stripe's confirmation closes the
-      // job a moment later — as the webhook does for real.
-      if (service.payment.isCard) {
-        _after(const Duration(milliseconds: 600), () {
-          if (_services[serviceId]?.status == ServiceStatus.completed) {
-            _transition(serviceId, ServiceStatus.closed,
-                ServiceEventName.closeService, 'system', UserRole.unknown);
-          }
-        });
-      }
     }
 
     if (to.isTerminal) {
@@ -1901,103 +1880,10 @@ class DemoBackend {
             s,
       ];
 
-  Result<void> _replacePayment(
-    String serviceId,
-    ServicePayment Function(ServicePayment payment) change,
-  ) {
-    final service = _services[serviceId];
-    if (service == null) return const Err(Failure(FailureCode.notFound));
-    _services[serviceId] =
-        service.copyWith(payment: change(service.payment), updatedAt: _now());
-    _emitServices();
-    return const Ok(null);
-  }
-
-  /// "Pagar en efectivo" / "Pagar con tarjeta". The chofer may only mark cash.
-  Result<void> choosePaymentMethod(
-    String serviceId,
-    String actorId,
-    PaymentMethod method,
-  ) {
-    final service = _services[serviceId];
-    if (service == null) return const Err(Failure(FailureCode.notFound));
-    final isClient = actorId == service.clientId;
-    final isDriver = actorId == service.driverId;
-    if (!isClient && !(isDriver && method == PaymentMethod.cash)) {
-      return const Err(
-        Failure(
-          FailureCode.permissionDenied,
-          message: 'Solo el cliente puede elegir pagar con tarjeta.',
-        ),
-      );
-    }
-    if (service.status != ServiceStatus.accepted &&
-        service.status != ServiceStatus.arrived) {
-      return const Err(
-        Failure(
-          FailureCode.invalidTransition,
-          message: 'La forma de pago ya no se puede cambiar en este servicio.',
-        ),
-      );
-    }
-    return _replacePayment(
-      serviceId,
-      (p) => method == PaymentMethod.cash
-          ? p.copyWith(
-              method: PaymentMethod.cash,
-              status: PaymentStatus.none,
-              intentId: null,
-              authorizedCents: 0,
-            )
-          : p.copyWith(method: PaymentMethod.card),
-    );
-  }
-
-  /// Demo mode has no Stripe to hold a card with: the test card is held as
-  /// soon as the customer asks, with the same headroom the server holds.
-  Result<PreparedPayment> holdDemoCard(String serviceId, String clientId) {
-    final service = _services[serviceId];
-    if (service == null) return const Err(Failure(FailureCode.notFound));
-    if (service.clientId != clientId) {
-      return const Err(Failure(FailureCode.permissionDenied));
-    }
-    final held = service.quote.totalCents +
-        Money.bps(service.quote.totalCents, _pricing.authorizationBufferBps);
-    _replacePayment(
-      serviceId,
-      (p) => p.copyWith(
-        method: PaymentMethod.card,
-        status: PaymentStatus.authorized,
-        gateway: 'demo',
-        intentId: 'pi_demo_$serviceId',
-        authorizedCents: held,
-        authorizedAt: _now(),
-        brand: 'Visa',
-        last4: '4242',
-      ),
-    );
-    return Ok(
-      PreparedPayment(
-        alreadyAuthorized: true,
-        amountCents: held,
-        quoteCents: service.quote.totalCents,
-        testMode: true,
-      ),
-    );
-  }
-
   /// "Cobrado en efectivo": the job is paid, and the chofer now holds the cash.
   Result<void> confirmCashCollected(String serviceId, String driverId, int amountCents) {
     final service = _services[serviceId];
     if (service == null) return const Err(Failure(FailureCode.notFound));
-    if (!service.payment.isCash) {
-      return const Err(
-        Failure(
-          FailureCode.invalidTransition,
-          message: 'Este servicio se cobra con tarjeta. No hay efectivo que recibir.',
-        ),
-      );
-    }
     final now = _now();
     _services[serviceId] = service.copyWith(
       payment: service.payment.copyWith(

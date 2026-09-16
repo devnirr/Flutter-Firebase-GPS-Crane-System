@@ -149,27 +149,8 @@ export const TRANSITIONS: readonly Transition[] = [
     from: [ServiceStatus.arrived],
     to: ServiceStatus.inProgress,
     actors: [UserRole.driver, UserRole.admin, UserRole.ops],
-    guard: ({ service }) => {
-      // Nobody loads a vehicle before it is settled how the tow is paid. A
-      // card job waits for the hold: starting without one means towing a
-      // vehicle with no way to charge for it.
-      const payment = service['payment'] as Record<string, unknown> | undefined;
-      const method = payment?.['method'];
-      if (method !== 'card' && method !== 'cash') {
-        throw precondition(
-          Code.blockedPayment,
-          'El cliente todavía no ha elegido cómo pagar. Pídele que elija en su ' +
-            'app, o marca que pagará en efectivo.',
-        );
-      }
-      if (method === 'card' && payment?.['status'] !== 'authorized') {
-        throw precondition(
-          Code.blockedPayment,
-          'El pago con tarjeta no está aprobado todavía. Pídele al cliente que ' +
-            'lo complete en su app, o marca que pagará en efectivo.',
-        );
-      }
-    },
+    // Nothing to settle before loading: every tow is paid in cash at the end,
+    // so the chofer is never waiting on an authorization to start.
     patch: () => ({ 'timeline.startedAt': FieldValue.serverTimestamp() }),
   }),
 

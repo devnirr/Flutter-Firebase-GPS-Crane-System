@@ -957,8 +957,6 @@ class DemoFunctionsGateway implements FunctionsGateway {
     required String quoteSignature,
     required DateTime quoteExpiresAt,
     required TripDistance distance,
-    PaymentMethod? paymentMethod,
-    String? paymentMethodId,
     String? notes,
     String? preferredTruckRef,
   }) async {
@@ -987,10 +985,6 @@ class DemoFunctionsGateway implements FunctionsGateway {
           dropoff: dropoff,
           vehicle: vehicle,
           truckType: truckType,
-          // Chosen when the chofer arrives, as the server does.
-          paymentMethod: paymentMethod == PaymentMethod.cash
-              ? PaymentMethod.cash
-              : PaymentMethod.pending,
           quote: quote.quote,
           route: quote.route,
           preferredDriverId: preferredTruckRef != null &&
@@ -1105,9 +1099,6 @@ class DemoFunctionsGateway implements FunctionsGateway {
     if (service == null) {
       return const Result.err(Failure(FailureCode.notFound));
     }
-    if (service.payment.blocksStart) {
-      return const Result.err(Failure(FailureCode.blockedPayment));
-    }
     return _delayed(
       _backend.transition(serviceId, ServiceStatus.inProgress,
           ServiceEventName.startService, _backend.currentUserId, UserRole.driver),
@@ -1144,24 +1135,6 @@ class DemoFunctionsGateway implements FunctionsGateway {
           amountCents,
         ),
       );
-
-  @override
-  Future<Result<void>> choosePaymentMethod({
-    required String serviceId,
-    required PaymentMethod method,
-  }) async =>
-      _delayed(
-        _backend.choosePaymentMethod(serviceId, _backend.currentUserId, method),
-      );
-
-  @override
-  Future<Result<PreparedPayment>> preparePayment(String serviceId) async =>
-      _delayed(_backend.holdDemoCard(serviceId, _backend.currentUserId));
-
-  @override
-  // The demo hold is in place the moment it is asked for; nothing to read.
-  Future<Result<void>> syncPayment(String serviceId) async =>
-      const Result.ok(null);
 
   @override
   Future<Result<int>> settleDriverCash({

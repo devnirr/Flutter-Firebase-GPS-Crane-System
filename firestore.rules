@@ -125,11 +125,11 @@ service cloud.firestore {
       // the role, not the client.
       allow create: if false;
 
-      // A whitelist, not a blacklist. `blocked`, `activeServiceId` and the
-      // gateway customer id are all things a modified client would love to set.
+      // A whitelist, not a blacklist. `blocked` and `activeServiceId` are both
+      // things a modified client would love to set.
       allow update: if ok() && uid() == userId && onlyChanges([
         'name', 'email', 'rnc', 'address', 'locale', 'preferredPaymentMethod',
-        'defaultPaymentMethodId', 'photoUrl', 'updatedAt',
+        'photoUrl', 'updatedAt',
         'termsAcceptedAt', 'termsVersionAccepted'
       ]);
 
@@ -365,11 +365,6 @@ service cloud.firestore {
     match /cashSettlements/{settlementId} {
       allow read: if isStaff() || (ok() && uid() == resource.data.driverId);
       allow write: if false;
-    }
-
-    // Idempotency records for gateway webhooks. Server-only, both ways.
-    match /webhook_events/{eventId} {
-      allow read, write: if false;
     }
 
     // ---------------------------------------------------------------------

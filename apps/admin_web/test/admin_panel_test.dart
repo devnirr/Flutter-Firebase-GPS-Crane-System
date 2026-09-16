@@ -23,7 +23,6 @@ Future<void> main() async {
     appKind: AppKind.admin,
     firebaseProjectId: 'grua-rd-test',
     googleMapsApiKey: '',
-    stripePublishableKey: '',
     useEmulators: false,
     emulatorHost: 'localhost',
     functionsRegion: 'us-east1',
@@ -150,7 +149,6 @@ Future<void> main() async {
       ),
       vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 4200),
     );
@@ -197,7 +195,6 @@ Future<void> main() async {
       ),
       vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 4200),
     );
@@ -235,7 +232,6 @@ Future<void> main() async {
       dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
       vehicle: const ServiceVehicle(make: 'Mack', type: VehicleType.patana),
       truckType: TruckType.pesada,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 1000000, subtotalCents: 1000000),
       route: const ServiceRoute(distanceMeters: 10000),
     );
@@ -292,7 +288,6 @@ Future<void> main() async {
       dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
       vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 8000),
     );
@@ -346,7 +341,6 @@ Future<void> main() async {
       dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
       vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 8000),
     );
@@ -386,7 +380,6 @@ Future<void> main() async {
       // take and a grúa pesada cannot.
       vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 8000),
     );
@@ -1280,7 +1273,6 @@ Future<void> main() async {
       dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
       vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 8000),
     );

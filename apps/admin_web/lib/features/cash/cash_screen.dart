@@ -5,10 +5,10 @@ import 'package:grua_core/grua_core.dart';
 /// Efectivo: what each chofer collected in cash and still holds for the
 /// company, and the cortes that brought it in.
 ///
-/// Card money lands in the company's Stripe account on its own. Cash does not:
-/// the customer hands it to the chofer, the chofer marks "Cobrado en efectivo",
-/// and it sits with them until the office receives it here. A corte counts
-/// every such job at once and marks them, so none is ever counted twice.
+/// Every tow is paid in cash: the customer hands it to the chofer, the chofer
+/// marks "Cobrado en efectivo", and it sits with them until the office receives
+/// it here. A corte counts every such job at once and marks them, so none is
+/// ever counted twice.
 class CashScreen extends ConsumerWidget {
   const CashScreen({super.key});
 
@@ -28,8 +28,7 @@ class CashScreen extends ConsumerWidget {
         Text('Efectivo', style: text.headlineSmall),
         const SizedBox(height: Insets.xs),
         Text(
-          'Lo que los choferes cobraron en efectivo y todavía no han entregado. '
-          'Los pagos con tarjeta llegan directo a la cuenta de Stripe.',
+          'Lo que los choferes cobraron en efectivo y todavía no han entregado.',
           style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
         ),
         const SizedBox(height: Insets.xl),

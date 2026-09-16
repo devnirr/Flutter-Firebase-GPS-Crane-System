@@ -5,7 +5,6 @@ import {
   CancelledBy,
   DriverCancelReason,
   DriverLiveState,
-  PaymentMethod,
   PaymentStatus,
   ServiceEventName,
   UserRole,
@@ -22,9 +21,7 @@ import {
   loadPricing,
 } from '../lib/pricing.js';
 import { notify } from '../lib/push.js';
-import { stripeSecretKey } from '../lib/secrets.js';
 import { applyTransition } from '../lib/stateMachine.js';
-import { captureForService, releaseHold } from '../payments/apply.js';
 import { acceptOffer, rejectOffer } from '../dispatch/offers.js';
 import { dispatchNext } from '../dispatch/dispatchNext.js';
 import { loadDispatchConfig } from '../dispatch/dispatchNext.js';
@@ -291,10 +288,7 @@ export const startService = onCall({ region, cors: true }, async (request) => {
  * downstream — the invoice, the ledger, the chofer's cash balance — reads
  * `final`, so this is the number that matters.
  */
-export const completeService = onCall(
-  // The key, for charging the card hold at the end.
-  { region, cors: true, secrets: [stripeSecretKey] },
-  async (request) => {
+export const completeService = onCall({ region, cors: true }, async (request) => {
   const parsed = withPosition
     .extend({
       photoPaths: z.array(z.string().max(400)).max(6).default([]),
@@ -344,14 +338,11 @@ export const completeService = onCall(
       : 0;
 
   const quote = (service['quote'] ?? {}) as Quote;
-  const payment = (service['payment'] ?? {}) as Record<string, unknown>;
 
   // The price the customer agreed to, plus billable waiting. Not the tariff
   // run again: that would add a night surcharge to a tow quoted at 21:50, and
   // undo the price an operator confirmed on a heavy job.
   const final = finalQuote(quote, pricing, waitingMinutes);
-
-  const isCash = payment['method'] === PaymentMethod.cash;
 
   await applyTransition({
     serviceId,
@@ -363,9 +354,8 @@ export const completeService = onCall(
       final,
       dropoffPhotoPaths: photoPaths,
       driverNotes: notes ?? service['driverNotes'] ?? '',
-      // Cash stays with the chofer until they confirm collection. A card hold
-      // is charged below, once the final price is written.
-      'payment.status': isCash ? PaymentStatus.cashPending : payment['status'],
+      // The money stays with the chofer until they confirm collection.
+      'payment.status': PaymentStatus.cashPending,
     },
 
     inTransaction: ({ transaction }) => {
@@ -400,23 +390,15 @@ export const completeService = onCall(
           uid: clientId,
           audience: 'client',
           title: 'Servicio completado',
-          body: isCash
-            ? `Total a pagar en efectivo: RD$ ${(final.totalCents / 100).toFixed(2)}`
-            : `Total: RD$ ${(final.totalCents / 100).toFixed(2)}, cobrado a tu tarjeta.`,
+          body: `Total a pagar en efectivo: RD$ ${(final.totalCents / 100).toFixed(2)}`,
           data: { serviceId, type: 'service_completed' },
         });
       }
     },
   });
 
-  // The final price charged from the hold. Stripe's confirmation marks the job
-  // paid and closes it; a capture that fails still closes it, flagged for the
-  // office, so the chofer is not left waiting.
-  if (!isCash) await captureForService(serviceId);
-
   return { ok: true, finalCents: final.totalCents, waitingMinutes };
-  },
-);
+});
 
 /**
  * Confirms cash in hand and closes the job.
@@ -439,15 +421,6 @@ export const confirmCashCollected = onCall({ region, cors: true }, async (reques
 
   const service = await loadService(serviceId);
   assertAssigned(service, uid);
-
-  // A card job is charged through Stripe; a chofer confirming cash on one
-  // would mark it paid twice over.
-  if ((service['payment'] as Record<string, unknown> | undefined)?.['method'] !== PaymentMethod.cash) {
-    throw precondition(
-      Code.invalidTransition,
-      'Este servicio se cobra con tarjeta. No hay efectivo que recibir.',
-    );
-  }
 
   const expected =
     ((service['final'] as Record<string, unknown> | undefined)?.['totalCents'] as number) ??
@@ -498,10 +471,7 @@ export const confirmCashCollected = onCall({ region, cors: true }, async (reques
  * longer than the grace period — cancelling ten seconds after requesting costs
  * nothing, because nobody has done any work.
  */
-export const cancelService = onCall(
-  // The key, for releasing a card hold — or charging the fee from it.
-  { region, cors: true, secrets: [stripeSecretKey] },
-  async (request) => {
+export const cancelService = onCall({ region, cors: true }, async (request) => {
   const parsed = serviceOnly
     .extend({ reason: z.string().max(300).default('client_request') })
     .safeParse(request.data);
@@ -564,14 +534,9 @@ export const cancelService = onCall(
       }
     },
 
-    afterCommit: async ({ service: s }) => {
-      // A card held for this job is let go — or charged only the fee, when
-      // one is owed.
-      const intentId = (s['payment'] as Record<string, unknown> | undefined)?.['intentId'];
-      if (typeof intentId === 'string' && intentId) {
-        await releaseHold(serviceId, intentId, feeCents);
-      }
-
+    afterCommit: async () => {
+      // The cancellation fee is recorded on the service for the office to
+      // collect: with no card on file there is nothing here to charge it to.
       if (!driverId) return;
       await Paths.live(driverId).update({
         state: DriverLiveState.idle,

@@ -108,8 +108,8 @@ class _TrackingBody extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: Insets.gutter),
             child: _DriverCard(service: service, tracking: tracking, now: now),
           ),
-          // The grúa is at the curb: how the tow is paid is settled now,
-          // before the vehicle is loaded.
+          // The grúa is at the curb: what the tow costs is on screen before
+          // the vehicle is loaded, not at the destination.
           if (service.status == ServiceStatus.arrived) ...[
             const SizedBox(height: Insets.md),
             Padding(
@@ -459,13 +459,9 @@ class _DriverCard extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  service.payment.isHeld || service.payment.isPaid
-                      ? (service.payment.isCard
-                          ? service.payment.cardLabel
-                          : service.payment.status.label)
-                      : service.payment.isPending
-                          ? 'Pagas al llegar el chofer'
-                          : service.payment.method.label,
+                  service.payment.isPaid
+                      ? service.payment.status.label
+                      : 'Pagas en efectivo al terminar',
                   style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
                 ),
               ),

@@ -36,7 +36,6 @@ void main() {
         dropoff: dropoff,
         vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
         truckType: truckType,
-        paymentMethod: PaymentMethod.cash,
         quote: const Quote(totalCents: 250000),
         route: const ServiceRoute(distanceMeters: 8000),
       );

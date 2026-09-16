@@ -76,10 +76,6 @@ abstract class PricingConfig with _$PricingConfig {
     @Default(50000) int cancellationFeeCents,
     @Default(3) int cancellationGraceMinutes,
 
-    /// Extra headroom authorized on a card at accept time, to cover waiting
-    /// and reroutes without a second charge. 1500 = 15%.
-    @Default(1500) int authorizationBufferBps,
-
     /// A chofer holding more than this in undeposited cash stops receiving
     /// cash jobs.
     @Default(1500000) int maxCashOwedCents,

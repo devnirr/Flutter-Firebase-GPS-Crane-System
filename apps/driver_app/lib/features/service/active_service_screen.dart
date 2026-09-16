@@ -110,10 +110,6 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
   }
 
   Future<void> _collectCash(Service service) async {
-    // A card is charged by the server at "Finalizar"; Stripe's confirmation
-    // closes the job on its own. There is nothing for the chofer to collect.
-    if (!service.payment.isCash) return;
-
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -197,7 +193,7 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
                       const SizedBox(height: Insets.lg),
                       _WaitingCard(service: service),
                       const SizedBox(height: Insets.md),
-                      _PaymentNotice(service: service, busy: _busy, onRun: _run),
+                      _PaymentNotice(service: service),
                     ],
                     const SizedBox(height: Insets.xl),
                     _PrimaryAction(
@@ -460,12 +456,8 @@ class _JobCard extends StatelessWidget {
           const Divider(height: Insets.xxl),
           Row(
             children: [
-              Icon(
-                service.payment.isCash
-                    ? Icons.payments_outlined
-                    : service.payment.isCard
-                        ? Icons.credit_card
-                        : Icons.help_outline,
+              const Icon(
+                Icons.payments_outlined,
                 size: 18,
                 color: BrandColors.grey600,
               ),
@@ -485,93 +477,26 @@ class _JobCard extends StatelessWidget {
   }
 }
 
-String _paymentLine(ServicePayment payment) {
-  if (payment.isPaid) return payment.status.label;
-  if (payment.isCash) return 'Cobrar en efectivo';
-  if (payment.isHeld) return 'Tarjeta aprobada · ${payment.cardLabel}';
-  if (payment.isCard) return 'Tarjeta, esperando aprobación';
-  return 'El cliente elige al llegar';
-}
+String _paymentLine(ServicePayment payment) =>
+    payment.isPaid ? payment.status.label : 'Cobrar en efectivo';
 
-/// How the customer is paying, while the chofer waits to load: the one thing
-/// "Iniciar servicio" is waiting on. The chofer can settle it as cash for a
-/// customer who has no app to hand, or who would rather pay in notes.
-class _PaymentNotice extends ConsumerWidget {
-  const _PaymentNotice({
-    required this.service,
-    required this.busy,
-    required this.onRun,
-  });
+/// What the chofer collects when the tow ends, while they wait to load.
+///
+/// Nothing is waiting on it: the money changes hands in cash at the end, so
+/// this is a reminder of the amount, not a gate on starting.
+class _PaymentNotice extends StatelessWidget {
+  const _PaymentNotice({required this.service});
 
   final Service service;
-  final bool busy;
-  final Future<void> Function(Future<Result<void>> Function() action) onRun;
-
-  Future<void> _markCash(BuildContext context, WidgetRef ref) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('¿El cliente paga en efectivo?'),
-        content: Text(
-          'Cobrarás ${service.totalCents.formatDOP} en efectivo al terminar.'
-          '${service.payment.isCard ? ' Se libera la tarjeta que eligió.' : ''}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Volver'),
-          ),
-          TextButton(
-            key: const Key('confirm-cash'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Sí, en efectivo'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    await onRun(
-      () => ref.read(functionsGatewayProvider).choosePaymentMethod(
-            serviceId: service.id,
-            method: PaymentMethod.cash,
-          ),
-    );
-  }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final payment = service.payment;
-
-    if (payment.isHeld) {
-      return InlineNotice(
-        key: const Key('payment-ready'),
-        tone: NoticeTone.success,
-        icon: Icons.verified_outlined,
-        message: 'El cliente pagará con ${payment.cardLabel}. Ya puedes iniciar.',
-      );
-    }
-    if (payment.isCash) {
-      return InlineNotice(
+  Widget build(BuildContext context) => InlineNotice(
         key: const Key('payment-ready'),
         tone: NoticeTone.success,
         icon: Icons.payments_outlined,
-        message: 'El cliente pagará ${service.totalCents.formatDOP} en efectivo. '
-            'Ya puedes iniciar.',
+        message: 'Cobrarás ${service.totalCents.formatDOP} en efectivo al '
+            'terminar.',
       );
-    }
-    return InlineNotice(
-      key: const Key('payment-waiting'),
-      tone: NoticeTone.warning,
-      icon: Icons.hourglass_top,
-      message: payment.status == PaymentStatus.failed
-          ? 'La tarjeta del cliente no pasó. Pídele otra, o que pague en efectivo.'
-          : payment.isCard
-              ? 'El cliente está pagando con tarjeta en su app.'
-              : 'Esperando que el cliente elija cómo pagar.',
-      actionLabel: 'Paga en efectivo',
-      onAction: busy ? null : () => _markCash(context, ref),
-    );
-  }
 }
 
 /// Live waiting clock, with what it will cost the customer.
@@ -622,28 +547,18 @@ class _PrimaryAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cardCharging =
-        service.status == ServiceStatus.completed && !service.payment.isCash;
-
     final (label, color) = switch (service.status) {
       ServiceStatus.accepted => ('LLEGUÉ', BrandColors.red),
-      ServiceStatus.arrived => (
-          service.payment.blocksStart ? 'ESPERANDO EL PAGO' : 'INICIAR SERVICIO',
-          BrandColors.red,
-        ),
+      ServiceStatus.arrived => ('INICIAR SERVICIO', BrandColors.red),
       ServiceStatus.inProgress => ('FINALIZAR SERVICIO', BrandColors.ink),
       ServiceStatus.completed => (
-          service.payment.isCash
-              ? 'COBRADO EN EFECTIVO ${service.totalCents.formatDOP}'
-              : 'COBRANDO TARJETA…',
+          'COBRADO EN EFECTIVO ${service.totalCents.formatDOP}',
           BrandColors.success,
         ),
       _ => ('ESPERANDO…', BrandColors.grey400),
     };
 
     final enabled = !busy &&
-        !cardCharging &&
-        !(service.status == ServiceStatus.arrived && service.payment.blocksStart) &&
         const {
           ServiceStatus.accepted,
           ServiceStatus.arrived,

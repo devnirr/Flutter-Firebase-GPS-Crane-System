@@ -35,7 +35,6 @@ void main() {
       dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
       vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 8000),
     );

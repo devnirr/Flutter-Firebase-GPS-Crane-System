@@ -323,29 +323,13 @@ abstract class ServicePayment with _$ServicePayment {
     @Default(PaymentMethod.cash) PaymentMethod method,
     @JsonKey(unknownEnumValue: PaymentStatus.unknown)
     @Default(PaymentStatus.none) PaymentStatus status,
-    @Default('') String gateway,
 
-    /// The gateway's intent id. Never a card number — no PAN touches our code.
-    String? intentId,
-    String? customerId,
-    String? paymentMethodId,
-    @CentsConverter() @Default(0) int authorizedCents,
+    /// What the chofer collected, once they confirmed having it.
     @CentsConverter() @Default(0) int capturedCents,
-    @CentsConverter() @Default(0) int refundedCents,
-    @Default('') String last4,
-    @Default('') String brand,
-    @Default('') String failureCode,
     @Default('') String failureMessage,
-
-    /// Set when the app must complete a 3-D Secure challenge.
-    @Default(false) bool requiresAction,
-
-    /// What a card hold did not cover of the final price, for the office.
-    @CentsConverter() @Default(0) int shortfallCents,
 
     /// The corte that counted this job's cash, once the office received it.
     String? cashSettlementId,
-    @NullableTimestampConverter() DateTime? authorizedAt,
     @NullableTimestampConverter() DateTime? capturedAt,
     @NullableTimestampConverter() DateTime? cashCollectedAt,
     @NullableTimestampConverter() DateTime? cashSettledAt,
@@ -356,25 +340,10 @@ abstract class ServicePayment with _$ServicePayment {
   factory ServicePayment.fromJson(Map<String, dynamic> json) =>
       _$ServicePaymentFromJson(json);
 
-  bool get isCard => method == PaymentMethod.card;
-
   bool get isCash => method == PaymentMethod.cash;
 
-  /// The customer has not chosen yet; they do when the chofer arrives.
-  bool get isPending => !isCard && !isCash;
-
-  /// The card is held for this job.
-  bool get isHeld => isCard && status == PaymentStatus.authorized;
-
-  /// Charged to the card, or cash in the chofer's hand: "Pagado".
+  /// Money in hand: "Pagado".
   bool get isPaid => status.isSettled;
-
-  /// Nobody loads a vehicle before it is settled how the tow is paid: a choice
-  /// made, and for a card the hold in place.
-  bool get blocksStart => isPending || (isCard && !isHeld);
-
-  String get cardLabel =>
-      last4.isEmpty ? method.label : '${brand.isEmpty ? 'Tarjeta' : brand} ••••$last4';
 }
 
 /// Dispatch bookkeeping. Read-only to the apps; the cascade owns every field.

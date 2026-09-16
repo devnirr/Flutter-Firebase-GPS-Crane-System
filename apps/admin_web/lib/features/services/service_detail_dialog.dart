@@ -150,15 +150,10 @@ class ServiceDetailDialog extends ConsumerWidget {
                       ('Total', quote.totalCents.formatDOP),
                     ]),
                     _Section('Pago', [
-                      (
-                        'Método',
-                        s.payment.isCard ? s.payment.cardLabel : s.payment.method.label,
-                      ),
+                      ('Método', s.payment.method.label),
                       ('Estado', s.payment.status.label),
                       if (s.payment.capturedCents > 0)
                         ('Cobrado', s.payment.capturedCents.formatDOP),
-                      if (s.payment.refundedCents > 0)
-                        ('Reembolsado', s.payment.refundedCents.formatDOP),
                       if (s.payment.failureMessage.isNotEmpty)
                         ('Error', s.payment.failureMessage),
                     ]),

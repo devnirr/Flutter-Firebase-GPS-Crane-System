@@ -23,7 +23,6 @@ Future<void> main() async {
     appKind: AppKind.driver,
     firebaseProjectId: 'grua-rd-test',
     googleMapsApiKey: '',
-    stripePublishableKey: '',
     useEmulators: false,
     emulatorHost: 'localhost',
     functionsRegion: 'us-east1',

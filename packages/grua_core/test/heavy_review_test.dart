@@ -29,7 +29,6 @@ void main() {
       dropoff: dropoff,
       vehicle: ServiceVehicle(type: type),
       truckType: ServiceVehicle(type: type).inferredTruckType,
-      paymentMethod: PaymentMethod.cash,
       quote: quote,
       route: const ServiceRoute(distanceMeters: 10000),
     );

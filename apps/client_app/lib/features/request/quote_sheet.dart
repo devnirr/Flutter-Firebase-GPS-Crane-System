@@ -108,16 +108,6 @@ class _QuoteSheetState extends ConsumerState<QuoteSheet> {
               emphasise: true,
             ),
 
-            const SizedBox(height: Insets.lg),
-            // Chosen at the curb, not here: the price can still change on the
-            // way, and a card is only held once a grúa is there.
-            const InlineNotice(
-              key: Key('quote-payment-later'),
-              icon: Icons.credit_card,
-              message: 'Pagas cuando llegue el chofer: con tarjeta (Apple Pay, '
-                  'Google Pay) o en efectivo.',
-            ),
-
             if (stale) ...[
               const SizedBox(height: Insets.lg),
               InlineNotice(

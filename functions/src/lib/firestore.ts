@@ -48,7 +48,6 @@ export const Collections = {
   config: 'config',
   reports: 'reports',
   audit: 'audit',
-  webhookEvents: 'webhook_events',
   chatRequests: 'chatRequests',
   calls: 'calls',
   cashSettlements: 'cashSettlements',
@@ -124,8 +123,6 @@ export const Paths = {
   ncfConfig: () => db.collection(Collections.config).doc('ncf'),
 
   audit: () => db.collection(Collections.audit),
-  webhookEvent: (eventId: string) =>
-    db.collection(Collections.webhookEvents).doc(eventId),
   cashSettlements: () => db.collection(Collections.cashSettlements),
 
   live: (driverId: string) => rtdb().ref(`live/${driverId}`),

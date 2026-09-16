@@ -22,7 +22,6 @@ Future<void> main() async {
     appKind: AppKind.driver,
     firebaseProjectId: 'grua-rd-test',
     googleMapsApiKey: '',
-    stripePublishableKey: '',
     useEmulators: false,
     emulatorHost: 'localhost',
     functionsRegion: 'us-east1',
@@ -309,7 +308,6 @@ Future<void> main() async {
       dropoff: const ServiceLocation(geo: LatLng(18.5001, -69.8800)),
       vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
       truckType: driver.truckType,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 8000),
       preferredDriverId: 'driver-1',
@@ -438,7 +436,6 @@ Future<Service> _dispatchedService(DemoBackend backend) async {
     dropoff: const ServiceLocation(geo: DoLocations.sanPedro),
     vehicle: const ServiceVehicle(condition: VehicleCondition.noArranca),
     truckType: TruckType.gancho,
-    paymentMethod: PaymentMethod.cash,
     quote: const Quote(totalCents: 250000),
     route: const ServiceRoute(distanceMeters: 12000),
   );

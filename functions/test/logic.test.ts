@@ -20,7 +20,6 @@ import {
 import {
   DEFAULT_PRICING,
   type TripDistance,
-  authorizationAmountCents,
   bps,
   buildQuote,
   cancellationFeeCents,
@@ -288,7 +287,6 @@ describe('pricing', () => {
   it('computes basis points exactly at awkward rates', () => {
     expect(bps(100000, 1250)).toBe(12500);
     expect(commissionCents(DEFAULT_PRICING, 100000)).toBe(20000);
-    expect(authorizationAmountCents(DEFAULT_PRICING, 100000)).toBe(115000);
   });
 
   it('charges no cancellation fee inside the grace period', () => {

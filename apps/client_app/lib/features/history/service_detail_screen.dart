@@ -126,9 +126,7 @@ class ServiceDetailScreen extends ConsumerWidget {
                       ),
                       DetailRow(
                         label: 'Forma de pago',
-                        value: service.payment.isCard
-                            ? service.payment.cardLabel
-                            : service.payment.method.label,
+                        value: service.payment.method.label,
                       ),
                     ],
                   ),

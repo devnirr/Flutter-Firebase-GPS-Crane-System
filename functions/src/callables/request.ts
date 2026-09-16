@@ -95,14 +95,10 @@ const quoteInput = z.object({
 
 const requestInput = quoteInput.extend({
   truckType: z.nativeEnum(TruckType),
-  // No longer asked when requesting: the customer chooses card or cash when
-  // the chofer arrives. Still accepted from older builds.
-  paymentMethod: z.nativeEnum(PaymentMethod).nullish(),
   quoteSignature: z.string().min(16).max(200),
   // Echoed back from quoteService. It is covered by the signature, so a client
   // cannot extend its own quote by editing this.
   quoteExpiresAtMs: z.number().int().positive(),
-  paymentMethodId: z.string().max(200).nullish(),
   notes: z.string().max(500).nullish(),
   // From "Pedir esta grúa" on the map: a sealed handle on the truck the
   // customer tapped, which dispatch offers the job to first.
@@ -115,6 +111,26 @@ const requestInput = quoteInput.extend({
     highwayKm: z.number().min(0).max(5000),
   }),
 });
+
+/**
+ * The generic refusal for a payload that does not parse, with the offending
+ * fields in the log.
+ *
+ * "Revisa los datos" is all the customer can act on, but without the field
+ * names in Cloud Logging nobody can tell *which* datum was wrong, and a form
+ * that always fails looks like a broken app.
+ */
+function badInput(name: string, error: z.ZodError): never {
+  logger.warn('request.invalidInput', {
+    callable: name,
+    issues: error.issues.map((issue) => ({
+      path: issue.path.join('.'),
+      code: issue.code,
+      message: issue.message,
+    })),
+  });
+  throw invalidArgument('Revisa los datos e intenta de nuevo.');
+}
 
 const QUOTE_TTL_MS = 10 * 60 * 1000;
 
@@ -219,7 +235,7 @@ export const quoteService = onCall(
   { region, cors: true, secrets: [quoteSigningSecret, mapsApiKey] },
   async (request) => {
   const parsed = quoteInput.safeParse(request.data);
-  if (!parsed.success) throw invalidArgument('Revisa los datos e intenta de nuevo.');
+  if (!parsed.success) badInput('quoteService', parsed.error);
 
   const caller = await requireClient(request);
   const { pickup, dropoff, vehicle: v, truckTypeOverride } = parsed.data;
@@ -294,7 +310,7 @@ export const requestService = onCall(
   { region, cors: true, secrets: [quoteSigningSecret, mapsApiKey] },
   async (request) => {
   const parsed = requestInput.safeParse(request.data);
-  if (!parsed.success) throw invalidArgument('Revisa los datos e intenta de nuevo.');
+  if (!parsed.success) badInput('requestService', parsed.error);
 
   const caller = await requireClient(request);
   await requireNotInMaintenance();
@@ -304,7 +320,6 @@ export const requestService = onCall(
     dropoff,
     vehicle: v,
     truckType,
-    paymentMethod,
     quoteSignature,
     quoteExpiresAtMs,
     notes,
@@ -437,14 +452,10 @@ export const requestService = onCall(
       route,
       quote,
       payment: {
-        // A card picked on an older build is only a preference now; the
-        // customer confirms it, and the card is held, when the chofer arrives.
-        method: paymentMethod === PaymentMethod.cash ? PaymentMethod.cash : PaymentMethod.pending,
+        // Cash to the chofer when the tow is done. There is no other rail.
+        method: PaymentMethod.cash,
         status: PaymentStatus.none,
-        gateway: '',
-        authorizedCents: 0,
         capturedCents: 0,
-        refundedCents: 0,
       },
       dispatch: {
         round: 0,
@@ -467,7 +478,7 @@ export const requestService = onCall(
       to: heavy ? ServiceStatus.needsManual : ServiceStatus.pendingDispatch,
       actorId: caller.uid,
       actorRole: UserRole.client,
-      meta: { truckType, paymentMethod, vehicleType: v.type, heavy },
+      meta: { truckType, vehicleType: v.type, heavy },
       at: FieldValue.serverTimestamp(),
     });
 

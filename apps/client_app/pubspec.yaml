@@ -26,9 +26,6 @@ dependencies:
   geocoding: ^5.0.0
   flutter_polyline_points: ^3.1.0
 
-  # Payments
-  flutter_stripe: ^14.0.0
-
   # The nearby-truck search reads time through this so tests can move it.
   clock: ^1.1.1
 
@@ -43,7 +40,6 @@ dependencies:
   wakelock_plus: ^1.8.0
   package_info_plus: ^10.2.1
   device_info_plus: ^13.2.0
-  flutter_stripe_web: ^8.2.0
 
 dev_dependencies:
   flutter_test:

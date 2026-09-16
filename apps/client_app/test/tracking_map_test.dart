@@ -50,7 +50,6 @@ Future<void> main() async {
       dropoff: dropoff,
       vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
       truckType: TruckType.gancho,
-      paymentMethod: PaymentMethod.cash,
       quote: const Quote(totalCents: 250000),
       route: const ServiceRoute(distanceMeters: 4200),
     );
@@ -65,7 +64,6 @@ Future<void> main() async {
               appKind: AppKind.client,
               firebaseProjectId: 'grua-rd-test',
               googleMapsApiKey: '',
-              stripePublishableKey: '',
               useEmulators: false,
               emulatorHost: 'localhost',
               functionsRegion: 'us-east1',

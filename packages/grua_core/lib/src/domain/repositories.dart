@@ -775,10 +775,6 @@ abstract interface class FunctionsGateway {
     /// Signed with it too: the server prices the request from this rather than
     /// routing the trip a second time.
     required TripDistance distance,
-    /// Not asked when requesting any more: the customer chooses card or cash
-    /// when the chofer arrives. Left for callers that already know.
-    PaymentMethod? paymentMethod,
-    String? paymentMethodId,
     String? notes,
     /// [NearbyTruck.ref] of the truck picked on the map, offered the job
     /// first. A stale or unknown one is ignored, not refused.
@@ -824,23 +820,6 @@ abstract interface class FunctionsGateway {
     required int amountCents,
     String? discrepancyReason,
   });
-
-  /// "Pagar en efectivo" / "Pagar con tarjeta", before the vehicle is loaded.
-  ///
-  /// The customer may choose either; the chofer may only mark cash. Choosing
-  /// cash releases a card hold already in place.
-  Future<Result<void>> choosePaymentMethod({
-    required String serviceId,
-    required PaymentMethod method,
-  });
-
-  /// Starts holding the customer's card for [serviceId], and returns what the
-  /// checkout needs to finish it.
-  Future<Result<PreparedPayment>> preparePayment(String serviceId);
-
-  /// Reads the job's card payment from Stripe now, rather than waiting for
-  /// the webhook. Called right after the checkout closes.
-  Future<Result<void>> syncPayment(String serviceId);
 
   /// The corte: records the cash [driverId] handed in, and marks those jobs
   /// so no later corte counts them again. Staff only. Returns the amount.

@@ -15,7 +15,6 @@ void main() {
         appKind: AppKind.driver,
         firebaseProjectId: 'gruasrd-ce2ae',
         googleMapsApiKey: 'key',
-        stripePublishableKey: 'pk_live_x',
         useEmulators: false,
         useDemoBackend: useDemoBackend,
         emulatorHost: 'localhost',

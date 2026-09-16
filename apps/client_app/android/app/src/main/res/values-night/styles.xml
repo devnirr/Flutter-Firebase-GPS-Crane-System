@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- AppCompat themes: Stripe's payment sheet needs one. -->
+    <!-- AppCompat themes: plugin UI hosted in this activity expects one. -->
 
     <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is on -->
     <style name="LaunchTheme" parent="Theme.AppCompat.NoActionBar">

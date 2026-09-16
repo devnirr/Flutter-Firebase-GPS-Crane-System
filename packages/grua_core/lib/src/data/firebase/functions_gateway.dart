@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 import '../../calls/voice_call.dart';
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
-import '../../domain/models/payments.dart';
 import '../../domain/models/service.dart';
 import '../../domain/repositories.dart';
 import '../../domain/value_objects.dart';
@@ -273,8 +272,6 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
     required String quoteSignature,
     required DateTime quoteExpiresAt,
     required TripDistance distance,
-    PaymentMethod? paymentMethod,
-    String? paymentMethodId,
     String? notes,
     String? preferredTruckRef,
   }) =>
@@ -285,10 +282,8 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         'dropoff': dropoff.toJson(),
         'vehicle': vehicle.toJson(),
         'truckType': truckType.wire,
-        'paymentMethod': ?paymentMethod?.wire,
         'quoteSignature': quoteSignature,
         'quoteExpiresAtMs': quoteExpiresAt.millisecondsSinceEpoch,
-        'paymentMethodId': ?paymentMethodId,
         'notes': ?notes,
       }, (data) => data['serviceId'] as String? ?? '');
 
@@ -378,24 +373,6 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         'amountCents': amountCents,
         'discrepancyReason': ?discrepancyReason,
       });
-
-  @override
-  Future<Result<void>> choosePaymentMethod({
-    required String serviceId,
-    required PaymentMethod method,
-  }) =>
-      _callVoid('choosePaymentMethod', {
-        'serviceId': serviceId,
-        'method': method.wire,
-      });
-
-  @override
-  Future<Result<PreparedPayment>> preparePayment(String serviceId) =>
-      _call('preparePayment', {'serviceId': serviceId}, PreparedPayment.fromJson);
-
-  @override
-  Future<Result<void>> syncPayment(String serviceId) =>
-      _callVoid('syncPayment', {'serviceId': serviceId});
 
   @override
   Future<Result<int>> settleDriverCash({

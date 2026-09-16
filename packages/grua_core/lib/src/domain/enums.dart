@@ -601,12 +601,13 @@ enum DriverCancelReason {
 // ---------------------------------------------------------------------------
 
 enum PaymentMethod {
-  @JsonValue('card')
-  card('card', 'Tarjeta'),
   @JsonValue('cash')
   cash('cash', 'Efectivo'),
 
-  /// Not chosen yet: the customer picks card or cash when the chofer arrives.
+  /// Only on jobs from when there was a card rail. Kept so an old service
+  /// still reads correctly in the history.
+  @JsonValue('card')
+  card('card', 'Tarjeta'),
   @JsonValue('pending')
   pending('pending', 'Por elegir'),
   @JsonValue('unknown')
@@ -622,36 +623,30 @@ enum PaymentMethod {
 }
 
 enum PaymentStatus {
-  /// Cash job, or a card job before the hold is placed.
+  /// Nothing collected yet.
   @JsonValue('none')
   none('none', 'Sin procesar'),
 
-  /// The card is held for the job, when the chofer arrived. Nothing charged.
-  @JsonValue('authorized')
-  authorized('authorized', 'Tarjeta retenida'),
-
-  /// Charged from the hold at completion, confirmed by Stripe.
-  @JsonValue('captured')
-  captured('captured', 'Pagado con tarjeta'),
-
-  /// Authorization or capture was declined.
-  @JsonValue('failed')
-  failed('failed', 'Pago rechazado'),
-
-  @JsonValue('refunded')
-  refunded('refunded', 'Reembolsado'),
-
-  /// A hold released without charging: cancelled, or switched to cash.
-  @JsonValue('voided')
-  voided('voided', 'Retención liberada'),
-
-  /// Completed cash job, chofer has not confirmed collection yet.
+  /// Completed job, chofer has not confirmed collection yet.
   @JsonValue('cash_pending')
   cashPending('cash_pending', 'Cobro en efectivo pendiente'),
 
-  /// The chofer confirmed "Cobrado en efectivo". Paid, outside Stripe.
+  /// The chofer confirmed "Cobrado en efectivo": the job is paid.
   @JsonValue('cash_collected')
   cashCollected('cash_collected', 'Pagado en efectivo'),
+
+  // The four below only appear on jobs from when there was a card rail. Kept
+  // so an old service still reads correctly in the history.
+  @JsonValue('authorized')
+  authorized('authorized', 'Tarjeta retenida'),
+  @JsonValue('captured')
+  captured('captured', 'Pagado con tarjeta'),
+  @JsonValue('failed')
+  failed('failed', 'Pago rechazado'),
+  @JsonValue('refunded')
+  refunded('refunded', 'Reembolsado'),
+  @JsonValue('voided')
+  voided('voided', 'Retención liberada'),
 
   @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
@@ -666,9 +661,6 @@ enum PaymentStatus {
 
   bool get isSettled =>
       this == PaymentStatus.captured || this == PaymentStatus.cashCollected;
-
-  /// A card service cannot start until the hold is in place.
-  bool get blocksServiceStart => this == PaymentStatus.failed || this == PaymentStatus.none;
 }
 
 /// Dominican tax receipt types (Números de Comprobante Fiscal).

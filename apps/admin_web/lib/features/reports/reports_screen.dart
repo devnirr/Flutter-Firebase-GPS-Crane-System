@@ -70,8 +70,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                 arrivalTimes.length,
           );
 
-    final cardCents = completed
-        .where((s) => s.payment.isCard)
+    // What the choferes have actually confirmed collecting, against what the
+    // jobs came to: the gap is money still out on the road.
+    final collectedCents = completed
+        .where((s) => s.payment.isPaid)
         .fold(0, (sum, s) => sum + s.totalCents);
 
     return ListView(
@@ -142,11 +144,11 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               icon: Icons.timer_outlined,
             ),
             _Kpi(
-              label: 'Cobrado con tarjeta',
+              label: 'Efectivo cobrado',
               value: gross == 0
                   ? '—'
-                  : '${(cardCents / gross * 100).toStringAsFixed(0)}%',
-              icon: Icons.credit_card,
+                  : '${(collectedCents / gross * 100).toStringAsFixed(0)}%',
+              icon: Icons.payments_outlined,
             ),
           ],
         ),
