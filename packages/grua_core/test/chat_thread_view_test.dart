@@ -220,6 +220,86 @@ Future<void> main() async {
     expect(calls, 1);
   });
 
+  testWidgets('a blocked or finished chat refuses both kinds of call', (
+    tester,
+  ) async {
+    // A call is the same conversation by another route. Blocking somebody has
+    // to stop their phone ringing too, and a conversation that is over stays
+    // over — otherwise the buttons ask for the microphone and then fail.
+    var calls = 0;
+    var videoCalls = 0;
+    Widget view({
+      bool blocked = false,
+      bool blockedByOther = false,
+      bool canWrite = true,
+    }) => MaterialApp(
+      theme: AppTheme.phone(),
+      home: ChatThreadView(
+        title: 'Chofer',
+        messages: const [],
+        myUid: me,
+        canWrite: canWrite,
+        blocked: blocked,
+        blockedByOther: blockedByOther,
+        closedNotice: 'El chat se cierra cuando termina el servicio.',
+        emptyMessage: 'Sin mensajes',
+        onCall: () => calls++,
+        onVideoCall: () => videoCalls++,
+        onSend: (_, _) async => const Result.ok(null),
+      ),
+    );
+
+    // One snackbar at a time: each refusal is read, then left to expire so
+    // the next one is not queued behind it.
+    Future<void> refuses(WidgetTester tester, String reason) async {
+      for (final key in ['chat-call', 'chat-video-call']) {
+        await tester.tap(find.byKey(Key(key)));
+        await tester.pumpAndSettle();
+        expect(find.text(reason), findsWidgets, reason: 'on $key');
+        await tester.pump(const Duration(seconds: 6));
+        await tester.pumpAndSettle();
+      }
+      expect(calls, 0);
+      expect(videoCalls, 0);
+    }
+
+    Color? tint(WidgetTester tester, String key) =>
+        tester.widget<IconButton>(find.byKey(Key(key))).color;
+
+    // I blocked them: the way back is to unblock, so that is what it says.
+    await tester.pumpWidget(view(blocked: true));
+    await tester.pump();
+    await refuses(tester, 'Desbloquéalo para poder llamar.');
+    // And the buttons look unavailable before they are pressed.
+    expect(tint(tester, 'chat-call'), BrandColors.grey400);
+    expect(tint(tester, 'chat-video-call'), BrandColors.grey400);
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('chat-call'))).tooltip,
+      'Desbloquéalo para poder llamar.',
+    );
+
+    // They blocked me: told plainly, not left ringing into nothing.
+    await tester.pumpWidget(view(blockedByOther: true));
+    await tester.pumpAndSettle();
+    await refuses(tester, 'No puedes llamar a esta persona.');
+
+    // Over: the same sentence the closed composer gives.
+    await tester.pumpWidget(view(canWrite: false));
+    await tester.pumpAndSettle();
+    await refuses(tester, 'El chat se cierra cuando termina el servicio.');
+
+    // Open again, and both go through.
+    await tester.pumpWidget(view());
+    await tester.pumpAndSettle();
+    expect(tint(tester, 'chat-call'), isNull);
+    for (final key in ['chat-call', 'chat-video-call']) {
+      await tester.tap(find.byKey(Key(key)));
+      await tester.pumpAndSettle();
+    }
+    expect(calls, 1);
+    expect(videoCalls, 1);
+  });
+
   testWidgets('the other side typing shows just above the message box', (
     tester,
   ) async {

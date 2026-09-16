@@ -64,6 +64,7 @@ export const startCall = onCall({ region, cors: true, secrets }, async (request)
     const service = (await Paths.service(serviceId).get()).data();
     if (!service) throw notFound('Este servicio ya no existe.');
     parties = partiesFor(service, uid);
+    await assertNeitherBlocked(uid, parties.calleeId);
     scope = { field: 'serviceId', id: serviceId };
   } else {
     const id = chatRequestId!;
@@ -78,15 +79,7 @@ export const startCall = onCall({ region, cors: true, secrets }, async (request)
       uid,
       Date.now(),
     );
-    // Two strangers until a job exists: a block stops the phone ringing as
-    // well as the messages, whichever of the two did the blocking.
-    const [blockedByCallee, blockedByCaller] = await Promise.all([
-      Paths.user(parties.calleeId).collection('blocked').doc(uid).get(),
-      Paths.user(uid).collection('blocked').doc(parties.calleeId).get(),
-    ]);
-    if (blockedByCallee.exists || blockedByCaller.exists) {
-      throw precondition(Code.invalidTransition, 'No puedes llamar a esta persona.');
-    }
+    await assertNeitherBlocked(uid, parties.calleeId);
     scope = { field: 'chatRequestId', id };
   }
 
@@ -139,6 +132,23 @@ export const startCall = onCall({ region, cors: true, secrets }, async (request)
 
   return { callId: callRef.id, peerName: parties.calleeName, video, ...join };
 });
+
+/**
+ * Refuses a call between two people where either has blocked the other.
+ *
+ * A call is the same conversation by another route: the rules already stop a
+ * blocked person's messages, so their phone must not ring either. Checked
+ * both ways — blocking somebody also gives up calling them.
+ */
+async function assertNeitherBlocked(caller: string, callee: string): Promise<void> {
+  const [blockedByCallee, blockedByCaller] = await Promise.all([
+    Paths.user(callee).collection('blocked').doc(caller).get(),
+    Paths.user(caller).collection('blocked').doc(callee).get(),
+  ]);
+  if (blockedByCallee.exists || blockedByCaller.exists) {
+    throw precondition(Code.invalidTransition, 'No puedes llamar a esta persona.');
+  }
+}
 
 /** Answers a ringing call and joins the callee. */
 export const answerCall = onCall({ region, cors: true, secrets }, async (request) => {

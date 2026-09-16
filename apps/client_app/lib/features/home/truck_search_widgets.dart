@@ -58,6 +58,11 @@ class _NearbyTrucksRowState extends ConsumerState<NearbyTrucksRow> {
     };
 
     final left = search.endsAt?.difference(clock.now()).inSeconds ?? 0;
+    final total = settings.duration.inSeconds;
+    // What is left of the search, 1 down to 0, for the ring around the icon.
+    final remaining = search.isSearching && total > 0
+        ? (left / total).clamp(0.0, 1.0)
+        : 0.0;
     // A finished search is a snapshot: trucks come online after it stops, so
     // the label says how to look again rather than calling the count final.
     final status = search.isSearching
@@ -68,47 +73,63 @@ class _NearbyTrucksRowState extends ConsumerState<NearbyTrucksRow> {
       key: const Key('nearby-trucks-row'),
       onTap: ref.read(truckSearchProvider.notifier).toggle,
       dense: true,
-      leading: const Icon(
-        Icons.local_shipping_outlined,
-        size: 20,
-        color: BrandColors.grey800,
+      leading: SizedBox.square(
+        dimension: 24,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // The countdown as a ring: the same number the row spells out,
+            // in a shape that can be read without reading.
+            if (search.isSearching)
+              SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(
+                  key: const Key('nearby-countdown-ring'),
+                  value: remaining,
+                  strokeWidth: 2,
+                  backgroundColor: BrandColors.grey100,
+                ),
+              ),
+            const Icon(
+              Icons.local_shipping_outlined,
+              size: 18,
+              color: BrandColors.grey800,
+            ),
+          ],
+        ),
       ),
-      minLeadingWidth: 20,
+      minLeadingWidth: 24,
       title: Text(
         'Grúas cerca de ti',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: text.titleSmall?.copyWith(fontSize: 13),
       ),
-      subtitle: Text(
-        search.error ?? subtitle,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: text.bodySmall?.copyWith(
-          fontSize: 11,
-          color: search.error != null
-              ? BrandColors.danger
-              : count > 0
-                  ? BrandColors.success
-                  : BrandColors.grey600,
-        ),
-      ),
+      subtitle: search.isSearching && count == 0 && search.error == null
+          ? const _SearchingBars(key: Key('nearby-searching-bars'))
+          : Text(
+              search.error ?? subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodySmall?.copyWith(
+                fontSize: 11,
+                color: search.error != null
+                    ? BrandColors.danger
+                    : count > 0
+                    ? BrandColors.success
+                    : BrandColors.grey600,
+              ),
+            ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (search.isSearching) ...[
-            const SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(strokeWidth: 1.6),
-            ),
-            const SizedBox(width: Insets.xs),
-          ],
           Text(
             status,
             style: text.labelMedium?.copyWith(
               fontSize: 11,
-              color: search.isSearching ? BrandColors.grey600 : BrandColors.success,
+              color: search.isSearching
+                  ? BrandColors.grey600
+                  : BrandColors.success,
             ),
           ),
           IconButton(
@@ -135,6 +156,69 @@ class _NearbyTrucksRowState extends ConsumerState<NearbyTrucksRow> {
       ref.read(truckSearchProvider.notifier).start();
     }
   }
+}
+
+/// Where the trucks will go, while the search is still looking.
+///
+/// Three bars with a light sweeping across them, in the line that will hold
+/// "2 grúas disponibles". Waiting on an empty line reads as nothing found;
+/// waiting on these reads as an answer on its way.
+class _SearchingBars extends StatefulWidget {
+  const _SearchingBars({super.key});
+
+  @override
+  State<_SearchingBars> createState() => _SearchingBarsState();
+}
+
+class _SearchingBarsState extends State<_SearchingBars>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _sweep = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+
+  static const _widths = <double>[40, 26, 32];
+
+  @override
+  void dispose() {
+    _sweep.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 14,
+    child: AnimatedBuilder(
+      animation: _sweep,
+      builder: (context, _) => Row(
+        children: [
+          for (var i = 0; i < _widths.length; i++) ...[
+            if (i > 0) const SizedBox(width: Insets.xs),
+            Flexible(
+              child: Container(
+                width: _widths[i],
+                height: 8,
+                decoration: BoxDecoration(
+                  borderRadius: Corners.brXs,
+                  gradient: LinearGradient(
+                    // One light crossing all three bars in turn, rather
+                    // than three bars blinking together.
+                    begin: Alignment(-3 + 6 * _sweep.value - i * 0.9, 0),
+                    end: Alignment(-1 + 6 * _sweep.value - i * 0.9, 0),
+                    colors: const [
+                      BrandColors.grey100,
+                      BrandColors.grey200,
+                      BrandColors.grey100,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 /// Opens the card for a truck tapped on the home map.
@@ -181,8 +265,9 @@ class _NearbyTruckSheetState extends ConsumerState<NearbyTruckSheet> {
       _requestingChat = true;
       _chatError = null;
     });
-    final result =
-        await ref.read(functionsGatewayProvider).requestChat(widget.truck.ref);
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .requestChat(widget.truck.ref);
     if (!mounted) return;
 
     final requestId = result.valueOrNull;
@@ -223,7 +308,10 @@ class _NearbyTruckSheetState extends ConsumerState<NearbyTruckSheet> {
                   color: BrandColors.successTint,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.local_shipping, color: BrandColors.success),
+                child: const Icon(
+                  Icons.local_shipping,
+                  color: BrandColors.success,
+                ),
               ),
               const SizedBox(width: Insets.md),
               Expanded(
@@ -233,7 +321,9 @@ class _NearbyTruckSheetState extends ConsumerState<NearbyTruckSheet> {
                     Text('Grúa disponible', style: text.titleMedium),
                     Text(
                       '${truck.truckType.label} · a ${truck.distanceLabel} de ti',
-                      style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                      style: text.bodySmall?.copyWith(
+                        color: BrandColors.grey600,
+                      ),
                     ),
                   ],
                 ),
@@ -270,7 +360,9 @@ class _NearbyTruckSheetState extends ConsumerState<NearbyTruckSheet> {
                 child: ElevatedButton.icon(
                   key: const Key('truck-request'),
                   onPressed: _request,
-                  style: ElevatedButton.styleFrom(minimumSize: const Size(0, 52)),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(0, 52),
+                  ),
                   icon: const Icon(Icons.local_shipping, size: 20),
                   label: const Text('PEDIR ESTA GRÚA'),
                 ),
@@ -304,15 +396,19 @@ class _TruckSearchSettingsDialogState extends State<TruckSearchSettingsDialog> {
   void initState() {
     super.initState();
     final index = _radii.indexOf(widget.initial.radiusKm);
-    _radiusIndex = index == -1 ? _radii.indexOf(TruckSearchSettings.defaultRadiusKm) : index;
-    _seconds = widget.initial.duration.inSeconds
-        .clamp(TruckSearchSettings.minSeconds, TruckSearchSettings.maxSeconds);
+    _radiusIndex = index == -1
+        ? _radii.indexOf(TruckSearchSettings.defaultRadiusKm)
+        : index;
+    _seconds = widget.initial.duration.inSeconds.clamp(
+      TruckSearchSettings.minSeconds,
+      TruckSearchSettings.maxSeconds,
+    );
   }
 
   TruckSearchSettings get _chosen => TruckSearchSettings(
-        radiusKm: _radii[_radiusIndex],
-        duration: Duration(seconds: _seconds),
-      );
+    radiusKm: _radii[_radiusIndex],
+    duration: Duration(seconds: _seconds),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -356,9 +452,13 @@ class _TruckSearchSettingsDialogState extends State<TruckSearchSettingsDialog> {
               value: _seconds.toDouble(),
               min: TruckSearchSettings.minSeconds.toDouble(),
               max: TruckSearchSettings.maxSeconds.toDouble(),
-              divisions: (TruckSearchSettings.maxSeconds - TruckSearchSettings.minSeconds) ~/ 10,
+              divisions:
+                  (TruckSearchSettings.maxSeconds -
+                      TruckSearchSettings.minSeconds) ~/
+                  10,
               label: '$_seconds s',
-              onChanged: (v) => setState(() => _seconds = (v / 10).round() * 10),
+              onChanged: (v) =>
+                  setState(() => _seconds = (v / 10).round() * 10),
             ),
             Text(
               'Cuánto tiempo seguir buscando. Revisamos cada '

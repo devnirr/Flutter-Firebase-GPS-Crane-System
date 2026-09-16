@@ -267,7 +267,25 @@ class CallController extends Notifier<CallSession> {
   ValueListenable<lk.VideoTrack?> get remoteVideo =>
       _transport?.remoteVideo ?? _noVideo;
 
+  /// How loudly the other person is speaking, from 0 to 1. What the ripple
+  /// around their avatar is drawn from.
+  ValueListenable<double> get peerAudioLevel =>
+      _transport?.peerAudioLevel ?? _noLevel;
+
+  /// How loudly this person is speaking. Shown on their own microphone
+  /// button: somebody nobody can hear should be able to see whether their
+  /// microphone is picking anything up.
+  ValueListenable<double> get ownAudioLevel =>
+      _transport?.ownAudioLevel ?? _noLevel;
+
+  /// Whether the other side's microphone reaches us at all. False turns the
+  /// silence into a sentence rather than a mystery.
+  ValueListenable<bool> get peerHasAudio =>
+      _transport?.peerHasAudio ?? _noAudio;
+
   static final _noVideo = ValueNotifier<lk.VideoTrack?>(null);
+  static final _noLevel = ValueNotifier<double>(0);
+  static final _noAudio = ValueNotifier<bool>(true);
 
   // ---------------------------------------------------------------- plumbing
 

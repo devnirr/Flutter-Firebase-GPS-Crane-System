@@ -1,4 +1,5 @@
 import 'package:client_app/app.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,6 +75,14 @@ Future<void> main() async {
   Iterable<MapMarker> trucksOn(GruaMap map) =>
       map.markers.where((m) => m.kind == MapMarkerKind.truckIdle);
 
+  /// The shaded area searched. The radar rings travelling across it carry no
+  /// fill, which is what tells the two apart.
+  MapCircle areaOn(GruaMap map) =>
+      map.circles.singleWhere((c) => c.fillOpacity > 0);
+
+  Iterable<MapCircle> ringsOn(GruaMap map) =>
+      map.circles.where((c) => c.fillOpacity == 0);
+
   testWidgets('the search finds the free trucks inside the radius and puts '
       'them on the map', (tester) async {
     await signIn(tester);
@@ -82,8 +91,8 @@ Future<void> main() async {
 
     final map = homeMap(tester);
     // The area searched, drawn and framed.
-    expect(map.circles.single.center, gazcue);
-    expect(map.circles.single.radiusMeters, 5000);
+    expect(areaOn(map).center, gazcue);
+    expect(areaOn(map).radiusMeters, 5000);
     expect(map.fitTo, isNotEmpty);
 
     // Found: only the ones really within 5 km of the customer.
@@ -93,6 +102,98 @@ Future<void> main() async {
       expect(truck.position.distanceTo(gazcue), lessThanOrEqualTo(5200));
     }
     expect(find.text('${found.length} grúas disponibles en 5 km'), findsOneWidget);
+  });
+
+  testWidgets('a radar sweeps the area while the search runs, and stops with it',
+      (tester) async {
+    // A still circle says where the search would look; the rings say it is
+    // looking right now.
+    await signIn(tester);
+
+    final rings = ringsOn(homeMap(tester)).toList();
+    expect(rings, hasLength(3));
+    for (final ring in rings) {
+      expect(ring.center, gazcue);
+      // Inside the area searched, and never a full-screen fill at birth.
+      expect(ring.radiusMeters, greaterThan(0));
+      expect(ring.radiusMeters, lessThanOrEqualTo(5000));
+      expect(ring.strokeOpacity, greaterThanOrEqualTo(0));
+    }
+
+    // They travel: a moment later they are somewhere else.
+    final before = rings.map((r) => r.radiusMeters).toList();
+    await tester.pump(const Duration(milliseconds: 400));
+    final after = ringsOn(homeMap(tester)).map((r) => r.radiusMeters).toList();
+    expect(after, isNot(before));
+
+    // Stopped, the map goes quiet: the area stays, the rings go.
+    await tester.tap(find.byKey(const Key('nearby-trucks-row')));
+    await advance(tester, const Duration(seconds: 1));
+    expect(ringsOn(homeMap(tester)), isEmpty);
+    expect(areaOn(homeMap(tester)).radiusMeters, 5000);
+  });
+
+  testWidgets('a truck that comes online mid-search drops onto the map',
+      (tester) async {
+    // Trucks found at the start have long since landed; one that appears
+    // while the customer watches should arrive, not blink into place.
+    final backend = await signIn(tester);
+    final settled = trucksOn(homeMap(tester)).toList();
+    expect(settled, isNotEmpty);
+    expect(settled.every((m) => m.arrival == 1), isTrue);
+
+    // A chofer who was out of range drives into it: the next check finds a
+    // truck that was not there before.
+    final far = backend.allLive.firstWhere(
+      (p) => p.position.distanceTo(gazcue) > 5000,
+    );
+    final spare = backend.driver(far.driverId)!;
+    backend
+      ..setDriverOnline(spare.id, online: true)
+      ..setLive(
+        far.copyWith(
+          lat: gazcue.latitude + 0.004,
+          lng: gazcue.longitude + 0.004,
+          isOnline: true,
+          state: DriverLiveState.idle,
+          updatedAt: clock.now().millisecondsSinceEpoch,
+        ),
+      );
+
+    // Caught on its way down, between the check that found it and its
+    // landing.
+    var falling = false;
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+      if (trucksOn(homeMap(tester)).length > settled.length) {
+        falling = trucksOn(homeMap(tester)).any((m) => m.arrival < 1);
+        if (falling) break;
+      }
+    }
+    expect(falling, isTrue, reason: 'the new truck dropped in');
+
+    // And it lands.
+    await advance(tester, const Duration(seconds: 1));
+    expect(trucksOn(homeMap(tester)).every((m) => m.arrival == 1), isTrue);
+  });
+
+  testWidgets('the row counts down in a ring while it looks', (tester) async {
+    await signIn(tester);
+
+    final ring = find.byKey(const Key('nearby-countdown-ring'));
+    expect(ring, findsOneWidget);
+    final full = tester.widget<CircularProgressIndicator>(ring).value!;
+
+    await advance(tester, const Duration(seconds: 6));
+    expect(
+      tester.widget<CircularProgressIndicator>(ring).value,
+      lessThan(full),
+    );
+
+    // Not looking, nothing to count.
+    await tester.tap(find.byKey(const Key('nearby-trucks-row')));
+    await advance(tester, const Duration(seconds: 1));
+    expect(find.byKey(const Key('nearby-countdown-ring')), findsNothing);
   });
 
   testWidgets('tapping stops the search, and tapping again starts it',
@@ -199,7 +300,7 @@ Future<void> main() async {
     await tester.tap(find.text('Guardar'));
     await advance(tester, const Duration(seconds: 1));
 
-    expect(homeMap(tester).circles.single.radiusMeters, 400000);
+    expect(areaOn(homeMap(tester)).radiusMeters, 400000);
     expect(find.textContaining('Buscando…'), findsOneWidget);
     // …and the new, shorter duration ends it.
     await advance(tester, const Duration(seconds: 11));

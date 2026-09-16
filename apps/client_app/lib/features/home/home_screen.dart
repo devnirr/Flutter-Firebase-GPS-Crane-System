@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -27,6 +28,73 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   /// Bumped by the locate button to rebuild the map on a fresh camera after
   /// the customer has panned away.
   var _epoch = 0;
+
+  /// One turn of the radar: a ring is born at the customer, reaches the edge
+  /// of the search radius, and fades.
+  static const _sweep = Duration(milliseconds: 2400);
+
+  /// Three rings in the air at once, evenly spaced through the turn.
+  static const _rings = 3;
+
+  /// How long a truck takes to drop onto its spot on the map.
+  static const _arrival = Duration(milliseconds: 420);
+
+  /// Redraws the radar. Twelve frames a second: enough for the rings to
+  /// travel smoothly, few enough that the platform map is not rebuilt at
+  /// screen rate for an ornament.
+  Timer? _radar;
+
+  /// When each truck was first seen, so only new ones drop in. Keyed by the
+  /// sealed handle the search hands out, which names one truck.
+  final _firstSeen = <String, DateTime>{};
+
+  void _syncRadar(bool searching) {
+    if (searching && _radar == null) {
+      _radar = Timer.periodic(const Duration(milliseconds: 80), (_) {
+        if (mounted) setState(() {});
+      });
+    } else if (!searching) {
+      _radar?.cancel();
+      _radar = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _radar?.cancel();
+    super.dispose();
+  }
+
+  /// The rings travelling out from the customer while the search runs.
+  List<MapCircle> _radarRings(LatLng centre, double radiusMeters) {
+    final turn = clock.now().millisecondsSinceEpoch % _sweep.inMilliseconds;
+    return [
+      for (var i = 0; i < _rings; i++)
+        () {
+          final progress = (turn / _sweep.inMilliseconds + i / _rings) % 1;
+          return MapCircle(
+            center: centre,
+            // Starts as a dot on the customer rather than at nothing, which
+            // the map draws as a full-screen fill.
+            radiusMeters: radiusMeters * (0.04 + 0.96 * progress),
+            fillOpacity: 0,
+            // Brightest as it leaves, gone as it lands on the edge.
+            strokeOpacity: 0.5 * (1 - progress) * (1 - progress),
+          );
+        }(),
+    ];
+  }
+
+  /// How far through its arrival each truck is: 1 for one that was already
+  /// there, climbing from 0 for one this check just found.
+  double _arrivalOf(NearbyTruck truck, DateTime now) {
+    final seen = _firstSeen.putIfAbsent(truck.ref, () => now);
+    final elapsed = now.difference(seen).inMilliseconds;
+    if (elapsed >= _arrival.inMilliseconds) return 1;
+    final t = elapsed / _arrival.inMilliseconds;
+    // Eased so it falls quickly and settles, rather than sliding at one speed.
+    return 1 - (1 - t) * (1 - t);
+  }
 
   Future<void> _resolveLocation(LocationBlocker blocker) async {
     final location = ref.read(locationServiceProvider);
@@ -60,6 +128,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ? null
         : MapCircle(center: search.center!, radiusMeters: radiusKm * 1000);
 
+    final now = clock.now();
+    // Trucks that have gone stay gone: a handle that comes back later is a
+    // truck arriving again, and it should drop in again.
+    _firstSeen.removeWhere(
+      (ref, _) => !search.results.any((truck) => truck.ref == ref),
+    );
+    final arrivals = {
+      for (final truck in search.results) truck.ref: _arrivalOf(truck, now),
+    };
+    // Kept redrawing a moment past the end of the search, so a truck found on
+    // the last check lands rather than freezing in mid-air.
+    _syncRadar(search.isSearching || arrivals.values.any((a) => a < 1));
+
     return Scaffold(
       body: Stack(
         children: [
@@ -71,14 +152,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               zoom: me == null ? 13.4 : 15,
               // The camera frames the area searched, so every truck found is
               // on screen however wide the radius.
-              circles: [?area],
+              circles: [
+                ?area,
+                if (search.isSearching && search.center != null)
+                  ..._radarRings(search.center!, radiusKm * 1000),
+              ],
               fitTo: area?.extremes ?? const [],
               markers: [
                 for (final truck in search.results)
                   MapMarker(
+                    // Named, so the map keeps a truck the same marker as the
+                    // list around it changes — and so it drops in once.
+                    id: truck.ref,
                     position: truck.position,
                     kind: MapMarkerKind.truckIdle,
                     heading: truck.heading,
+                    arrival: arrivals[truck.ref] ?? 1,
                     onTap: () =>
                         unawaited(showNearbyTruckSheet(context, truck)),
                   ),

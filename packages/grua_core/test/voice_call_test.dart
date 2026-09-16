@@ -540,6 +540,133 @@ void main() {
     });
   });
 
+  group('the ripple around the avatar', () {
+    testWidgets('travels while the other person talks, and stops with them', (
+      tester,
+    ) async {
+      setUpService();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            builder: (context, child) => CallLayer(child: child!),
+            home: const Scaffold(body: Text('mapa')),
+          ),
+        ),
+      );
+
+      backend.startCall(service.id, driverId);
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('call-answer')));
+      await settle(tester);
+      expect(session().phase, CallPhase.active);
+
+      CustomPaint ripple() => tester.widget<CustomPaint>(
+            find.descendant(
+              of: find.byKey(const Key('call-speaking')),
+              matching: find.byType(CustomPaint),
+            ),
+          );
+
+      // Silence draws nothing at all.
+      expect((ripple().painter! as dynamic).level, 0.0);
+
+      transport.speakingLevel = 0.8;
+      // One frame takes the new level in, the next moves the ease along.
+      await settle(tester, Duration.zero);
+      await settle(tester, const Duration(milliseconds: 400));
+      final speaking = (ripple().painter! as dynamic).level as double;
+      expect(speaking, greaterThan(0.5));
+
+      // The rings keep travelling while they talk.
+      final turn = (ripple().painter! as dynamic).turn as double;
+      await settle(tester, const Duration(milliseconds: 300));
+      expect((ripple().painter! as dynamic).turn, isNot(turn));
+
+      // They stop talking: the rings fade back to nothing.
+      transport.speakingLevel = 0;
+      await settle(tester, Duration.zero);
+      await settle(tester, const Duration(milliseconds: 400));
+      expect((ripple().painter! as dynamic).level, 0.0);
+
+      await run(tester, controller().hangUp());
+      await settle(tester, CallController.endedLinger + const Duration(seconds: 1));
+      await tester.pumpWidget(const SizedBox());
+      tearDownAll();
+    });
+
+    testWidgets('the microphone button shows what it is picking up', (tester) async {
+      // Somebody nobody can hear needs to know whether their own phone is
+      // hearing them.
+      setUpService();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            builder: (context, child) => CallLayer(child: child!),
+            home: const Scaffold(body: Text('mapa')),
+          ),
+        ),
+      );
+      backend.startCall(service.id, driverId);
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('call-answer')));
+      await settle(tester);
+
+      Size halo() => tester.getSize(
+            find.descendant(
+              of: find.byKey(const Key('call-own-level')),
+              matching: find.byType(Container),
+            ),
+          );
+      final quiet = halo().width;
+
+      transport.ownSpeakingLevel = 0.9;
+      await settle(tester, Duration.zero);
+      await settle(tester, const Duration(milliseconds: 300));
+      expect(halo().width, greaterThan(quiet));
+
+      // Muted, the halo goes: the microphone is off, whatever the room.
+      await controller().toggleMute();
+      await settle(tester);
+      expect(find.byKey(const Key('call-own-level')), findsNothing);
+
+      await run(tester, controller().hangUp());
+      await settle(tester, CallController.endedLinger + const Duration(seconds: 1));
+      await tester.pumpWidget(const SizedBox());
+      tearDownAll();
+    });
+
+    testWidgets('says so when the other side sends no audio at all', (tester) async {
+      setUpService();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            builder: (context, child) => CallLayer(child: child!),
+            home: const Scaffold(body: Text('mapa')),
+          ),
+        ),
+      );
+      backend.startCall(service.id, driverId);
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('call-answer')));
+      await settle(tester);
+
+      // Their microphone reaches us: nothing to say.
+      expect(find.byKey(const Key('call-peer-no-audio')), findsNothing);
+
+      transport.peerAudioArrives = false;
+      await settle(tester);
+      expect(find.text('No estamos recibiendo su audio'), findsOneWidget);
+
+      await run(tester, controller().hangUp());
+      await settle(tester, CallController.endedLinger + const Duration(seconds: 1));
+      await tester.pumpWidget(const SizedBox());
+      tearDownAll();
+    });
+  });
+
   group('the call screen', () {
     testWidgets('rings over the app, answers, and hangs up', (tester) async {
       setUpService();

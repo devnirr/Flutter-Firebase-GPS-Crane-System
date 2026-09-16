@@ -86,9 +86,10 @@ class _VideoCallScreen extends ConsumerWidget {
                           fit: lk.VideoViewFit.cover,
                         )
                       : Center(
-                          child: _Avatar(
+                          child: _SpeakingAvatar(
                             name: name,
                             ringing: session.phase == CallPhase.outgoing,
+                            controller: controller,
                           ),
                         ),
                 ),
@@ -141,6 +142,7 @@ class _VideoCallScreen extends ConsumerWidget {
                             ),
                           ),
                         ],
+                        if (active) _PeerAudioNotice(controller: controller),
                         const Spacer(),
                         _VideoControls(session: session, controller: controller),
                       ],
@@ -203,15 +205,7 @@ class _VideoControls extends StatelessWidget {
       spacing: Insets.lg,
       runSpacing: Insets.md,
       children: [
-        _RoundButton(
-          key: const Key('call-mute'),
-          icon: session.muted ? Icons.mic_off : Icons.mic_none,
-          label: 'Micrófono',
-          color: session.muted ? BrandColors.white : BrandColors.grey600,
-          iconColor: session.muted ? BrandColors.ink : BrandColors.white,
-          size: 60,
-          onTap: () => unawaited(controller.toggleMute()),
-        ),
+        _MicButton(session: session, controller: controller, size: 60),
         _RoundButton(
           key: const Key('call-camera'),
           icon: session.cameraOn ? Icons.videocam : Icons.videocam_off,
@@ -269,7 +263,11 @@ class _CallScreen extends ConsumerWidget {
           child: Column(
             children: [
               const Spacer(),
-              _Avatar(name: name, ringing: _isRinging(session.phase)),
+              _SpeakingAvatar(
+                name: name,
+                ringing: _isRinging(session.phase),
+                controller: controller,
+              ),
               const SizedBox(height: Insets.xl),
               Text(
                 name,
@@ -280,6 +278,8 @@ class _CallScreen extends ConsumerWidget {
               ),
               const SizedBox(height: Insets.sm),
               _Status(session: session),
+              if (session.phase == CallPhase.active)
+                _PeerAudioNotice(controller: controller),
               const Spacer(flex: 2),
               _Controls(session: session, controller: controller),
             ],
@@ -293,21 +293,155 @@ class _CallScreen extends ConsumerWidget {
       phase == CallPhase.outgoing || phase == CallPhase.incoming;
 }
 
-/// The other person's initial, pulsing while it rings.
-class _Avatar extends StatefulWidget {
-  const _Avatar({required this.name, required this.ringing});
+/// The microphone button, lit by what the microphone is actually hearing.
+///
+/// A halo grows around it with this person's own voice. Somebody the other
+/// side cannot hear can tell at a glance whether the phone is picking them up
+/// — the microphone's own fault — or whether the trouble is further along.
+class _MicButton extends StatelessWidget {
+  const _MicButton({
+    required this.session,
+    required this.controller,
+    this.size = 68,
+  });
+
+  final CallSession session;
+  final CallController controller;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = _RoundButton(
+      key: const Key('call-mute'),
+      icon: session.muted ? Icons.mic_off : Icons.mic_none,
+      label: session.muted
+          ? (size < 68 ? 'Micrófono' : 'Activar micrófono')
+          : (size < 68 ? 'Micrófono' : 'Silenciar'),
+      color: session.muted ? BrandColors.white : BrandColors.grey600,
+      iconColor: session.muted ? BrandColors.ink : BrandColors.white,
+      size: size,
+      onTap: () => unawaited(controller.toggleMute()),
+    );
+
+    // Nothing to show while muted: the microphone is off, and a halo would
+    // say the opposite.
+    if (session.muted) return button;
+
+    return ValueListenableBuilder<double>(
+      valueListenable: controller.ownAudioLevel,
+      builder: (context, level, child) => TweenAnimationBuilder<double>(
+        key: const Key('call-own-level'),
+        tween: Tween<double>(end: level.clamp(0.0, 1.0)),
+        duration: const Duration(milliseconds: 180),
+        builder: (context, shown, _) => Stack(
+          alignment: Alignment.center,
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: size + size * 0.32 * shown,
+              height: size + size * 0.32 * shown,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: BrandColors.success.withValues(alpha: 0.35 * shown),
+              ),
+            ),
+            child!,
+          ],
+        ),
+      ),
+      child: button,
+    );
+  }
+}
+
+/// "No estamos recibiendo su audio", when the other side's microphone never
+/// arrives.
+///
+/// Silence on a call is the hardest thing to explain to somebody standing on
+/// a roadside: this says whose silence it is, rather than leaving them
+/// tapping the volume.
+class _PeerAudioNotice extends StatelessWidget {
+  const _PeerAudioNotice({required this.controller});
+
+  final CallController controller;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+        valueListenable: controller.peerHasAudio,
+        builder: (context, arrives, _) => arrives
+            ? const SizedBox.shrink()
+            : Padding(
+                padding: const EdgeInsets.only(top: Insets.xs),
+                child: Text(
+                  'No estamos recibiendo su audio',
+                  key: const Key('call-peer-no-audio'),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: BrandColors.warning,
+                      ),
+                ),
+              ),
+      );
+}
+
+/// The avatar, rippling while the other person speaks.
+///
+/// Watching the level here rather than in the call screen keeps the rest of
+/// the screen still: the rings repaint many times a second, and the name, the
+/// timer and the buttons have no reason to rebuild with them.
+class _SpeakingAvatar extends StatelessWidget {
+  const _SpeakingAvatar({
+    required this.name,
+    required this.ringing,
+    required this.controller,
+  });
 
   final String name;
   final bool ringing;
+  final CallController controller;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<double>(
+        valueListenable: controller.peerAudioLevel,
+        builder: (context, level, _) =>
+            _Avatar(name: name, ringing: ringing, level: level),
+      );
+}
+
+/// The other person's initial, pulsing while it rings.
+class _Avatar extends StatefulWidget {
+  const _Avatar({
+    required this.name,
+    required this.ringing,
+    this.level = 0,
+  });
+
+  final String name;
+  final bool ringing;
+
+  /// How loudly the other person is speaking, 0 to 1. Rings ripple out of the
+  /// avatar while it is above [_AvatarState._silence].
+  final double level;
 
   @override
   State<_Avatar> createState() => _AvatarState();
 }
 
-class _AvatarState extends State<_Avatar> with SingleTickerProviderStateMixin {
+class _AvatarState extends State<_Avatar> with TickerProviderStateMixin {
+  /// Below this, somebody is not talking — a room is never silent, and rings
+  /// that answer to the hum of a highway say nothing.
+  static const _silence = 0.06;
+
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1200),
+  );
+
+  /// One turn of the ripple: each ring is born at the avatar's edge and fades
+  /// as it travels out.
+  late final AnimationController _ripple = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
   );
 
   @override
@@ -319,7 +453,10 @@ class _AvatarState extends State<_Avatar> with SingleTickerProviderStateMixin {
   @override
   void didUpdateWidget(_Avatar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.ringing != widget.ringing) _sync();
+    if (oldWidget.ringing != widget.ringing ||
+        (oldWidget.level > _silence) != (widget.level > _silence)) {
+      _sync();
+    }
   }
 
   void _sync() {
@@ -330,11 +467,21 @@ class _AvatarState extends State<_Avatar> with SingleTickerProviderStateMixin {
         ..stop()
         ..value = 0;
     }
+    // Kept running while they speak; stopped where it started, so the next
+    // word begins from the avatar's edge rather than mid-flight.
+    if (widget.level > _silence) {
+      if (!_ripple.isAnimating) _ripple.repeat();
+    } else {
+      _ripple
+        ..stop()
+        ..value = 0;
+    }
   }
 
   @override
   void dispose() {
     _pulse.dispose();
+    _ripple.dispose();
     super.dispose();
   }
 
@@ -344,7 +491,7 @@ class _AvatarState extends State<_Avatar> with SingleTickerProviderStateMixin {
         ? '?'
         : widget.name.trim().characters.first.toUpperCase();
 
-    return AnimatedBuilder(
+    final avatar = AnimatedBuilder(
       animation: _pulse,
       builder: (context, child) => Container(
         width: 132,
@@ -372,7 +519,76 @@ class _AvatarState extends State<_Avatar> with SingleTickerProviderStateMixin {
         ),
       ),
     );
+
+    // The rings are drawn behind and beyond the avatar's own box, which
+    // nothing here clips, so the layout does not jump when somebody speaks.
+    return Stack(
+      alignment: Alignment.center,
+      clipBehavior: Clip.none,
+      children: [
+        // Eased rather than followed exactly: the level arrives in steps, and
+        // rings that jumped with it would flicker.
+        TweenAnimationBuilder<double>(
+          key: const Key('call-speaking'),
+          tween: Tween<double>(end: widget.level.clamp(0.0, 1.0)),
+          duration: const Duration(milliseconds: 220),
+          builder: (context, level, _) => AnimatedBuilder(
+            animation: _ripple,
+            builder: (context, _) => CustomPaint(
+              size: const Size.square(132),
+              painter: _SpeakingRipple(turn: _ripple.value, level: level),
+            ),
+          ),
+        ),
+        avatar,
+      ],
+    );
   }
+}
+
+/// Rings travelling out of the avatar while the other person talks.
+///
+/// Three of them, evenly spaced around one turn, so there is always one on the
+/// way out. How far they reach follows the voice: a quiet reply barely lifts
+/// off the avatar, a loud one throws rings wide.
+class _SpeakingRipple extends CustomPainter {
+  const _SpeakingRipple({required this.turn, required this.level});
+
+  /// Where the ripple is in its loop, 0 to 1.
+  final double turn;
+
+  /// How loudly they are speaking, 0 to 1.
+  final double level;
+
+  static const _rings = 3;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (level <= 0) return;
+    final centre = size.center(Offset.zero);
+    final start = size.width / 2;
+    // Reach: half the avatar again at a whisper, twice over at full voice.
+    final reach = start * (0.18 + 0.55 * level);
+
+    for (var i = 0; i < _rings; i++) {
+      final progress = (turn + i / _rings) % 1;
+      final radius = start + reach * progress;
+      // Born at full strength, gone by the time it stops travelling.
+      final fade = (1 - progress) * (1 - progress);
+      canvas.drawCircle(
+        centre,
+        radius,
+        Paint()
+          ..color = BrandColors.red.withValues(alpha: 0.45 * fade * level)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2 + 2 * level,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SpeakingRipple old) =>
+      old.turn != turn || old.level != level;
 }
 
 /// "Llamando…", "Llamada entrante", the running time, or how it ended.
@@ -482,14 +698,7 @@ class _Controls extends StatelessWidget {
       CallPhase.active => Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            _RoundButton(
-              key: const Key('call-mute'),
-              icon: session.muted ? Icons.mic_off : Icons.mic_none,
-              label: session.muted ? 'Activar micrófono' : 'Silenciar',
-              color: session.muted ? BrandColors.white : BrandColors.grey600,
-              iconColor: session.muted ? BrandColors.ink : BrandColors.white,
-              onTap: () => unawaited(controller.toggleMute()),
-            ),
+            _MicButton(session: session, controller: controller),
             if (session.canSwitchSpeaker)
               _RoundButton(
                 key: const Key('call-speaker'),

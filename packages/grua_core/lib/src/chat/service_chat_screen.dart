@@ -662,9 +662,28 @@ class _ChatThreadViewState extends State<ChatThreadView> {
     _search.clear();
   });
 
+  /// Why the two of them cannot call each other right now, or null when they
+  /// can.
+  ///
+  /// A call is the same conversation by another route: blocking somebody has
+  /// to stop their phone ringing too, and a conversation that is over stays
+  /// over. The server refuses both regardless — this is so the buttons say
+  /// why rather than asking for the microphone and failing.
+  String? get _cannotCall {
+    if (widget.blocked) return 'Desbloquéalo para poder llamar.';
+    if (widget.blockedByOther) return 'No puedes llamar a esta persona.';
+    if (!widget.canWrite) return widget.closedNotice;
+    return null;
+  }
+
   /// Places the in-app call where there is one; otherwise hands the number to
   /// the phone's dialer.
   Future<void> _call() async {
+    final refusal = _cannotCall;
+    if (refusal != null) {
+      _say(refusal);
+      return;
+    }
     final onCall = widget.onCall;
     if (onCall != null) {
       onCall();
@@ -682,6 +701,11 @@ class _ChatThreadViewState extends State<ChatThreadView> {
   /// Rings the other person's app with video, where the chat has a service to
   /// call through; otherwise says why it cannot rather than doing nothing.
   void _videoCall() {
+    final refusal = _cannotCall;
+    if (refusal != null) {
+      _say(refusal);
+      return;
+    }
     final onVideoCall = widget.onVideoCall;
     if (onVideoCall != null) {
       onVideoCall();
@@ -932,15 +956,19 @@ class _ChatThreadViewState extends State<ChatThreadView> {
                   // Compact, so four actions and a name still fit a phone.
                   IconButton(
                     key: const Key('chat-video-call'),
-                    tooltip: 'Videollamada',
+                    tooltip: _cannotCall ?? 'Videollamada',
                     visualDensity: VisualDensity.compact,
+                    // Still tappable while it is off: a grey button that does
+                    // nothing leaves somebody guessing, and the tap answers.
+                    color: _cannotCall == null ? null : BrandColors.grey400,
                     icon: const Icon(Icons.videocam_outlined),
                     onPressed: _videoCall,
                   ),
                   IconButton(
                     key: const Key('chat-call'),
-                    tooltip: 'Llamar',
+                    tooltip: _cannotCall ?? 'Llamar',
                     visualDensity: VisualDensity.compact,
+                    color: _cannotCall == null ? null : BrandColors.grey400,
                     icon: const Icon(Icons.call_outlined),
                     onPressed: _call,
                   ),

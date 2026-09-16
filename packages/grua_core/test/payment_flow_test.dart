@@ -82,9 +82,9 @@ void main() {
 
   test('switching a held card to cash lets go of the hold', () {
     arrived();
-    backend.holdDemoCard(service.id, client);
-
-    backend.choosePaymentMethod(service.id, client, PaymentMethod.cash);
+    backend
+      ..holdDemoCard(service.id, client)
+      ..choosePaymentMethod(service.id, client, PaymentMethod.cash);
 
     expect(current().payment.isCash, isTrue);
     expect(current().payment.authorizedCents, 0);
@@ -104,10 +104,11 @@ void main() {
 
   group('cash and the corte', () {
     void collect() {
-      backend.transition(service.id, ServiceStatus.inProgress,
-          ServiceEventName.startService, driverId, UserRole.driver);
-      backend.transition(service.id, ServiceStatus.completed,
-          ServiceEventName.completeService, driverId, UserRole.driver);
+      backend
+        ..transition(service.id, ServiceStatus.inProgress,
+            ServiceEventName.startService, driverId, UserRole.driver)
+        ..transition(service.id, ServiceStatus.completed,
+            ServiceEventName.completeService, driverId, UserRole.driver);
       expect(backend.confirmCashCollected(service.id, driverId, 250000), isA<Ok<void>>());
     }
 
@@ -161,9 +162,10 @@ void main() {
 
     test('a card job has no cash to confirm', () {
       arrived();
-      backend.holdDemoCard(service.id, client);
-      backend.transition(service.id, ServiceStatus.inProgress,
-          ServiceEventName.startService, driverId, UserRole.driver);
+      backend
+        ..holdDemoCard(service.id, client)
+        ..transition(service.id, ServiceStatus.inProgress,
+            ServiceEventName.startService, driverId, UserRole.driver);
 
       expect(backend.confirmCashCollected(service.id, driverId, 250000), isA<Err<void>>());
     });

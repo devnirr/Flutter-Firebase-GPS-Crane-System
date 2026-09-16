@@ -15,6 +15,7 @@ class MapMarker {
     this.label,
     this.id,
     this.onTap,
+    this.arrival = 1,
   });
 
   /// Makes the marker tappable. A marker with one shows no info window of its
@@ -28,6 +29,12 @@ class MapMarker {
   /// it the map matches markers by position in the list, and a truck that
   /// takes the slot "Tú" had is shown with "Tú"'s info window.
   final String? id;
+
+  /// How far through its arrival the marker is, 0 to 1: at 0 it hangs above
+  /// its point, at 1 it sits on it. A truck the search has just found drops
+  /// in rather than appearing out of nowhere, which is the difference between
+  /// a list that grew and a list that was always that long.
+  final double arrival;
 
   /// Degrees clockwise from north. Rotates the truck glyph.
   final double heading;
@@ -80,11 +87,19 @@ class MapCircle {
     required this.center,
     required this.radiusMeters,
     this.color = BrandColors.red,
+    this.fillOpacity = 0.08,
+    this.strokeOpacity = 0.45,
   });
 
   final LatLng center;
   final double radiusMeters;
   final Color color;
+
+  /// How solid the shading and the edge are. The defaults are the search
+  /// area; the radar rings that travel across it pass their own, fading as
+  /// they go, and no fill at all.
+  final double fillOpacity;
+  final double strokeOpacity;
 
   /// North, south, east and west edges: what a camera must show to frame it.
   List<LatLng> get extremes {
@@ -326,12 +341,16 @@ class _SchematicMapPainter extends CustomPainter {
       final radius = circle.radiusMeters / metersPerPixel;
       final at = _project(circle.center, size);
       canvas
-        ..drawCircle(at, radius, Paint()..color = circle.color.withValues(alpha: 0.08))
+        ..drawCircle(
+          at,
+          radius,
+          Paint()..color = circle.color.withValues(alpha: circle.fillOpacity),
+        )
         ..drawCircle(
           at,
           radius,
           Paint()
-            ..color = circle.color.withValues(alpha: 0.45)
+            ..color = circle.color.withValues(alpha: circle.strokeOpacity)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.5,
         );
@@ -490,7 +509,11 @@ class _SchematicMapPainter extends CustomPainter {
 
   void _paintMarkers(Canvas canvas, Size size) {
     for (final marker in markers) {
-      final point = _project(marker.position, size);
+      final projected = _project(marker.position, size);
+      // Still arriving: drawn above where it belongs, and falling.
+      final point = marker.arrival >= 1
+          ? projected
+          : projected.translate(0, -34 * (1 - marker.arrival));
       switch (marker.kind) {
         case MapMarkerKind.pickup:
           _pin(canvas, point, BrandColors.red);

@@ -43,6 +43,22 @@ abstract class VoiceTransport {
   /// off.
   ValueListenable<lk.VideoTrack?> get remoteVideo;
 
+  /// How loudly the other person is speaking right now, from 0 to 1.
+  ///
+  /// Drives the ripple around their avatar: on a voice call, or a video call
+  /// with their camera off, it is the only sign that the line is alive and
+  /// that they are the one talking.
+  ValueListenable<double> get peerAudioLevel;
+
+  /// How loudly this person is speaking, from 0 to 1. Shown on their own
+  /// microphone button, so somebody who is not being heard can see whether
+  /// their microphone is picking anything up at all.
+  ValueListenable<double> get ownAudioLevel;
+
+  /// Whether the other person's microphone is reaching us: their audio track
+  /// is subscribed and not muted. False means silence is theirs, not ours.
+  ValueListenable<bool> get peerHasAudio;
+
   /// Stops or restarts sending the picture, keeping the call.
   Future<void> setCameraOn({required bool on});
 
@@ -160,6 +176,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _left = StreamController<void>.broadcast();
   final _localVideo = ValueNotifier<lk.VideoTrack?>(null);
   final _remoteVideo = ValueNotifier<lk.VideoTrack?>(null);
+  final _peerAudioLevel = ValueNotifier<double>(0);
+  final _ownAudioLevel = ValueNotifier<double>(0);
+  final _peerHasAudio = ValueNotifier<bool>(false);
   lk.CameraPosition _position = lk.CameraPosition.front;
 
   static const _capture = lk.AudioCaptureOptions(
@@ -182,6 +201,15 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   ValueListenable<lk.VideoTrack?> get remoteVideo => _remoteVideo;
+
+  @override
+  ValueListenable<double> get peerAudioLevel => _peerAudioLevel;
+
+  @override
+  ValueListenable<double> get ownAudioLevel => _ownAudioLevel;
+
+  @override
+  ValueListenable<bool> get peerHasAudio => _peerHasAudio;
 
   @override
   Future<void> prepare({bool video = false}) async {
@@ -217,29 +245,43 @@ class LiveKitVoiceTransport implements VoiceTransport {
       ..on<lk.ParticipantConnectedEvent>((_) => _joined.add(null))
       ..on<lk.ParticipantDisconnectedEvent>((_) {
         _remoteVideo.value = null;
+        _peerAudioLevel.value = 0;
         _left.add(null);
+      })
+      // LiveKit reports who is speaking and how loudly, ordered loudest
+      // first, and zeroes the level when they stop. Only the other person
+      // counts: our own voice is not news to us.
+      ..on<lk.ActiveSpeakersChangedEvent>((event) {
+        final peer = event.speakers.whereType<lk.RemoteParticipant>().firstOrNull;
+        _peerAudioLevel.value = (peer?.audioLevel ?? 0).clamp(0.0, 1.0);
+        final me = event.speakers.whereType<lk.LocalParticipant>().firstOrNull;
+        _ownAudioLevel.value = (me?.audioLevel ?? 0).clamp(0.0, 1.0);
       })
       // Lost for good — the other side will not hear anything more either.
       ..on<lk.RoomDisconnectedEvent>((_) => _left.add(null))
       ..on<lk.TrackSubscribedEvent>((event) {
         final track = event.track;
         if (track is lk.VideoTrack) _remoteVideo.value = track;
+        if (track is lk.AudioTrack) _peerHasAudio.value = !event.publication.muted;
       })
       ..on<lk.TrackUnsubscribedEvent>((event) {
         if (identical(event.track, _remoteVideo.value)) _remoteVideo.value = null;
+        if (event.track is lk.AudioTrack) _peerHasAudio.value = false;
       })
       // The other person switched their camera off, or back on.
       ..on<lk.TrackMutedEvent>((event) {
-        if (event.participant is lk.RemoteParticipant &&
-            event.publication.kind == lk.TrackType.VIDEO) {
-          _remoteVideo.value = null;
+        if (event.participant is! lk.RemoteParticipant) return;
+        if (event.publication.kind == lk.TrackType.VIDEO) _remoteVideo.value = null;
+        if (event.publication.kind == lk.TrackType.AUDIO) {
+          _peerAudioLevel.value = 0;
+          _peerHasAudio.value = false;
         }
       })
       ..on<lk.TrackUnmutedEvent>((event) {
+        if (event.participant is! lk.RemoteParticipant) return;
         final track = event.publication.track;
-        if (event.participant is lk.RemoteParticipant && track is lk.VideoTrack) {
-          _remoteVideo.value = track;
-        }
+        if (track is lk.VideoTrack) _remoteVideo.value = track;
+        if (track is lk.AudioTrack) _peerHasAudio.value = true;
       });
 
     await room.connect(url, token);
@@ -262,6 +304,11 @@ class LiveKitVoiceTransport implements VoiceTransport {
         for (final publication in participant.videoTrackPublications) {
           final track = publication.track;
           if (track != null && !publication.muted) _remoteVideo.value = track;
+        }
+        for (final publication in participant.audioTrackPublications) {
+          if (publication.track != null && !publication.muted) {
+            _peerHasAudio.value = true;
+          }
         }
       }
       _joined.add(null);
@@ -319,6 +366,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
     _camera = null;
     _localVideo.value = null;
     _remoteVideo.value = null;
+    _peerAudioLevel.value = 0;
+    _ownAudioLevel.value = 0;
+    _peerHasAudio.value = false;
     await _listener?.dispose();
     _listener = null;
     if (room != null) {
@@ -353,6 +403,9 @@ class SilentVoiceTransport implements VoiceTransport {
   final _joined = StreamController<void>.broadcast();
   final _left = StreamController<void>.broadcast();
   final _noVideo = ValueNotifier<lk.VideoTrack?>(null);
+  final _level = ValueNotifier<double>(0);
+  final _ownLevel = ValueNotifier<double>(0);
+  final _hasPeerAudio = ValueNotifier<bool>(true);
 
   bool prepared = false;
   bool preparedVideo = false;
@@ -376,6 +429,30 @@ class SilentVoiceTransport implements VoiceTransport {
 
   @override
   ValueListenable<lk.VideoTrack?> get remoteVideo => _noVideo;
+
+  @override
+  ValueListenable<double> get peerAudioLevel => _level;
+
+  @override
+  ValueListenable<double> get ownAudioLevel => _ownLevel;
+
+  @override
+  ValueListenable<bool> get peerHasAudio => _hasPeerAudio;
+
+  /// For tests: how loudly the other person is talking, or 0 for silence.
+  double get speakingLevel => _level.value;
+
+  set speakingLevel(double level) => _level.value = level;
+
+  /// For tests: how loudly this person is talking.
+  double get ownSpeakingLevel => _ownLevel.value;
+
+  set ownSpeakingLevel(double level) => _ownLevel.value = level;
+
+  /// For tests: whether the other side's microphone reaches us at all.
+  bool get peerAudioArrives => _hasPeerAudio.value;
+
+  set peerAudioArrives(bool arrives) => _hasPeerAudio.value = arrives;
 
   @override
   Future<void> prepare({bool video = false}) async {
@@ -413,5 +490,7 @@ class SilentVoiceTransport implements VoiceTransport {
     prepared = false;
     preparedVideo = false;
     cameraOn = false;
+    _level.value = 0;
+    _ownLevel.value = 0;
   }
 }

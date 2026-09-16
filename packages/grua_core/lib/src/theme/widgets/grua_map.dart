@@ -373,8 +373,10 @@ class _GruaMapState extends State<GruaMap> {
               widget.circles[i].center.longitude,
             ),
             radius: widget.circles[i].radiusMeters,
-            fillColor: widget.circles[i].color.withValues(alpha: 0.08),
-            strokeColor: widget.circles[i].color.withValues(alpha: 0.45),
+            fillColor: widget.circles[i].color
+                .withValues(alpha: widget.circles[i].fillOpacity),
+            strokeColor: widget.circles[i].color
+                .withValues(alpha: widget.circles[i].strokeOpacity),
             strokeWidth: 2,
           ),
       },
@@ -442,11 +444,18 @@ class _GruaMapState extends State<GruaMap> {
             icon: _iconCache[widget.markers[i].kind] ??
                 gmap.BitmapDescriptor.defaultMarker,
             rotation: widget.markers[i].heading,
-            anchor: widget.markers[i].kind.isPin
-                // Pins point at the ground; the canvas has 4 px under the tip.
-                ? const Offset(0.5, 52 / 56)
-                // Truck glyphs and dots are centred on it.
-                : const Offset(0.5, 0.5),
+            // Google moves the icon up as the anchor grows, so a marker still
+            // arriving hangs above its point and falls onto it.
+            anchor: Offset(
+              0.5,
+              (widget.markers[i].kind.isPin
+                      // Pins point at the ground; the canvas has 4 px under
+                      // the tip.
+                      ? 52 / 56
+                      // Truck glyphs and dots are centred on it.
+                      : 0.5) +
+                  1.1 * (1 - widget.markers[i].arrival.clamp(0.0, 1.0)),
+            ),
             flat: !widget.markers[i].kind.isPin,
             onTap: widget.markers[i].onTap,
             // A tappable marker's tap belongs to the caller, not to Google's
