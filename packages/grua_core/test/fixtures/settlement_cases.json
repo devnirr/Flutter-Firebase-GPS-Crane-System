@@ -1,0 +1,163 @@
+{
+  "_about": "Worked examples for the weekly corte. Run by functions/test/settlements.test.ts and packages/grua_core/test/settlement_test.dart; both must agree. Amounts in DOP cents; times in Dominican time (UTC-4).",
+  "cases": [
+    {
+      "name": "Carlos, Grúa 07: Titan paga RD$6,250",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "entries": [
+        { "serviceId": "ins-1", "method": "insurer", "grossCents": 350000, "commissionCents": 105000, "netCents": 245000, "completedAt": "2024-09-02T09:15:00-04:00" },
+        { "serviceId": "ins-2", "method": "insurer", "grossCents": 550000, "commissionCents": 165000, "netCents": 385000, "completedAt": "2024-09-03T14:00:00-04:00" },
+        { "serviceId": "ins-3", "method": "insurer", "grossCents": 250000, "commissionCents": 75000, "netCents": 175000, "completedAt": "2024-09-04T11:30:00-04:00" },
+        { "serviceId": "cash-1", "method": "cash", "grossCents": 400000, "commissionCents": 80000, "netCents": 320000, "completedAt": "2024-09-04T16:45:00-04:00" },
+        { "serviceId": "cash-2", "method": "cash", "grossCents": 500000, "commissionCents": 100000, "netCents": 400000, "completedAt": "2024-09-05T10:20:00-04:00" }
+      ],
+      "expected": {
+        "insuranceOwedCents": 805000,
+        "commissionOwedCents": 180000,
+        "finalBalanceCents": 625000,
+        "direction": "to_driver",
+        "lineIds": ["ins-1", "ins-2", "ins-3", "cash-1", "cash-2"],
+        "lineAmounts": [245000, 385000, 175000, 80000, 100000],
+        "periodStart": "2024-09-02T09:15:00-04:00",
+        "retired": [],
+        "ignored": []
+      }
+    },
+    {
+      "name": "solo efectivo: el conductor le paga a Titan",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "entries": [
+        { "serviceId": "c1", "method": "cash", "grossCents": 400000, "commissionCents": 80000, "netCents": 320000, "completedAt": "2024-09-03T09:00:00-04:00" },
+        { "serviceId": "c2", "method": "cash", "grossCents": 500000, "commissionCents": 100000, "netCents": 400000, "completedAt": "2024-09-02T09:00:00-04:00" }
+      ],
+      "expected": {
+        "insuranceOwedCents": 0,
+        "commissionOwedCents": 180000,
+        "finalBalanceCents": -180000,
+        "direction": "to_company",
+        "lineIds": ["c2", "c1"],
+        "lineAmounts": [100000, 80000],
+        "periodStart": "2024-09-02T09:00:00-04:00",
+        "retired": [],
+        "ignored": []
+      }
+    },
+    {
+      "name": "se compensa en cero",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "entries": [
+        { "serviceId": "i1", "method": "insurer", "grossCents": 114300, "commissionCents": 34300, "netCents": 80000, "completedAt": "2024-09-02T09:00:00-04:00" },
+        { "serviceId": "c1", "method": "cash", "grossCents": 400000, "commissionCents": 80000, "netCents": 320000, "completedAt": "2024-09-03T09:00:00-04:00" }
+      ],
+      "expected": {
+        "insuranceOwedCents": 80000,
+        "commissionOwedCents": 80000,
+        "finalBalanceCents": 0,
+        "direction": "none",
+        "lineIds": ["i1", "c1"],
+        "lineAmounts": [80000, 80000],
+        "periodStart": "2024-09-02T09:00:00-04:00",
+        "retired": [],
+        "ignored": []
+      }
+    },
+    {
+      "name": "lo que termina despues del corte queda para la otra semana; el corte exacto entra",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "entries": [
+        { "serviceId": "exact", "method": "insurer", "grossCents": 250000, "commissionCents": 75000, "netCents": 175000, "completedAt": "2024-09-06T08:00:00-04:00" },
+        { "serviceId": "later", "method": "insurer", "grossCents": 350000, "commissionCents": 105000, "netCents": 245000, "completedAt": "2024-09-06T08:00:01-04:00" },
+        { "serviceId": "undated", "method": "insurer", "grossCents": 350000, "commissionCents": 105000, "netCents": 245000, "completedAt": null }
+      ],
+      "expected": {
+        "insuranceOwedCents": 175000,
+        "commissionOwedCents": 0,
+        "finalBalanceCents": 175000,
+        "direction": "to_driver",
+        "lineIds": ["exact"],
+        "lineAmounts": [175000],
+        "periodStart": "2024-09-06T08:00:00-04:00",
+        "retired": [],
+        "ignored": []
+      }
+    },
+    {
+      "name": "antes de que empezaran los cortes no cuenta",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "startAt": "2024-09-02T00:00:00-04:00",
+      "entries": [
+        { "serviceId": "old", "method": "cash", "grossCents": 400000, "commissionCents": 80000, "netCents": 320000, "completedAt": "2024-08-30T09:00:00-04:00" },
+        { "serviceId": "new", "method": "cash", "grossCents": 500000, "commissionCents": 100000, "netCents": 400000, "completedAt": "2024-09-03T09:00:00-04:00" }
+      ],
+      "expected": {
+        "insuranceOwedCents": 0,
+        "commissionOwedCents": 100000,
+        "finalBalanceCents": -100000,
+        "direction": "to_company",
+        "lineIds": ["new"],
+        "lineAmounts": [100000],
+        "periodStart": "2024-09-03T09:00:00-04:00",
+        "retired": [],
+        "ignored": []
+      }
+    },
+    {
+      "name": "efectivo ya entregado en la oficina y tarjeta",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "entries": [
+        { "serviceId": "handed-in", "method": "cash", "grossCents": 400000, "commissionCents": 80000, "netCents": 320000, "completedAt": "2024-09-02T09:00:00-04:00", "countedInCashCorte": true },
+        { "serviceId": "card", "method": "card", "grossCents": 250000, "commissionCents": 50000, "netCents": 200000, "completedAt": "2024-09-02T10:00:00-04:00" },
+        { "serviceId": "c1", "method": "cash", "grossCents": 500000, "commissionCents": 100000, "netCents": 400000, "completedAt": "2024-09-03T09:00:00-04:00" }
+      ],
+      "expected": {
+        "insuranceOwedCents": 0,
+        "commissionOwedCents": 100000,
+        "finalBalanceCents": -100000,
+        "direction": "to_company",
+        "lineIds": ["c1"],
+        "lineAmounts": [100000],
+        "periodStart": "2024-09-03T09:00:00-04:00",
+        "retired": ["handed-in"],
+        "ignored": ["card"]
+      }
+    },
+    {
+      "name": "solo efectivo ya entregado: se retira sin saldo",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "entries": [
+        { "serviceId": "handed-in", "method": "cash", "grossCents": 400000, "commissionCents": 80000, "netCents": 320000, "completedAt": "2024-09-02T09:00:00-04:00", "countedInCashCorte": true }
+      ],
+      "expected": {
+        "insuranceOwedCents": 0,
+        "commissionOwedCents": 0,
+        "finalBalanceCents": 0,
+        "direction": "none",
+        "lineIds": [],
+        "lineAmounts": [],
+        "periodStart": "2024-09-06T08:00:00-04:00",
+        "retired": ["handed-in"],
+        "ignored": []
+      }
+    },
+    {
+      "name": "nada que cortar",
+      "cutoff": "2024-09-06T08:00:00-04:00",
+      "entries": [
+        { "serviceId": "card", "method": "card", "grossCents": 250000, "commissionCents": 50000, "netCents": 200000, "completedAt": "2024-09-02T10:00:00-04:00" }
+      ],
+      "expected": null
+    }
+  ],
+  "payBy": [
+    { "from": "2024-09-06T08:00:00-04:00", "payBy": "2024-09-06T17:00:00-04:00" },
+    { "from": "2024-09-06T00:30:00-04:00", "payBy": "2024-09-06T17:00:00-04:00" },
+    { "from": "2024-09-06T17:00:00-04:00", "payBy": "2024-09-13T17:00:00-04:00" },
+    { "from": "2024-09-06T20:30:00-04:00", "payBy": "2024-09-13T17:00:00-04:00" },
+    { "from": "2024-09-02T10:00:00-04:00", "payBy": "2024-09-06T17:00:00-04:00" },
+    { "from": "2024-09-05T21:30:00-04:00", "payBy": "2024-09-06T17:00:00-04:00" },
+    { "from": "2024-09-07T09:00:00-04:00", "payBy": "2024-09-13T17:00:00-04:00" },
+    { "from": "2024-09-08T23:59:00-04:00", "payBy": "2024-09-13T17:00:00-04:00" },
+    { "from": "2024-12-27T09:00:00-04:00", "payBy": "2024-12-27T17:00:00-04:00" },
+    { "from": "2024-12-28T09:00:00-04:00", "payBy": "2025-01-03T17:00:00-04:00" }
+  ]
+}

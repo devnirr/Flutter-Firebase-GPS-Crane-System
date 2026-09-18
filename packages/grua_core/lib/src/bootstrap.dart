@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'config/app_config.dart';
+import 'data/demo/demo_backend.dart';
 import 'data/firebase/firebase_bootstrap.dart';
 import 'domain/enums.dart';
 import 'providers.dart';
@@ -40,6 +41,9 @@ Future<void> runGruaApp({
   UserRole demoRole = UserRole.client,
   List<Override> Function()? backendOverrides,
   FirebaseOptions? firebaseOptions,
+  /// Anything an app wires on top of the shared providers, such as the
+  /// panel's browser-backed theme-mode store.
+  List<Override> appOverrides = const [],
 }) async {
   await runZonedGuarded(
     () async {
@@ -105,18 +109,29 @@ Future<void> runGruaApp({
 
       final overrides = <Override>[
         appConfigProvider.overrideWithValue(config),
+        ...appOverrides,
         if (backendOverrides != null)
           ...backendOverrides()
         else if (usingFirebase)
           ...FirebaseBootstrap.overrides(config)
         else
-          ...demoOverrides(role: demoRole),
+          // The demo app also gets an insurer's month to invoice, and the
+          // driver app requests that arrive on their own.
+          ...demoOverrides(role: demoRole, backend: _demoAppBackend(demoRole)),
       ];
 
       runApp(ProviderScope(overrides: overrides, child: builder()));
     },
     (error, stack) => debugPrint('Zone error: $error\n$stack'),
   );
+}
+
+DemoBackend _demoAppBackend(UserRole role) {
+  final backend = DemoBackend()
+    ..seed()
+    ..seedInsurerHistory();
+  if (role == UserRole.driver) backend.startRequestSimulator();
+  return backend;
 }
 
 /// What a build configured for Firebase shows when it cannot reach it.

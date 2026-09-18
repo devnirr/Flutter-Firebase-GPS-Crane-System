@@ -13,7 +13,13 @@ import { Code, invalidArgument, precondition } from '../lib/errors.js';
 import { FieldValue, Paths } from '../lib/firestore.js';
 import { releaseIfFinished } from '../lib/driverRelease.js';
 import { distanceMeters, type LatLng } from '../lib/geo.js';
-import { requireActiveDriver, requireAuth, requireRole } from '../lib/guards.js';
+import {
+  requireActiveDriver,
+  requireActiveInsurer,
+  requireAuth,
+  requireRole,
+} from '../lib/guards.js';
+import { isInsurerJob } from '../lib/takeHome.js';
 import {
   type Quote,
   cancellationFeeCents,
@@ -338,11 +344,13 @@ export const completeService = onCall({ region, cors: true }, async (request) =>
       : 0;
 
   const quote = (service['quote'] ?? {}) as Quote;
+  const insurerJob = isInsurerJob(service);
 
   // The price the customer agreed to, plus billable waiting. Not the tariff
   // run again: that would add a night surcharge to a tow quoted at 21:50, and
-  // undo the price an operator confirmed on a heavy job.
-  const final = finalQuote(quote, pricing, waitingMinutes);
+  // undo the price an operator confirmed on a heavy job. An insurance
+  // company's price is its contract's zone price, with no waiting charge.
+  const final = insurerJob ? quote : finalQuote(quote, pricing, waitingMinutes);
 
   await applyTransition({
     serviceId,
@@ -354,8 +362,9 @@ export const completeService = onCall({ region, cors: true }, async (request) =>
       final,
       dropoffPhotoPaths: photoPaths,
       driverNotes: notes ?? service['driverNotes'] ?? '',
-      // The money stays with the chofer until they confirm collection.
-      'payment.status': PaymentStatus.cashPending,
+      // The money stays with the chofer until they confirm collection. An
+      // insurer's tow has no money at the roadside: it waits for the invoice.
+      'payment.status': insurerJob ? PaymentStatus.toInvoice : PaymentStatus.cashPending,
     },
 
     inTransaction: ({ transaction }) => {
@@ -384,6 +393,19 @@ export const completeService = onCall({ region, cors: true }, async (request) =>
         updatedAt: Date.now(),
       });
 
+      // Nothing to collect, so nothing for the chofer to confirm: the job is
+      // done and closes here.
+      if (insurerJob) {
+        await applyTransition({
+          serviceId,
+          event: ServiceEventName.closeService,
+          actorId: 'system',
+          actorRole: 'system',
+          meta: { reason: 'insurer_billed' },
+        });
+        return;
+      }
+
       const clientId = s['clientId'] as string | undefined;
       if (clientId) {
         await notify({
@@ -397,7 +419,12 @@ export const completeService = onCall({ region, cors: true }, async (request) =>
     },
   });
 
-  return { ok: true, finalCents: final.totalCents, waitingMinutes };
+  return {
+    ok: true,
+    finalCents: final.totalCents,
+    waitingMinutes: insurerJob ? 0 : waitingMinutes,
+    billedToInsurer: insurerJob,
+  };
 });
 
 /**
@@ -421,6 +448,14 @@ export const confirmCashCollected = onCall({ region, cors: true }, async (reques
 
   const service = await loadService(serviceId);
   assertAssigned(service, uid);
+  // An insurer's tow is billed to the company; there is no cash to confirm,
+  // and marking it paid would take it off the month's invoice.
+  if (isInsurerJob(service)) {
+    throw precondition(
+      Code.invalidTransition,
+      'Este servicio se factura a la aseguradora. No hay efectivo que cobrar.',
+    );
+  }
 
   const expected =
     ((service['final'] as Record<string, unknown> | undefined)?.['totalCents'] as number) ??
@@ -481,9 +516,19 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
   const { serviceId, reason } = parsed.data;
 
   const service = await loadService(serviceId);
-  const isOwner = service['clientId'] === caller.uid;
+  const clientId = (service['clientId'] as string | undefined) || '';
+  const isOwner = clientId !== '' && clientId === caller.uid;
   const isStaff = caller.role === UserRole.admin || caller.role === UserRole.ops;
-  if (!isOwner && !isStaff) {
+
+  // The company that ordered it, as its member records say right now.
+  let isInsurer = false;
+  if (caller.role === UserRole.insurer) {
+    const insurer = await requireActiveInsurer(request);
+    isInsurer =
+      typeof service['insurerId'] === 'string' && service['insurerId'] === insurer.insurerId;
+  }
+
+  if (!isOwner && !isStaff && !isInsurer) {
     throw precondition(Code.invalidTransition, 'Este servicio no es tuyo.');
   }
 
@@ -494,7 +539,11 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
       | undefined
   )?.toDate();
 
-  const feeCents = cancellationFeeCents(pricing, acceptedAt ?? null, new Date());
+  // An insurer's tow is only charged when the company itself cancels it: the
+  // office cancelling one is the office's own business.
+  const insurerJob = typeof service['insurerId'] === 'string' && service['insurerId'] !== '';
+  const feeCents =
+    insurerJob && !isInsurer ? 0 : cancellationFeeCents(pricing, acceptedAt ?? null, new Date());
 
   // The chofer comes from the transaction's own read, not the one above. A
   // chofer who accepted between the two was otherwise never freed: the service
@@ -506,25 +555,30 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
     serviceId,
     event: ServiceEventName.cancelService,
     actorId: caller.uid,
-    actorRole: isOwner ? UserRole.client : (caller.role as UserRole),
+    actorRole: isOwner ? UserRole.client : isInsurer ? UserRole.insurer : (caller.role as UserRole),
     meta: { reason, feeCents },
     patch: {
       cancellation: {
-        by: isOwner ? CancelledBy.client : CancelledBy.admin,
+        by: isOwner ? CancelledBy.client : isInsurer ? CancelledBy.insurer : CancelledBy.admin,
         reason,
         reasonCode: reason,
         feeCents,
         actorId: caller.uid,
       },
+      // The fee goes on the company's next monthly invoice.
+      ...(insurerJob && feeCents > 0 ? { 'payment.status': PaymentStatus.toInvoice } : {}),
     },
 
     inTransaction: ({ transaction, service: fresh }) => {
       driverId = fresh['driverId'] as string | undefined;
 
-      transaction.update(Paths.user(service['clientId'] as string), {
-        activeServiceId: FieldValue.delete(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      // An insurer's tow has no customer profile to release.
+      if (clientId) {
+        transaction.update(Paths.user(clientId), {
+          activeServiceId: FieldValue.delete(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
 
       if (driverId) {
         transaction.update(Paths.driver(driverId), {
@@ -547,7 +601,9 @@ export const cancelService = onCall({ region, cors: true }, async (request) => {
         uid: driverId,
         audience: 'driver',
         title: 'Servicio cancelado',
-        body: 'El cliente canceló el servicio.',
+        body: isInsurer
+          ? 'La aseguradora canceló el servicio.'
+          : 'El cliente canceló el servicio.',
         data: { serviceId, type: 'service_cancelled' },
       });
     },

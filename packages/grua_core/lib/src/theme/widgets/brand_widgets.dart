@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/enums.dart';
 import '../brand.dart';
+import '../palette.dart';
 
 /// A white card that floats over a map, as on the tracking and request screens.
 class FloatingCard extends StatelessWidget {
@@ -31,7 +32,7 @@ class FloatingCard extends StatelessWidget {
         boxShadow: Shadows.floating,
       ),
       child: Material(
-        color: BrandColors.white,
+        color: context.palette.surface,
         borderRadius: borderRadius,
         clipBehavior: Clip.antiAlias,
         child: onTap == null
@@ -71,7 +72,7 @@ class BottomActionSheet extends StatelessWidget {
         boxShadow: Shadows.sheet,
       ),
       child: Material(
-        color: BrandColors.white,
+        color: context.palette.surface,
         borderRadius: Corners.sheet,
         clipBehavior: Clip.antiAlias,
         child: SafeArea(
@@ -97,7 +98,7 @@ class FieldLabel extends StatelessWidget {
       style: Theme.of(context)
           .textTheme
           .labelSmall
-          ?.copyWith(color: color ?? BrandColors.grey600),
+          ?.copyWith(color: color ?? context.palette.textMuted),
     );
   }
 }
@@ -116,7 +117,7 @@ class StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (fg, bg) = _colors;
+    final (fg, bg) = _colors(context.palette);
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? Insets.sm : Insets.md,
@@ -130,23 +131,23 @@ class StatusChip extends StatelessWidget {
     );
   }
 
-  (Color, Color) get _colors => switch (status) {
+  (Color, Color) _colors(BrandPalette palette) => switch (status) {
         ServiceStatus.pendingDispatch ||
         ServiceStatus.offered =>
-          (BrandColors.warning, BrandColors.warningTint),
-        ServiceStatus.needsManual => (BrandColors.danger, BrandColors.dangerTint),
+          (palette.warning, palette.warningTint),
+        ServiceStatus.needsManual => (palette.danger, palette.dangerTint),
         ServiceStatus.accepted ||
         ServiceStatus.arrived ||
         ServiceStatus.inProgress =>
-          (BrandColors.info, BrandColors.infoTint),
+          (palette.info, palette.infoTint),
         ServiceStatus.completed ||
         ServiceStatus.closed =>
-          (BrandColors.success, BrandColors.successTint),
+          (palette.success, palette.successTint),
         ServiceStatus.cancelled ||
         ServiceStatus.expired ||
         ServiceStatus.failed =>
-          (BrandColors.grey600, BrandColors.grey100),
-        ServiceStatus.unknown => (BrandColors.grey600, BrandColors.grey100),
+          (palette.textMuted, palette.surfaceSubtle),
+        ServiceStatus.unknown => (palette.textMuted, palette.surfaceSubtle),
       };
 }
 
@@ -170,17 +171,18 @@ class DetailRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Insets.sm),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 18, color: BrandColors.grey400),
+            Icon(icon, size: 18, color: palette.textFaint),
             const SizedBox(width: Insets.md),
           ],
           Expanded(
-            child: Text(label, style: text.bodyMedium?.copyWith(color: BrandColors.grey600)),
+            child: Text(label, style: text.bodyMedium?.copyWith(color: palette.textMuted)),
           ),
           const SizedBox(width: Insets.md),
           Flexible(
@@ -188,7 +190,7 @@ class DetailRow extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: (emphasise ? text.titleMedium : text.bodyMedium)
-                  ?.copyWith(color: valueColor ?? BrandColors.ink),
+                  ?.copyWith(color: valueColor ?? palette.text),
             ),
           ),
         ],
@@ -214,6 +216,7 @@ class RouteSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -221,15 +224,15 @@ class RouteSummary extends StatelessWidget {
           padding: const EdgeInsets.only(top: 4),
           child: Column(
             children: [
-              const _Dot(color: BrandColors.red),
+              _Dot(color: palette.brand),
               if (dropoff != null) ...[
                 Container(
                   width: 2,
                   height: 26,
                   margin: const EdgeInsets.symmetric(vertical: 3),
-                  color: BrandColors.grey200,
+                  color: palette.border,
                 ),
-                const _Dot(color: BrandColors.ink, hollow: true),
+                _Dot(color: palette.text, hollow: true),
               ],
             ],
           ),
@@ -250,7 +253,7 @@ class RouteSummary extends StatelessWidget {
                   pickupReference,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                  style: text.bodySmall?.copyWith(color: palette.textMuted),
                 ),
               if (dropoff != null) ...[
                 const SizedBox(height: Insets.md),
@@ -281,7 +284,7 @@ class _Dot extends StatelessWidget {
       width: 10,
       height: 10,
       decoration: BoxDecoration(
-        color: hollow ? BrandColors.white : color,
+        color: hollow ? context.palette.surface : color,
         shape: BoxShape.circle,
         border: Border.all(color: color, width: 2),
       ),
@@ -312,10 +315,11 @@ class EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final (fg, bg) = switch (tone) {
-      EmptyStateTone.neutral => (BrandColors.grey600, BrandColors.grey100),
-      EmptyStateTone.error => (BrandColors.danger, BrandColors.dangerTint),
-      EmptyStateTone.success => (BrandColors.success, BrandColors.successTint),
+      EmptyStateTone.neutral => (palette.textMuted, palette.surfaceSubtle),
+      EmptyStateTone.error => (palette.danger, palette.dangerTint),
+      EmptyStateTone.success => (palette.success, palette.successTint),
     };
 
     return Center(
@@ -336,7 +340,7 @@ class EmptyState extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+              style: text.bodyMedium?.copyWith(color: palette.textMuted),
             ),
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: Insets.xxl),
@@ -379,7 +383,7 @@ class BrandLoader extends StatelessWidget {
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
-                  ?.copyWith(color: BrandColors.grey600),
+                  ?.copyWith(color: context.palette.textMuted),
             ),
           ],
         ],
@@ -477,11 +481,12 @@ class InlineNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final (fg, bg) = switch (tone) {
-      NoticeTone.warning => (BrandColors.warning, BrandColors.warningTint),
-      NoticeTone.error => (BrandColors.danger, BrandColors.dangerTint),
-      NoticeTone.info => (BrandColors.info, BrandColors.infoTint),
-      NoticeTone.success => (BrandColors.success, BrandColors.successTint),
+      NoticeTone.warning => (palette.warning, palette.warningTint),
+      NoticeTone.error => (palette.danger, palette.dangerTint),
+      NoticeTone.info => (palette.info, palette.infoTint),
+      NoticeTone.success => (palette.success, palette.successTint),
     };
 
     return Container(
@@ -498,7 +503,7 @@ class InlineNotice extends StatelessWidget {
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
-                  ?.copyWith(color: BrandColors.grey800),
+                  ?.copyWith(color: palette.textStrong),
             ),
           ),
           if (actionLabel != null && onAction != null)

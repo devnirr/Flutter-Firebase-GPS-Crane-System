@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../brand.dart';
+import '../palette.dart';
 
 /// The banner that drops in over whatever is on screen when something arrives.
 ///
@@ -29,6 +30,7 @@ class NotificationBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return Dismissible(
       key: ValueKey('toast-$id'),
@@ -36,7 +38,7 @@ class NotificationBanner extends StatelessWidget {
       onDismissed: (_) => onClose(),
       child: Material(
         key: const Key('notification-toast'),
-        color: BrandColors.white,
+        color: palette.surface,
         elevation: 8,
         shadowColor: Colors.black38,
         borderRadius: Corners.brMd,
@@ -71,7 +73,7 @@ class NotificationBanner extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: text.bodySmall?.copyWith(
-                          color: BrandColors.grey600,
+                          color: palette.textMuted,
                         ),
                       ),
                     ],
@@ -80,10 +82,10 @@ class NotificationBanner extends StatelessWidget {
                 IconButton(
                   tooltip: 'Cerrar',
                   onPressed: onClose,
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.close,
                     size: 20,
-                    color: BrandColors.grey400,
+                    color: palette.textFaint,
                   ),
                 ),
               ],

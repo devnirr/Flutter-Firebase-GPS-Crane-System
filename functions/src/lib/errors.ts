@@ -38,6 +38,8 @@ export const Code = {
   paymentDeclined: 'payment_declined',
   cashLimitExceeded: 'cash_limit_exceeded',
   paymentsNotConfigured: 'payments_not_configured',
+  /** No NCF can be issued: the range ran out, expired, or a number repeats. */
+  ncfUnavailable: 'ncf_unavailable',
 
   // Account
   accountBlocked: 'account_blocked',

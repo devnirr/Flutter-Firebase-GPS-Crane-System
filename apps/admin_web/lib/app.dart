@@ -15,6 +15,8 @@ class AdminApp extends ConsumerWidget {
       title: '${config.flavor.appName} · Panel',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.admin(),
+      darkTheme: AppTheme.adminDark(),
+      themeMode: ref.watch(themeModeProvider),
       routerConfig: ref.watch(routerProvider),
       locale: GruaLocalization.spanishDominican,
       supportedLocales: GruaLocalization.supportedLocales,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/value_objects.dart';
 import '../brand.dart';
+import '../palette.dart';
 
 /// What to draw on a [SchematicMap].
 @immutable
@@ -202,6 +203,8 @@ class SchematicMap extends StatelessWidget {
       routes: const [],
       circles: const [],
       textDirection: TextDirection.ltr,
+      // This one only projects; nothing it is asked for is coloured.
+      isDark: false,
     );
     MapMarker? best;
     var bestDistance = 28.0; // a fingertip, in logical pixels
@@ -219,6 +222,9 @@ class SchematicMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The tiles follow the skin the panel is wearing; the markers on them
+    // never do, because they are the legend.
+    final isDark = context.palette.isDark;
     return ClipRect(
       child: Stack(
         fit: StackFit.expand,
@@ -234,6 +240,7 @@ class SchematicMap extends StatelessWidget {
               ],
               circles: circles,
               textDirection: Directionality.of(context),
+              isDark: isDark,
             ),
             isComplex: true,
             willChange: true,
@@ -254,7 +261,8 @@ class SchematicMap extends StatelessWidget {
               bottom: Insets.sm,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: BrandColors.white.withValues(alpha: 0.82),
+                  color: (isDark ? const Color(0xFF23262B) : BrandColors.white)
+                      .withValues(alpha: 0.82),
                   borderRadius: Corners.brXs,
                 ),
                 child: Padding(
@@ -265,7 +273,9 @@ class SchematicMap extends StatelessWidget {
                   child: Text(
                     'Mapa de demostración',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: BrandColors.grey600,
+                          color: isDark
+                              ? const Color(0xFFB4AFAE)
+                              : BrandColors.grey600,
                           fontSize: 10,
                         ),
                   ),
@@ -286,6 +296,7 @@ class _SchematicMapPainter extends CustomPainter {
     required this.routes,
     required this.circles,
     required this.textDirection,
+    required this.isDark,
   });
 
   final LatLng center;
@@ -294,6 +305,12 @@ class _SchematicMapPainter extends CustomPainter {
   final List<MapRoute> routes;
   final List<MapCircle> circles;
   final TextDirection textDirection;
+
+  /// Which skin the tiles wear. Passed in rather than read from a context so
+  /// the painter stays a plain painter. It touches the ground only — tiles,
+  /// blocks, water, streets, casings, labels — never a marker, whose colours
+  /// are the ones the legend names.
+  final bool isDark;
 
   /// Web Mercator world size in pixels at this zoom, matching Google's 256-px
   /// tile scheme so marker separation reads at the right scale.
@@ -315,7 +332,11 @@ class _SchematicMapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFFF1EFEC));
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..color = isDark ? const Color(0xFF14161A) : const Color(0xFFF1EFEC),
+    );
 
     // A deterministic seed keeps the "city" stable across rebuilds so the map
     // does not shimmer while a marker animates.
@@ -358,7 +379,10 @@ class _SchematicMapPainter extends CustomPainter {
   }
 
   void _paintBlocks(Canvas canvas, Size size, math.Random rng) {
-    final block = Paint()..color = const Color(0xFFE7E4E0);
+    // Light: blocks a shade darker than the tile. Dark: a shade lighter, so
+    // the grid still reads without anything on the ground going bright.
+    final block = Paint()
+      ..color = isDark ? const Color(0xFF1B1E24) : const Color(0xFFE7E4E0);
     const step = 78.0;
     for (var x = -step; x < size.width + step; x += step) {
       for (var y = -step; y < size.height + step; y += step) {
@@ -375,7 +399,8 @@ class _SchematicMapPainter extends CustomPainter {
     }
 
     // A couple of green blocks stand in for parks.
-    final park = Paint()..color = const Color(0xFFD9E5D2);
+    final park = Paint()
+      ..color = isDark ? const Color(0xFF1B2A20) : const Color(0xFFD9E5D2);
     for (var i = 0; i < 3; i++) {
       canvas.drawRRect(
         RRect.fromRectAndRadius(
@@ -405,7 +430,7 @@ class _SchematicMapPainter extends CustomPainter {
     canvas.drawPath(
       path,
       Paint()
-        ..color = const Color(0xFFC5DCE8)
+        ..color = isDark ? const Color(0xFF16303E) : const Color(0xFFC5DCE8)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 16
         ..strokeCap = StrokeCap.round,
@@ -413,17 +438,19 @@ class _SchematicMapPainter extends CustomPainter {
   }
 
   void _paintStreets(Canvas canvas, Size size, math.Random rng) {
+    // At night the roads are lit a step above the ground rather than white:
+    // a white grid at this density is the whole rectangle glowing.
     final secondary = Paint()
-      ..color = BrandColors.white
+      ..color = isDark ? const Color(0xFF33383F) : BrandColors.white
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4;
     final arterial = Paint()
-      ..color = const Color(0xFFFBD9A0)
+      ..color = isDark ? const Color(0xFF5A4A2E) : const Color(0xFFFBD9A0)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 9
       ..strokeCap = StrokeCap.round;
     final highway = Paint()
-      ..color = const Color(0xFFF0A868)
+      ..color = isDark ? const Color(0xFF6E4B2E) : const Color(0xFFF0A868)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 13
       ..strokeCap = StrokeCap.round;
@@ -469,12 +496,13 @@ class _SchematicMapPainter extends CustomPainter {
       }
       if (route.dashed) path = _dashed(path);
 
-      // Casing first, so the line reads over both road and block fills.
+      // Casing first, so the line reads over both road and block fills. It is
+      // the contrast under the route, so it darkens rather than lightens.
       canvas
         ..drawPath(
           path,
           Paint()
-            ..color = BrandColors.white
+            ..color = isDark ? const Color(0xFF0B0C0E) : BrandColors.white
             ..style = PaintingStyle.stroke
             ..strokeWidth = 9
             ..strokeCap = StrokeCap.round
@@ -619,10 +647,10 @@ class _SchematicMapPainter extends CustomPainter {
     final painter = TextPainter(
       text: TextSpan(
         text: text,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w700,
-          color: BrandColors.ink,
+          color: isDark ? const Color(0xFFF1EFEE) : BrandColors.ink,
         ),
       ),
       textDirection: textDirection,
@@ -639,7 +667,9 @@ class _SchematicMapPainter extends CustomPainter {
     );
     canvas.drawRRect(
       rect,
-      Paint()..color = BrandColors.white.withValues(alpha: 0.92),
+      Paint()
+        ..color = (isDark ? const Color(0xFF23262B) : BrandColors.white)
+            .withValues(alpha: 0.92),
     );
     painter
       ..paint(canvas, Offset(at.dx - painter.width / 2, at.dy + 11))
@@ -651,5 +681,6 @@ class _SchematicMapPainter extends CustomPainter {
       old.center != center ||
       old.zoom != zoom ||
       old.routes != routes ||
-      old.markers != markers;
+      old.markers != markers ||
+      old.isDark != isDark;
 }

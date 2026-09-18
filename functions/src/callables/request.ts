@@ -154,7 +154,7 @@ const toLatLng = (p: z.infer<typeof point>): LatLng => ({
  * Its `stretches` are what the tariff prices: which kilometres are city and
  * which carretera.
  */
-async function tripRoute(
+export async function tripRoute(
   from: LatLng,
   to: LatLng,
   now: Date,
@@ -189,7 +189,7 @@ async function tripRoute(
  * Better to say so while the customer is still choosing than to accept the job
  * and strand them when the cascade finds nobody within 40 km.
  */
-async function assertCovered(pickup: LatLng, dropoff: LatLng): Promise<void> {
+export async function assertCovered(pickup: LatLng, dropoff: LatLng): Promise<void> {
   if (!isPlausiblyInDominicanRepublic(pickup)) {
     throw precondition(
       Code.outsideCoverage,

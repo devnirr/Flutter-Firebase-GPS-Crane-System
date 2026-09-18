@@ -92,6 +92,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _Header(driver: driver),
+                    const _BalancePill(),
                     const SizedBox(height: Insets.sm),
                     // The mark over the map, as on the customer's home. It
                     // lets touches through, so the map still pans under it.
@@ -225,6 +226,61 @@ class _Header extends ConsumerWidget {
 }
 
 /// Today's net, one tap from the full breakdown.
+/// What Titan and the chofer owe each other, as a chip under the header and
+/// one tap from the cortes. Nothing at all while there is no balance.
+class _BalancePill extends ConsumerWidget {
+  const _BalancePill();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    final total = ref.watch(myDriverBalanceProvider)?.totalCents ?? 0;
+    if (total == 0) return const SizedBox.shrink();
+    final owed = total > 0;
+    final color = owed ? BrandColors.success : BrandColors.danger;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Insets.lg, Insets.sm, Insets.lg, 0),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Material(
+          color: BrandColors.white,
+          elevation: 2,
+          borderRadius: Corners.brMd,
+          child: InkWell(
+            key: const Key('home-balance'),
+            onTap: () => context.push(Routes.settlements),
+            borderRadius: Corners.brMd,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Insets.md,
+                vertical: Insets.sm,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.account_balance_wallet_outlined, size: 18, color: color),
+                  const SizedBox(width: Insets.sm),
+                  Flexible(
+                    child: Text(
+                      owed
+                          ? 'Titan te debe ${total.formatDOP}'
+                          : 'Debes ${(-total).formatDOP} a Titan',
+                      overflow: TextOverflow.ellipsis,
+                      style: text.titleSmall?.copyWith(color: color),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, size: 18, color: BrandColors.grey400),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _TodayPill extends StatelessWidget {
   const _TodayPill({required this.cents, required this.onTap});
 

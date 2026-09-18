@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../drivers/driver_details_dialog.dart';
+import '../shared/toast.dart';
 
 /// The dispatcher's main screen: every truck and every open job on one map.
 ///
@@ -73,6 +74,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     // index, a caller without the staff claim — used to collapse to `[]` and
     // render as "Todo tranquilo", which is the most dangerous thing this
     // screen can say. A dispatcher has to be told the list is broken.
+    final palette = context.palette;
     final servicesAsync = ref.watch(activeServicesProvider);
     final services = servicesAsync.value ?? const <Service>[];
     final roster = ref.watch(allDriversProvider);
@@ -138,7 +140,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
         SizedBox(
           width: 340,
           child: ColoredBox(
-            color: BrandColors.white,
+            color: palette.surface,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -317,16 +319,17 @@ class _PanelTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return Material(
-      color: BrandColors.white,
+      color: palette.surface,
       child: InkWell(
         onTap: onTap,
         child: Container(
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: selected ? BrandColors.red : Colors.transparent,
+                color: selected ? palette.brand : Colors.transparent,
                 width: 2,
               ),
             ),
@@ -346,7 +349,7 @@ class _PanelTab extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: text.titleSmall?.copyWith(
-                    color: selected ? BrandColors.ink : BrandColors.grey600,
+                    color: selected ? palette.text : palette.textMuted,
                   ),
                 ),
               ),
@@ -357,9 +360,9 @@ class _PanelTab extends StatelessWidget {
                     horizontal: Insets.sm,
                     vertical: 1,
                   ),
-                  decoration: const BoxDecoration(
-                    color: BrandColors.red,
-                    borderRadius: BorderRadius.all(
+                  decoration: BoxDecoration(
+                    color: palette.brand,
+                    borderRadius: const BorderRadius.all(
                       Radius.circular(Corners.pill),
                     ),
                   ),
@@ -373,7 +376,7 @@ class _PanelTab extends StatelessWidget {
               else
                 Text(
                   '$count',
-                  style: text.labelMedium?.copyWith(color: BrandColors.grey600),
+                  style: text.labelMedium?.copyWith(color: palette.textMuted),
                 ),
             ],
           ),
@@ -477,6 +480,7 @@ class _RequestRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final urgent = request.status == ServiceStatus.needsManual;
     final waiting = request.createdAt == null
         ? Duration.zero
@@ -484,10 +488,10 @@ class _RequestRow extends StatelessWidget {
 
     return Material(
       color: selected
-          ? BrandColors.redTint
+          ? palette.brandTint
           : urgent
-              ? BrandColors.dangerTint
-              : BrandColors.white,
+              ? palette.dangerTint
+              : palette.surface,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -504,7 +508,7 @@ class _RequestRow extends StatelessWidget {
                     child: Text(
                       request.code,
                       style: text.titleSmall?.copyWith(
-                        color: urgent ? BrandColors.danger : BrandColors.ink,
+                        color: urgent ? palette.danger : palette.text,
                       ),
                     ),
                   ),
@@ -531,7 +535,7 @@ class _RequestRow extends StatelessWidget {
                 ].join(' · '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                style: text.bodySmall?.copyWith(color: palette.textMuted),
               ),
               const SizedBox(height: Insets.sm),
 
@@ -540,14 +544,14 @@ class _RequestRow extends StatelessWidget {
               // to the next town is a different job from one across the street.
               _Endpoint(
                 icon: Icons.my_location,
-                color: BrandColors.red,
+                color: palette.brand,
                 label: request.pickup.displayAddress,
                 note: request.pickup.reference,
               ),
               const SizedBox(height: Insets.xs),
               _Endpoint(
                 icon: Icons.flag_outlined,
-                color: BrandColors.ink,
+                color: palette.text,
                 label: request.dropoff?.displayAddress ?? 'Sin destino',
                 note: request.dropoff?.reference ?? '',
               ),
@@ -558,13 +562,13 @@ class _RequestRow extends StatelessWidget {
                   Icon(
                     Icons.schedule,
                     size: 13,
-                    color: urgent ? BrandColors.danger : BrandColors.grey400,
+                    color: urgent ? palette.danger : palette.textFaint,
                   ),
                   const SizedBox(width: 4),
                   Text(
                     'esperando ${DoTime.stopwatch(waiting)}',
                     style: text.bodySmall?.copyWith(
-                      color: urgent ? BrandColors.danger : BrandColors.grey600,
+                      color: urgent ? palette.danger : palette.textMuted,
                     ),
                   ),
                   const Spacer(),
@@ -573,8 +577,7 @@ class _RequestRow extends StatelessWidget {
                       request.truckTypeRequired.label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:
-                          text.bodySmall?.copyWith(color: BrandColors.grey600),
+                      style: text.bodySmall?.copyWith(color: palette.textMuted),
                     ),
                   ),
                 ],
@@ -588,12 +591,12 @@ class _RequestRow extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 2),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
                       child: Icon(
                         Icons.search_off,
                         size: 14,
-                        color: BrandColors.warning,
+                        color: palette.warning,
                       ),
                     ),
                     const SizedBox(width: Insets.sm),
@@ -601,7 +604,7 @@ class _RequestRow extends StatelessWidget {
                       child: Text(
                         request.dispatch.lastReason,
                         style: text.bodySmall?.copyWith(
-                          color: BrandColors.grey600,
+                          color: palette.textMuted,
                         ),
                       ),
                     ),
@@ -633,6 +636,7 @@ class _Endpoint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -658,7 +662,7 @@ class _Endpoint extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: text.bodySmall?.copyWith(
-                    color: BrandColors.grey400,
+                    color: palette.textFaint,
                     fontSize: 11,
                   ),
                 ),
@@ -730,6 +734,7 @@ class _ServiceRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final urgent = service.status == ServiceStatus.needsManual;
     final waiting = service.createdAt == null
         ? Duration.zero
@@ -737,10 +742,10 @@ class _ServiceRow extends StatelessWidget {
 
     return Material(
       color: selected
-          ? BrandColors.redTint
+          ? palette.brandTint
           : urgent
-              ? BrandColors.dangerTint
-              : BrandColors.white,
+              ? palette.dangerTint
+              : palette.surface,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -757,7 +762,7 @@ class _ServiceRow extends StatelessWidget {
                     child: Text(
                       service.code,
                       style: text.titleSmall?.copyWith(
-                        color: urgent ? BrandColors.danger : BrandColors.ink,
+                        color: urgent ? palette.danger : palette.text,
                       ),
                     ),
                   ),
@@ -773,7 +778,7 @@ class _ServiceRow extends StatelessWidget {
                 service.pickup.displayAddress,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                style: text.bodySmall?.copyWith(color: palette.textMuted),
               ),
               const SizedBox(height: Insets.xs),
               Row(
@@ -781,13 +786,13 @@ class _ServiceRow extends StatelessWidget {
                   Icon(
                     Icons.schedule,
                     size: 13,
-                    color: urgent ? BrandColors.danger : BrandColors.grey400,
+                    color: urgent ? palette.danger : palette.textFaint,
                   ),
                   const SizedBox(width: 4),
                   Text(
                     'esperando ${DoTime.stopwatch(waiting)}',
                     style: text.bodySmall?.copyWith(
-                      color: urgent ? BrandColors.danger : BrandColors.grey600,
+                      color: urgent ? palette.danger : palette.textMuted,
                     ),
                   ),
                   const Spacer(),
@@ -798,8 +803,7 @@ class _ServiceRow extends StatelessWidget {
                       service.hasDriver ? service.driverName : 'Sin asignar',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:
-                          text.bodySmall?.copyWith(color: BrandColors.grey600),
+                      style: text.bodySmall?.copyWith(color: palette.textMuted),
                     ),
                   ),
                 ],
@@ -1006,6 +1010,7 @@ class _EligibleBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final none = count == 0;
 
     return FloatingCard(
@@ -1020,7 +1025,7 @@ class _EligibleBanner extends StatelessWidget {
           Icon(
             none ? Icons.search_off : Icons.filter_alt_outlined,
             size: 16,
-            color: none ? BrandColors.warning : BrandColors.grey600,
+            color: none ? palette.warning : palette.textMuted,
           ),
           const SizedBox(width: Insets.sm),
           Text(
@@ -1029,13 +1034,13 @@ class _EligibleBanner extends StatelessWidget {
                 : '$count grúa${count == 1 ? '' : 's'} para '
                     '${service.truckTypeRequired.label}',
             style: text.labelMedium?.copyWith(
-              color: none ? BrandColors.warning : BrandColors.ink,
+              color: none ? palette.warning : palette.text,
             ),
           ),
           const SizedBox(width: Insets.sm),
           Text(
             service.code,
-            style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+            style: text.bodySmall?.copyWith(color: palette.textMuted),
           ),
         ],
       ),
@@ -1139,10 +1144,11 @@ class _ServiceDrawer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final events = ref.watch(serviceEventsProvider(service.id)).value ?? const [];
 
     return ColoredBox(
-      color: BrandColors.white,
+      color: palette.surface,
       child: ListView(
         padding: const EdgeInsets.all(Insets.lg),
         children: [
@@ -1235,8 +1241,10 @@ class _ServiceDrawer extends ConsumerWidget {
             _AssignPanel(service: service)
           else
             OutlinedButton.icon(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Llamando a ${service.driverName}…')),
+              onPressed: () => showToast(
+                context,
+                'Llamando a ${service.driverName}…',
+                tone: ToastTone.info,
               ),
               icon: const Icon(Icons.call, size: 18),
               label: const Text('Contactar chofer'),
@@ -1252,9 +1260,9 @@ class _ServiceDrawer extends ConsumerWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 5),
-                      child: Icon(Icons.circle, size: 7, color: BrandColors.red),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Icon(Icons.circle, size: 7, color: palette.brand),
                     ),
                     const SizedBox(width: Insets.sm),
                     Expanded(
@@ -1266,7 +1274,7 @@ class _ServiceDrawer extends ConsumerWidget {
                             Text(
                               DoTime.time(event.at!),
                               style: text.bodySmall?.copyWith(
-                                color: BrandColors.grey400,
+                                color: palette.textFaint,
                                 fontSize: 11,
                               ),
                             ),
@@ -1329,7 +1337,7 @@ class _HeavyReviewPanelState extends ConsumerState<_HeavyReviewPanel> {
       _error = null;
     });
 
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = Toaster.of(context);
     final result = await ref.read(functionsGatewayProvider).confirmHeavyService(
           serviceId: widget.service.id,
           totalCents: cents,
@@ -1337,19 +1345,13 @@ class _HeavyReviewPanelState extends ConsumerState<_HeavyReviewPanel> {
         );
 
     if (mounted) setState(() => _sending = false);
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          switch (result) {
-            Ok<void>() =>
-              'Precio confirmado: ${cents.formatDOP}. Buscando grúa pesada.',
-            Err<void>(:final failure) => failure.userMessage,
-          },
-        ),
-        backgroundColor: result.isOk ? BrandColors.success : BrandColors.danger,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: result.isOk ? 3 : 6),
-      ),
+    toast.show(
+      switch (result) {
+        Ok<void>() =>
+          'Precio confirmado: ${cents.formatDOP}. Buscando grúa pesada.',
+        Err<void>(:final failure) => failure.userMessage,
+      },
+      tone: result.isOk ? ToastTone.success : ToastTone.error,
     );
   }
 
@@ -1420,7 +1422,7 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
     // Taken before the call: a successful assignment moves the service out of
     // the queue and this panel goes with it, and the refusal is exactly what
     // the dispatcher needs when it does not.
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = Toaster.of(context);
 
     final result = await ref.read(functionsGatewayProvider).assignServiceManually(
           serviceId: widget.service.id,
@@ -1429,18 +1431,12 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
 
     if (mounted) setState(() => _sending = null);
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          switch (result) {
-            Ok<void>() => '${driver.shortName} va en camino.',
-            Err<void>(:final failure) => failure.userMessage,
-          },
-        ),
-        backgroundColor: result.isOk ? BrandColors.success : BrandColors.danger,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: result.isOk ? 3 : 6),
-      ),
+    toast.show(
+      switch (result) {
+        Ok<void>() => '${driver.shortName} va en camino.',
+        Err<void>(:final failure) => failure.userMessage,
+      },
+      tone: result.isOk ? ToastTone.success : ToastTone.error,
     );
   }
 
@@ -1451,6 +1447,7 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
     final live = ref.watch(liveDriverPositionsProvider).value ?? const [];
     final now = DateTime.now().toUtc();
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     final positions = {for (final p in live) p.driverId: p};
 
@@ -1487,7 +1484,7 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
         for (final driver in candidates.take(5))
           Card(
             margin: const EdgeInsets.only(bottom: Insets.sm),
-            color: BrandColors.offWhite,
+            color: palette.canvas,
             child: ListTile(
               dense: true,
               title: Text(driver.shortName, style: text.titleSmall),
@@ -1640,10 +1637,11 @@ class _DriverRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final (status, statusColor) = _status(driver, position, now, appOpen);
+    final palette = context.palette;
+    final (status, statusColor) = _status(driver, position, now, appOpen, palette);
 
     return Material(
-      color: selected ? BrandColors.redTint : BrandColors.white,
+      color: selected ? palette.brandTint : palette.surface,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -1683,8 +1681,7 @@ class _DriverRow extends StatelessWidget {
                               '${driver.truckType.label}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:
-                          text.bodySmall?.copyWith(color: BrandColors.grey600),
+                      style: text.bodySmall?.copyWith(color: palette.textMuted),
                     ),
                     const SizedBox(height: Insets.xs),
                     Row(
@@ -1729,6 +1726,7 @@ class _DriverRow extends StatelessWidget {
   DriverLivePosition? position,
   DateTime now,
   bool appOpen,
+  BrandPalette palette,
 ) {
   if (driver.isBusy) return ('En servicio', BrandColors.driverOnService);
   if (driver.isOnline) {
@@ -1743,12 +1741,12 @@ class _DriverRow extends StatelessWidget {
     }
     return ('Disponible', BrandColors.driverIdle);
   }
-  if (appOpen) return ('Conectado, sin turno', BrandColors.grey600);
+  if (appOpen) return ('Conectado, sin turno', palette.textMuted);
   return (
     driver.lastOnlineAt == null
         ? 'Desconectado'
         : 'Desconectado · ${DoTime.relative(driver.lastOnlineAt!, now: now)}',
-    BrandColors.grey600,
+    palette.textMuted,
   );
 }
 
@@ -1759,14 +1757,14 @@ class _AccountPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final (label, fg, bg) = switch (status) {
-      DriverStatus.active =>
-        ('Activo', BrandColors.success, BrandColors.successTint),
+      DriverStatus.active => ('Activo', palette.success, palette.successTint),
       DriverStatus.inactive =>
-        ('Inactivo', BrandColors.grey600, BrandColors.grey100),
+        ('Inactivo', palette.textMuted, palette.surfaceSubtle),
       DriverStatus.suspended =>
-        ('Suspendido', BrandColors.danger, BrandColors.dangerTint),
-      DriverStatus.unknown => ('—', BrandColors.grey600, BrandColors.grey100),
+        ('Suspendido', palette.danger, palette.dangerTint),
+      DriverStatus.unknown => ('—', palette.textMuted, palette.surfaceSubtle),
     };
 
     return Container(
@@ -1804,11 +1802,12 @@ class _DriverDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final (status, statusColor) = _status(driver, position, now, appOpen);
+    final palette = context.palette;
+    final (status, statusColor) = _status(driver, position, now, appOpen, palette);
     final serviceId = driver.currentServiceId;
 
     return ColoredBox(
-      color: BrandColors.white,
+      color: palette.surface,
       child: ListView(
         padding: const EdgeInsets.all(Insets.lg),
         children: [

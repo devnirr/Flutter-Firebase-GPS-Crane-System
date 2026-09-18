@@ -163,7 +163,7 @@ class _OfferCardState extends ConsumerState<OfferCard> {
                             style: text.headlineSmall?.copyWith(color: BrandColors.red),
                           ),
                           Text(
-                            'para ti · ${offer.paymentMethod.label}',
+                            'Ganancia por este servicio · ${offer.paymentMethod.label}',
                             style: text.bodySmall?.copyWith(color: BrandColors.grey600),
                           ),
                         ],

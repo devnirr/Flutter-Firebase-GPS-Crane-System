@@ -8,7 +8,7 @@ import {
   UserRole,
 } from './enums.js';
 import { Code, precondition } from './errors.js';
-import { FieldValue, Paths, Timestamp, db } from './firestore.js';
+import { FieldValue, Paths, db } from './firestore.js';
 
 /**
  * The service state machine.
@@ -192,7 +192,7 @@ export const TRANSITIONS: readonly Transition[] = [
       ServiceStatus.arrived,
     ],
     to: ServiceStatus.cancelled,
-    actors: [UserRole.client, UserRole.admin, UserRole.ops],
+    actors: [UserRole.client, UserRole.insurer, UserRole.admin, UserRole.ops],
     patch: () => ({ 'timeline.cancelledAt': FieldValue.serverTimestamp() }),
   }),
 

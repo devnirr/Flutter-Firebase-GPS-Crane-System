@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3 keeps `Override` out of the default export surface.
 import 'package:flutter_riverpod/misc.dart'
@@ -9,6 +11,9 @@ import 'config/app_config.dart';
 import 'config/maps_script.dart';
 import 'data/demo/demo_backend.dart';
 import 'data/demo/demo_repositories.dart';
+import 'data/insurer_invoicing.dart';
+import 'data/insurer_stats.dart';
+import 'data/settlements.dart';
 import 'domain/enums.dart';
 import 'domain/models/app_user.dart';
 import 'domain/models/billing.dart';
@@ -16,15 +21,20 @@ import 'domain/models/chat_prefs.dart';
 import 'domain/models/chat_request.dart';
 import 'domain/models/dispatch_models.dart';
 import 'domain/models/driver.dart';
+import 'domain/models/insurer.dart';
+import 'domain/models/insurer_invoice.dart';
 import 'domain/models/payments.dart';
+import 'domain/models/pricing_rule.dart';
 import 'domain/models/remote_config_models.dart';
 import 'domain/models/service.dart';
+import 'domain/models/settlement.dart';
 import 'domain/models/truck.dart';
 import 'domain/repositories.dart';
 import 'domain/value_objects.dart';
 import 'location/location_service.dart';
 import 'location/places_service.dart';
 import 'location/route_service.dart';
+import 'utils/date_time_do.dart';
 
 /// Dependency wiring for all three apps.
 ///
@@ -106,6 +116,11 @@ final earningsRepositoryProvider = Provider<EarningsRepository>(
       throw UnimplementedError('earningsRepositoryProvider must be overridden'),
 );
 
+final insurerRepositoryProvider = Provider<InsurerRepository>(
+  (ref) =>
+      throw UnimplementedError('insurerRepositoryProvider must be overridden'),
+);
+
 final invoiceRepositoryProvider = Provider<InvoiceRepository>(
   (ref) =>
       throw UnimplementedError('invoiceRepositoryProvider must be overridden'),
@@ -141,7 +156,7 @@ List<Override> demoOverrides({
     driverRepositoryProvider.overrideWithValue(DemoDriverRepository(instance)),
     truckRepositoryProvider.overrideWithValue(DemoTruckRepository(instance)),
     serviceRepositoryProvider.overrideWithValue(DemoServiceRepository(instance)),
-    offerRepositoryProvider.overrideWithValue(const DemoOfferRepository()),
+    offerRepositoryProvider.overrideWithValue(DemoOfferRepository(instance)),
     callRepositoryProvider.overrideWithValue(DemoCallRepository(instance)),
     // No LiveKit server in demo mode: calls ring and connect without audio.
     voiceTransportFactoryProvider
@@ -155,6 +170,7 @@ List<Override> demoOverrides({
     earningsRepositoryProvider
         .overrideWithValue(DemoEarningsRepository(instance)),
     invoiceRepositoryProvider.overrideWithValue(DemoInvoiceRepository(instance)),
+    insurerRepositoryProvider.overrideWithValue(DemoInsurerRepository(instance)),
     configRepositoryProvider.overrideWithValue(DemoConfigRepository(instance)),
     functionsGatewayProvider
         .overrideWithValue(DemoFunctionsGateway(instance)),
@@ -307,6 +323,18 @@ final activeDriverServiceProvider = StreamProvider<Service?>((ref) {
   final uid = ref.watch(currentUserIdProvider);
   if (uid == null) return Stream.value(null);
   return ref.watch(serviceRepositoryProvider).watchActiveForDriver(uid);
+});
+
+/// The signed-in chofer's own offer on one job: what they take home from it.
+///
+/// Read after accepting too. The service document cannot carry the chofer's
+/// share of an insurer's tow — the insurance company reads that document —
+/// but the offer is the chofer's alone.
+final StreamProviderFamily<Offer?, String> myOfferProvider =
+    StreamProvider.family<Offer?, String>((ref, serviceId) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return Stream.value(null);
+  return ref.watch(offerRepositoryProvider).watchOffer(serviceId, uid);
 });
 
 final StreamProviderFamily<Service?, String> serviceByIdProvider =
@@ -494,6 +522,201 @@ final driverEarningsProvider = StreamProvider<EarningsSummary?>((ref) {
   if (uid == null) return Stream.value(null);
   return ref.watch(earningsRepositoryProvider).watchSummary(uid);
 });
+
+/// The company the signed-in person works for, or null for anyone else.
+final currentInsurerIdProvider = FutureProvider<String?>((ref) async {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return null;
+  return await ref.read(authRepositoryProvider).currentInsurerId(forceRefresh: true);
+});
+
+// The providers below wait for the company id rather than reading null
+// while its token refresh is on the way: a null there reads as "no company",
+// and the portal would briefly tell a valid person they have been
+// deactivated.
+
+/// The signed-in person's own record at their company: their role, whether
+/// they may act, whether they still have to choose a password.
+final myInsurerMemberProvider = StreamProvider<InsurerMember?>((ref) async* {
+  final uid = ref.watch(currentUserIdProvider);
+  final insurerId = await ref.watch(currentInsurerIdProvider.future);
+  if (uid == null || insurerId == null) {
+    yield null;
+    return;
+  }
+  yield* ref.watch(insurerRepositoryProvider).watchMember(insurerId, uid);
+});
+
+/// The signed-in person's company.
+final myInsurerProvider = StreamProvider<Insurer?>((ref) async* {
+  final insurerId = await ref.watch(currentInsurerIdProvider.future);
+  if (insurerId == null) {
+    yield null;
+    return;
+  }
+  yield* ref.watch(insurerRepositoryProvider).watchInsurer(insurerId);
+});
+
+/// The signed-in company's latest tows, newest first.
+final myInsurerServicesProvider = StreamProvider<List<Service>>((ref) async* {
+  final insurerId = await ref.watch(currentInsurerIdProvider.future);
+  if (insurerId == null) {
+    yield const [];
+    return;
+  }
+  yield* ref.watch(serviceRepositoryProvider).watchInsurerServices(insurerId);
+});
+
+/// This month's numbers for the signed-in company.
+final myInsurerStatsProvider = StreamProvider<InsurerStats>((ref) async* {
+  final now = DateTime.now().toUtc();
+  // Starts over when the month turns, so the numbers move to the new month
+  // on a screen left open overnight.
+  final nextMonth = InvoicePeriod.of(now).end.difference(now) + const Duration(seconds: 1);
+  final turn = Timer(nextMonth, ref.invalidateSelf);
+  ref.onDispose(turn.cancel);
+
+  final insurerId = await ref.watch(currentInsurerIdProvider.future);
+  if (insurerId == null) {
+    yield InsurerStats.of(const [], now);
+    return;
+  }
+  final monthStart = DoTime.startOfLocalMonth(now);
+  // The month's tows, plus anything still in flight from before it.
+  yield* ref
+      .watch(serviceRepositoryProvider)
+      .watchInsurerServices(insurerId, since: monthStart.subtract(const Duration(days: 3)), limit: 1000)
+      .map((services) => InsurerStats.of(services, DateTime.now().toUtc()));
+});
+
+/// The day weekly cortes began, or null when the office has not set one.
+final settlementsStartAtProvider = StreamProvider<DateTime?>(
+  (ref) => ref.watch(configRepositoryProvider).watchSettlementsStartAt(),
+);
+
+/// Every insurance company, by name.
+final allInsurersProvider = StreamProvider<List<Insurer>>(
+  (ref) => ref.watch(insurerRepositoryProvider).watchInsurers(),
+);
+
+final StreamProviderFamily<Insurer?, String> insurerProvider =
+    StreamProvider.family<Insurer?, String>(
+  (ref, id) => ref.watch(insurerRepositoryProvider).watchInsurer(id),
+);
+
+final StreamProviderFamily<List<InsurerMember>, String> insurerMembersProvider =
+    StreamProvider.family<List<InsurerMember>, String>(
+  (ref, id) => ref.watch(insurerRepositoryProvider).watchMembers(id),
+);
+
+/// One table owner's stored zone prices. Keyed by company id; the empty
+/// string is the default list.
+final StreamProviderFamily<List<PricingRule>, String> pricingRulesProvider =
+    StreamProvider.family<List<PricingRule>, String>(
+  (ref, owner) => ref
+      .watch(insurerRepositoryProvider)
+      .watchPricingRules(insurerId: owner.isEmpty ? null : owner),
+);
+
+/// The signed-in chofer's weekly cortes, newest first.
+final myDriverSettlementsProvider = StreamProvider<List<DriverSettlement>>((ref) {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) return Stream.value(const []);
+  return ref
+      .watch(earningsRepositoryProvider)
+      .watchDriverSettlements(driverId: uid);
+});
+
+/// Every chofer's weekly cortes, newest first. The office's cortes screen.
+final allDriverSettlementsProvider = StreamProvider<List<DriverSettlement>>(
+  (ref) => ref.watch(earningsRepositoryProvider).watchDriverSettlements(limit: 200),
+);
+
+/// Every corte still waiting to be paid, however old: what the office owes
+/// and is owed. Queried on its own so the newest 200 never hide one.
+final pendingDriverSettlementsProvider = StreamProvider<List<DriverSettlement>>(
+  (ref) => ref.watch(earningsRepositoryProvider).watchDriverSettlements(
+        status: SettlementStatus.pending,
+        limit: 1000,
+      ),
+);
+
+final StreamProviderFamily<DriverSettlement?, String> driverSettlementProvider =
+    StreamProvider.family<DriverSettlement?, String>(
+  (ref, id) => ref.watch(earningsRepositoryProvider).watchDriverSettlement(id),
+);
+
+/// What Friday's corte will say so far, for the signed-in chofer: their
+/// unsettled jobs, worked out the way the server will.
+final myRunningSettlementProvider = StreamProvider<SettlementDraft?>((ref) async* {
+  final uid = ref.watch(currentUserIdProvider);
+  if (uid == null) {
+    yield null;
+    return;
+  }
+  // Jobs from before cortes began are never charged, so they are not shown.
+  final startAt = await ref.watch(settlementsStartAtProvider.future);
+  yield* ref
+      .watch(earningsRepositoryProvider)
+      .watchUnsettledEntries(uid, since: startAt)
+      .map(
+        (entries) => SettlementMath.draft(
+          entries,
+          cutoff: DateTime.now().toUtc(),
+          startAt: startAt,
+        ),
+      );
+});
+
+/// What the signed-in chofer and Titan owe each other right now: every corte
+/// not yet paid, plus this week's so far. Null until the cortes load.
+final myDriverBalanceProvider = Provider<DriverBalance?>((ref) {
+  final cortes = ref.watch(myDriverSettlementsProvider);
+  if (!cortes.hasValue) return null;
+  return DriverBalance.of(
+    settlements: cortes.value ?? const [],
+    running: ref.watch(myRunningSettlementProvider).value,
+  );
+});
+
+/// Monthly invoices, newest first. Keyed by company id; the empty string is
+/// every company, the office's list.
+final StreamProviderFamily<List<InsurerInvoice>, String> insurerInvoicesProvider =
+    StreamProvider.family<List<InsurerInvoice>, String>(
+  (ref, insurerId) => ref
+      .watch(insurerRepositoryProvider)
+      .watchInvoices(insurerId: insurerId.isEmpty ? null : insurerId),
+);
+
+final StreamProviderFamily<InsurerInvoice?, String> insurerInvoiceProvider =
+    StreamProvider.family<InsurerInvoice?, String>(
+  (ref, id) => ref.watch(insurerRepositoryProvider).watchInvoice(id),
+);
+
+/// The signed-in company's invoices, for its managers.
+final myInsurerInvoicesProvider = StreamProvider<List<InsurerInvoice>>((ref) async* {
+  final insurerId = await ref.watch(currentInsurerIdProvider.future);
+  if (insurerId == null) {
+    yield const [];
+    return;
+  }
+  yield* ref.watch(insurerRepositoryProvider).watchInvoices(insurerId: insurerId);
+});
+
+/// The razón social, RNC and terms printed on invoices.
+final fiscalIssuerProvider = StreamProvider<FiscalIssuer>(
+  (ref) => ref.watch(insurerRepositoryProvider).watchFiscalIssuer(),
+);
+
+/// The NCF range insurers' invoices are numbered from.
+final creditNcfSequenceProvider = StreamProvider<NcfSequence>(
+  (ref) => ref.watch(insurerRepositoryProvider).watchNcfSequence(Ncf.creditoFiscal),
+);
+
+/// Every finished insurer service waiting for an invoice. The office's.
+final servicesToInvoiceProvider = StreamProvider<List<Service>>(
+  (ref) => ref.watch(insurerRepositoryProvider).watchServicesToInvoice(),
+);
 
 /// Every chofer's cortes, newest first. The office's cash screen.
 final cashSettlementsProvider = StreamProvider<List<CashSettlement>>(

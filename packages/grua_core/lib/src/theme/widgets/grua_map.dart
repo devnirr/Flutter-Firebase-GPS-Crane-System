@@ -7,6 +7,8 @@ import 'package:google_maps_flutter/google_maps_flutter.dart' as gmap;
 
 import '../../domain/value_objects.dart';
 import '../brand.dart';
+import '../map_style.dart';
+import '../palette.dart';
 import 'brand_widgets.dart';
 import 'schematic_map.dart';
 
@@ -269,7 +271,7 @@ class _GruaMapState extends State<GruaMap> {
                 : _openFullScreen,
             child: Icon(
               expanded ? Icons.fullscreen_exit : Icons.fullscreen,
-              color: BrandColors.ink,
+              color: context.palette.text,
             ),
           ),
         ),
@@ -336,6 +338,9 @@ class _GruaMapState extends State<GruaMap> {
 
   Widget _googleMap(LatLng center, double zoom) {
     return gmap.GoogleMap(
+      // Google's daylight tiles under a dark panel would be a white rectangle
+      // in the middle of the screen.
+      style: context.palette.isDark ? MapStyles.dark : null,
       initialCameraPosition: gmap.CameraPosition(
         target: gmap.LatLng(center.latitude, center.longitude),
         zoom: zoom,

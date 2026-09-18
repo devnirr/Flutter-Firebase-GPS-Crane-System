@@ -12,7 +12,6 @@ import {
   DriverStatus,
   OperatorReviewState,
   ServiceEventName,
-  TruckType,
   UserRole,
 } from '../lib/enums.js';
 import { dispatchNext } from '../dispatch/dispatchNext.js';
@@ -924,6 +923,17 @@ export const setAdminRole = onCall({ region, cors: true }, async (request) => {
     );
   }
 
+  // A person of an insurance company is fenced to that company by their
+  // claims. Overwriting them here would turn a customer's employee into
+  // office staff, so that account has to be dealt with deliberately instead.
+  const target = await getAuth().getUser(uid);
+  if (target.customClaims?.['role'] === UserRole.insurer) {
+    throw precondition(
+      Code.invalidInput,
+      'Esta cuenta pertenece a una aseguradora. Gestiónala desde Aseguradoras.',
+    );
+  }
+
   await getAuth().setCustomUserClaims(uid, role ? { role } : {});
   await getAuth().revokeRefreshTokens(uid);
   await audit(caller.uid, 'setAdminRole', uid, { role });
@@ -941,5 +951,8 @@ export const whoAmI = onCall({ region, cors: true }, async (request) => {
     canAssignServices:
       caller.role === UserRole.admin || caller.role === UserRole.ops,
     canEditPricing: caller.role === UserRole.admin,
+    canManageInsurers: caller.role === UserRole.admin,
+    insurerId: caller.insurerId ?? null,
+    insurerRole: caller.insurerRole ?? null,
   };
 });

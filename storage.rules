@@ -60,11 +60,19 @@ service firebase.storage {
                    && request.resource.contentType.matches('image/(jpeg|png|webp)');
     }
 
-    // Photos taken at pickup and dropoff. Written by the assigned chofer;
-    // read access is granted through signed URLs, so no direct client read.
+    // Photos taken at pickup and dropoff. Written by the chofer assigned to
+    // that service, as its Firestore record says, and nobody else: without
+    // the check, any signed-in account could drop files into any job's
+    // folder. Read access is granted through signed URLs, so no direct
+    // client read.
+    //
+    // The Firestore lookup is a cross-service rule; the first deploy asks to
+    // grant Storage permission to read Firestore.
     match /service_photos/{serviceId}/{fileName} {
       allow read: if isStaff();
-      allow write: if ok() && isReasonableSize() && isImageOrPdf();
+      allow write: if ok() && isReasonableSize() && isImageOrPdf()
+                   && firestore.exists(/databases/(default)/documents/services/$(serviceId))
+                   && firestore.get(/databases/(default)/documents/services/$(serviceId)).data.get('driverId', '') == request.auth.uid;
     }
 
     // Photos of the vehicle a customer adds to a request, uploaded before the

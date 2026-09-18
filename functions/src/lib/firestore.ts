@@ -51,6 +51,12 @@ export const Collections = {
   chatRequests: 'chatRequests',
   calls: 'calls',
   cashSettlements: 'cashSettlements',
+  insurers: 'insurers',
+  pricingRules: 'pricingRules',
+  driverSettlements: 'driverSettlements',
+  insurerInvoices: 'insurerInvoices',
+  fiscal: 'fiscal',
+  ncfRegistry: 'ncfRegistry',
 } as const;
 
 export const Sub = {
@@ -61,6 +67,8 @@ export const Sub = {
   entries: 'entries',
   tokens: 'tokens',
   notifications: 'notifications',
+  members: 'members',
+  internal: 'internal',
 } as const;
 
 export const Paths = {
@@ -96,6 +104,16 @@ export const Paths = {
     db.collection(Collections.services).doc(serviceId).collection(Sub.events),
   messages: (serviceId: string) =>
     db.collection(Collections.services).doc(serviceId).collection(Sub.messages),
+  /**
+   * What an insurer's tow pays the chofer and keeps for the company. Kept off
+   * the service document because the insurance company can read that one.
+   */
+  serviceBilling: (serviceId: string) =>
+    db
+      .collection(Collections.services)
+      .doc(serviceId)
+      .collection(Sub.internal)
+      .doc('billing'),
 
   chatRequests: () => db.collection(Collections.chatRequests),
   chatRequest: (id: string) => db.collection(Collections.chatRequests).doc(id),
@@ -110,6 +128,8 @@ export const Paths = {
   invoice: (id: string) => db.collection(Collections.invoices).doc(id),
   earnings: (driverId: string) =>
     db.collection(Collections.earnings).doc(driverId),
+  earningEntries: (driverId: string) =>
+    db.collection(Collections.earnings).doc(driverId).collection(Sub.entries),
   earningEntry: (driverId: string, serviceId: string) =>
     db
       .collection(Collections.earnings)
@@ -121,9 +141,40 @@ export const Paths = {
   dispatchConfig: () => db.collection(Collections.config).doc('dispatch'),
   appSettings: () => db.collection(Collections.config).doc('app'),
   ncfConfig: () => db.collection(Collections.config).doc('ncf'),
+  /** `startAt`: jobs finished before it are left out of weekly cortes. */
+  settlementsConfig: () => db.collection(Collections.config).doc('settlements'),
+
+  /** Weekly cortes. See `lib/settlements.ts`. */
+  driverSettlements: () => db.collection(Collections.driverSettlements),
+  driverSettlement: (id: string) => db.collection(Collections.driverSettlements).doc(id),
 
   audit: () => db.collection(Collections.audit),
   cashSettlements: () => db.collection(Collections.cashSettlements),
+
+  /** Monthly invoices to insurance companies. See `lib/insurerInvoice.ts`. */
+  insurerInvoices: () => db.collection(Collections.insurerInvoices),
+  insurerInvoice: (id: string) => db.collection(Collections.insurerInvoices).doc(id),
+  /** The company that issues receipts. See `lib/fiscal.ts`. */
+  fiscalIssuer: () => db.collection(Collections.fiscal).doc('issuer'),
+  /** The NCF range a kind of receipt is numbered from. */
+  ncfSequence: (prefix: string) => db.collection(Collections.fiscal).doc(`ncf_${prefix}`),
+  /** One document per NCF ever issued, so none is issued twice. */
+  ncfRegistry: (key: string) => db.collection(Collections.ncfRegistry).doc(key),
+
+  /** Zone prices for insurance companies. See `lib/zonePricing.ts`. */
+  pricingRules: () => db.collection(Collections.pricingRules),
+
+  insurers: () => db.collection(Collections.insurers),
+  insurer: (id: string) => db.collection(Collections.insurers).doc(id),
+  /** The company's people, keyed by their Auth uid. */
+  insurerMembers: (insurerId: string) =>
+    db.collection(Collections.insurers).doc(insurerId).collection(Sub.members),
+  insurerMember: (insurerId: string, uid: string) =>
+    db
+      .collection(Collections.insurers)
+      .doc(insurerId)
+      .collection(Sub.members)
+      .doc(uid),
 
   live: (driverId: string) => rtdb().ref(`live/${driverId}`),
   liveRoot: () => rtdb().ref('live'),

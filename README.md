@@ -4,7 +4,8 @@ Tow-truck dispatch for the Dominican Republic: a customer app, a chofer app and
 an operations panel, sharing one domain layer.
 
 See [prompt.md](prompt.md) for the full build playbook — the Firestore schema,
-the service state machine and the dispatch algorithm.
+the service state machine and the dispatch algorithm. Deploying the insurance
+company module (Fase 2): [docs/fase2_despliegue.md](docs/fase2_despliegue.md).
 
 ---
 
@@ -44,18 +45,29 @@ The operations panel needs a window at least 1024 px wide. Below that it says
 so rather than reflowing — a live dispatch map squeezed onto a phone is a worse
 tool than an honest message.
 
+It ships in two skins, light and dark, switched from the sun / moon in the top
+bar; the caret beside it also offers "Como el sistema". The choice is a
+property of the workstation, kept in that browser, so a night dispatcher and a
+day dispatcher can each have their own on the same account. Both skins come
+from one set of tokens (`BrandPalette` in `grua_core`), which is why a screen
+never has to be written twice. The phone apps stay light-only.
+
 ### What you'll see
 
 | App | Signs in as | Try this |
 |---|---|---|
 | **client_app** | Any RD phone number, then **any 6 digits** as the code | Pedir grúa → pick the two points on the map → confirm the price. A chofer is assigned after ~6 s and the truck moves across the map. |
-| **driver_app** | Any email, any password ≥ 4 chars | Go **En línea**, accept a pedido, then walk Llegué → Iniciar → Finalizar → Cobrar. |
+| **driver_app** | `driver1@gruasrd.do` (or any email), any password ≥ 4 chars | Requests arrive on their own: an insurer tow, then a cash tow. Walk Llegué → Iniciar → Finalizar (→ Cobrar). Mis cortes shows last week's corte. |
 | **admin_web** | Any email, any password ≥ 4 chars | The live map, the queue with `needs_manual` pinned to the top, the driver roster and the fleet. |
+| **admin_web** as an insurance company | `marta@segurosdemo.do` (manager) or `restrepo@segurosdemo.do` (operator) | The insurer portal: order a tow at the zone price, live map, history, invoices. |
 
 The demo backend accepts anything that looks valid because it enforces nothing —
 authorisation, concurrency and money are the server's job. It exists so the UI
 can be built and reviewed before the backend is deployed, and so widget tests
 run without a network. Never point it at a real customer.
+
+The demo apps need `--dart-define=USE_DEMO_BACKEND=true` now that the repo has
+Firebase options. Full Phase 2 test guide: [docs/fase2_pruebas.md](docs/fase2_pruebas.md).
 
 ---
 

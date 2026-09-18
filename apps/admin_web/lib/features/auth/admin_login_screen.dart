@@ -5,8 +5,9 @@ import 'package:grua_core/grua_core.dart';
 /// Panel sign-in.
 ///
 /// Deliberately plain: this is a workstation login, not a storefront. The role
-/// check happens after authentication — a valid account without an admin claim
-/// is signed straight back out rather than shown an empty panel.
+/// check happens after authentication — a valid account that is neither office
+/// staff nor an insurance company's is signed straight back out rather than
+/// shown an empty panel. Which of the two it is, the router decides.
 class AdminLoginScreen extends ConsumerStatefulWidget {
   const AdminLoginScreen({super.key});
 
@@ -55,7 +56,7 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
     final role = await auth.currentRole(forceRefresh: true);
     if (!mounted) return;
 
-    if (!role.isStaff) {
+    if (!role.canUsePanel) {
       await auth.signOut();
       if (!mounted) return;
       setState(() {
@@ -128,9 +129,10 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return Scaffold(
-      backgroundColor: BrandColors.sidebar,
+      backgroundColor: palette.sidebar,
       body: Center(
         child: SizedBox(
           width: 380,
@@ -145,7 +147,7 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
                   const Center(child: GruaLogo(size: 108)),
                   const SizedBox(height: Insets.xl),
                   Text(
-                    'Panel de operaciones',
+                    'Panel de operaciones y aseguradoras',
                     textAlign: TextAlign.center,
                     style: text.titleLarge,
                   ),

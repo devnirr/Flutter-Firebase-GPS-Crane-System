@@ -63,25 +63,26 @@ class _DriverStatusDialogState extends State<_DriverStatusDialog> {
   Widget build(BuildContext context) {
     final driver = widget.driver;
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     final (title, message, confirmColor) = switch (widget.target) {
       DriverStatus.active => (
           '¿Activar a ${driver.name}?',
           'Podrá conectarse y recibir servicios. Actívalo solo después de '
               'revisar su licencia, cédula y seguro.',
-          BrandColors.success,
+          palette.success,
         ),
       DriverStatus.suspended => (
           '¿Suspender a ${driver.name}?',
           'Deja de recibir servicios de inmediato y pierde el acceso a la app '
               'hasta que lo actives de nuevo.',
-          BrandColors.danger,
+          palette.danger,
         ),
       _ => (
           '¿Marcar a ${driver.name} como inactivo?',
           'Deja de recibir servicios de inmediato. Úsalo cuando le falte o se '
               'le venza un documento.',
-          BrandColors.grey800,
+          palette.textStrong,
         ),
     };
 

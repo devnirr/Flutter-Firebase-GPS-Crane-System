@@ -2,7 +2,7 @@ import { onCall } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
 import { PaymentMethod, UserRole } from '../lib/enums.js';
-import { invalidArgument } from '../lib/errors.js';
+import { invalidArgument, permissionDenied } from '../lib/errors.js';
 import { FieldValue, Paths } from '../lib/firestore.js';
 import { requireAuth } from '../lib/guards.js';
 import { region } from './region.js';
@@ -27,6 +27,16 @@ export const ensureProfile = onCall({ region, cors: true }, async (request) => {
   if (!parsed.success) throw invalidArgument('Datos inválidos.');
 
   const caller = requireAuth(request);
+
+  // A person of an insurance company works from the web panel and is billed
+  // through their company. A customer profile would let them order and pay
+  // for tows as a private person under the company's account.
+  if (caller.role === UserRole.insurer) {
+    throw permissionDenied(
+      'Las cuentas de aseguradora se usan desde el panel web, no desde la app.',
+    );
+  }
+
   const ref = Paths.user(caller.uid);
   const existing = await ref.get();
 

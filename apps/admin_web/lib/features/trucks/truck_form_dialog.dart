@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../shared/form_dialog.dart';
+import '../shared/toast.dart';
 
 /// Opens the form for a new grúa. Returns its id, or null when dismissed.
 Future<String?> showCreateTruckDialog(BuildContext context) => showDialog<String>(
@@ -54,6 +55,11 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
   var _submitting = false;
   String? _error;
 
+  /// Set on the first attempt to save. The two dates are not form fields, so
+  /// this is what lets them stay quiet until then and report themselves after,
+  /// the way a validator does.
+  var _datesChecked = false;
+
   Truck? get _editing => widget.editing;
   bool get _isEdit => widget.editing != null;
 
@@ -97,22 +103,27 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final assignedTo = _editing?.isAssigned == true
         ? _editing!.assignedDriverName
         : null;
 
     return Dialog(
-      backgroundColor: BrandColors.white,
-      shape: const RoundedRectangleBorder(borderRadius: Corners.brMd),
+      backgroundColor: palette.surface,
+      // The header and footer paint their own rounded corners over the full
+      // width; without the clip they square off against the dialog's.
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 620,
+          maxWidth: 720,
           maxHeight: MediaQuery.sizeOf(context).height * 0.9,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             FormDialogHeader(
+              icon: Icons.local_shipping_outlined,
               title: _isEdit ? 'Editar grúa' : 'Nueva grúa',
               subtitle: _isEdit
                   ? 'Los cambios se guardan en la flota.'
@@ -124,7 +135,7 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(
                   Insets.xxl,
-                  Insets.lg,
+                  Insets.xl,
                   Insets.xxl,
                   Insets.lg,
                 ),
@@ -143,233 +154,210 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                         ),
                         const SizedBox(height: Insets.lg),
                       ],
-                      const FormSection('Identificación'),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Placa',
-                              required: true,
-                              child: TextFormField(
-                                controller: _plate,
-                                textCapitalization:
-                                    TextCapitalization.characters,
-                                inputFormatters: [
-                                  _UpperCaseFormatter(),
-                                  LengthLimitingTextInputFormatter(10),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: 'L123456',
-                                ),
-                                validator: DoValidators.plate,
+                      const FormSection(
+                        'Identificación',
+                        note: 'Cómo se reconoce la grúa en el despacho.',
+                      ),
+                      FormRow(
+                        left: LabeledField(
+                          label: 'Placa',
+                          required: true,
+                          child: TextFormField(
+                            controller: _plate,
+                            textCapitalization: TextCapitalization.characters,
+                            inputFormatters: [
+                              _UpperCaseFormatter(),
+                              LengthLimitingTextInputFormatter(10),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'L123456',
+                              prefixIcon: Icon(
+                                Icons.confirmation_number_outlined,
+                                size: 18,
                               ),
                             ),
+                            validator: DoValidators.plate,
                           ),
-                          const SizedBox(width: Insets.lg),
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Tipo de grúa',
-                              required: true,
-                              help: 'Decide qué servicios se le ofrecen.',
-                              child: DropdownButtonFormField<TruckType>(
-                                initialValue: _type,
-                                isExpanded: true,
-                                hint: const Text('Escoge el tipo'),
-                                decoration: const InputDecoration(),
-                                items: [
-                                  for (final type in TruckType.values)
-                                    if (type.isDispatchable)
-                                      DropdownMenuItem(
-                                        value: type,
-                                        child: Text(type.label),
-                                      ),
-                                ],
-                                onChanged: (value) =>
-                                    setState(() => _type = value),
-                                validator: (value) => value == null
-                                    ? 'Escoge el tipo de grúa.'
-                                    : null,
-                              ),
-                            ),
+                        ),
+                        right: LabeledField(
+                          label: 'Tipo de grúa',
+                          required: true,
+                          help: 'Decide qué servicios se le ofrecen.',
+                          child: DropdownButtonFormField<TruckType>(
+                            initialValue: _type,
+                            isExpanded: true,
+                            hint: const Text('Escoge el tipo'),
+                            decoration: const InputDecoration(),
+                            items: [
+                              for (final type in TruckType.values)
+                                if (type.isDispatchable)
+                                  DropdownMenuItem(
+                                    value: type,
+                                    child: Text(type.label),
+                                  ),
+                            ],
+                            onChanged: (value) => setState(() => _type = value),
+                            validator: (value) => value == null
+                                ? 'Escoge el tipo de grúa.'
+                                : null,
                           ),
-                        ],
+                        ),
                       ),
                       const SizedBox(height: Insets.sm),
-                      const FormSection('Vehículo'),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Marca',
-                              required: true,
-                              child: TextFormField(
-                                controller: _make,
-                                textCapitalization: TextCapitalization.words,
-                                inputFormatters: [
-                                  LengthLimitingTextInputFormatter(40),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: 'Ford',
-                                ),
-                                validator: (value) =>
-                                    (value ?? '').trim().isEmpty
-                                        ? 'Escribe la marca.'
-                                        : null,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: Insets.lg),
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Modelo',
-                              required: true,
-                              child: TextFormField(
-                                controller: _model,
-                                textCapitalization: TextCapitalization.words,
-                                inputFormatters: [
-                                  LengthLimitingTextInputFormatter(40),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: 'F-450',
-                                ),
-                                validator: (value) =>
-                                    (value ?? '').trim().isEmpty
-                                        ? 'Escribe el modelo.'
-                                        : null,
-                              ),
-                            ),
-                          ),
-                        ],
+                      const FormSection(
+                        'Vehículo',
+                        note: 'Lo que el cliente ve llegar.',
                       ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Año',
-                              child: TextFormField(
-                                controller: _year,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                  LengthLimitingTextInputFormatter(4),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: '2020',
-                                ),
-                                validator: _validateYear,
-                              ),
+                      FormRow(
+                        left: LabeledField(
+                          label: 'Marca',
+                          required: true,
+                          child: TextFormField(
+                            controller: _make,
+                            textCapitalization: TextCapitalization.words,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(40),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'Ford',
+                            ),
+                            validator: (value) => (value ?? '').trim().isEmpty
+                                ? 'Escribe la marca.'
+                                : null,
+                          ),
+                        ),
+                        right: LabeledField(
+                          label: 'Modelo',
+                          required: true,
+                          child: TextFormField(
+                            controller: _model,
+                            textCapitalization: TextCapitalization.words,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(40),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'F-450',
+                            ),
+                            validator: (value) => (value ?? '').trim().isEmpty
+                                ? 'Escribe el modelo.'
+                                : null,
+                          ),
+                        ),
+                      ),
+                      FormRow(
+                        left: LabeledField(
+                          label: 'Año',
+                          child: TextFormField(
+                            controller: _year,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(4),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: '2020',
+                            ),
+                            validator: _validateYear,
+                          ),
+                        ),
+                        right: LabeledField(
+                          label: 'Color',
+                          child: TextFormField(
+                            controller: _color,
+                            textCapitalization: TextCapitalization.sentences,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(30),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'Blanco',
                             ),
                           ),
-                          const SizedBox(width: Insets.lg),
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Color',
-                              child: TextFormField(
-                                controller: _color,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                inputFormatters: [
-                                  LengthLimitingTextInputFormatter(30),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: 'Blanco',
-                                ),
-                              ),
+                        ),
+                        third: LabeledField(
+                          label: 'Capacidad',
+                          required: true,
+                          help: 'Lo que puede cargar.',
+                          child: TextFormField(
+                            controller: _capacity,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(5),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: '4500',
+                              suffixText: 'kg',
                             ),
+                            validator: _validateCapacity,
                           ),
-                          const SizedBox(width: Insets.lg),
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Capacidad (kg)',
-                              required: true,
-                              child: TextFormField(
-                                controller: _capacity,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                  LengthLimitingTextInputFormatter(5),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: '4500',
-                                ),
-                                validator: _validateCapacity,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                       const SizedBox(height: Insets.sm),
-                      const FormSection('Documentos'),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Matrícula',
-                              child: TextFormField(
-                                controller: _registration,
-                                inputFormatters: [
-                                  LengthLimitingTextInputFormatter(40),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: 'Número de matrícula',
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: Insets.lg),
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Póliza de seguro',
-                              child: TextFormField(
-                                controller: _policy,
-                                inputFormatters: [
-                                  LengthLimitingTextInputFormatter(60),
-                                ],
-                                decoration: const InputDecoration(
-                                  hintText: 'Número de póliza',
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                      const FormSection(
+                        'Documentos',
+                        note: 'La grúa sale de línea sola cuando uno vence.',
                       ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Vencimiento del seguro',
-                              required: true,
-                              child: DateField(
-                                value: _insuranceExpiry,
-                                onPick: () => _pickDate(
-                                  current: _insuranceExpiry,
-                                  help: 'Vencimiento del seguro',
-                                  onPicked: (d) => _insuranceExpiry = d,
-                                ),
+                      FormRow(
+                        left: LabeledField(
+                          label: 'Matrícula',
+                          child: TextFormField(
+                            controller: _registration,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(40),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'Número de matrícula',
+                              prefixIcon: Icon(
+                                Icons.description_outlined,
+                                size: 18,
                               ),
                             ),
                           ),
-                          const SizedBox(width: Insets.lg),
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Vencimiento del marbete',
-                              required: true,
-                              child: DateField(
-                                value: _marbeteExpiry,
-                                onPick: () => _pickDate(
-                                  current: _marbeteExpiry,
-                                  help: 'Vencimiento del marbete',
-                                  onPicked: (d) => _marbeteExpiry = d,
-                                ),
+                        ),
+                        right: LabeledField(
+                          label: 'Póliza de seguro',
+                          child: TextFormField(
+                            controller: _policy,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(60),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'Número de póliza',
+                              prefixIcon: Icon(
+                                Icons.shield_outlined,
+                                size: 18,
                               ),
                             ),
                           ),
-                        ],
+                        ),
+                      ),
+                      FormRow(
+                        left: LabeledField(
+                          label: 'Vencimiento del seguro',
+                          required: true,
+                          child: DateField(
+                            value: _insuranceExpiry,
+                            error: _dateError(_insuranceExpiry),
+                            onPick: () => _pickDate(
+                              current: _insuranceExpiry,
+                              help: 'Vencimiento del seguro',
+                              onPicked: (d) => _insuranceExpiry = d,
+                            ),
+                          ),
+                        ),
+                        right: LabeledField(
+                          label: 'Vencimiento del marbete',
+                          required: true,
+                          child: DateField(
+                            value: _marbeteExpiry,
+                            error: _dateError(_marbeteExpiry),
+                            onPick: () => _pickDate(
+                              current: _marbeteExpiry,
+                              help: 'Vencimiento del marbete',
+                              onPicked: (d) => _marbeteExpiry = d,
+                            ),
+                          ),
+                        ),
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: Insets.md),
@@ -386,6 +374,7 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
             ),
             FormDialogFooter(
               submitting: _submitting,
+              note: '* Obligatorio',
               label: _isEdit ? 'Guardar cambios' : 'Crear grúa',
               onCancel: () => Navigator.of(context).pop(),
               onSubmit: _submit,
@@ -418,6 +407,11 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
     if (kg > 60000) return 'Máximo 60,000 kg.';
     return null;
   }
+
+  /// A date left empty, reported under its own field rather than as one line
+  /// by the button, and only once saving has been tried.
+  String? _dateError(DateTime? value) =>
+      _datesChecked && value == null ? 'Escoge la fecha.' : null;
 
   Future<void> _pickDate({
     required DateTime? current,
@@ -452,18 +446,11 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
   Future<void> _submit() async {
     final formOk = _formKey.currentState?.validate() ?? false;
 
-    // The dates are not form fields, so they are checked here and reported the
-    // way a validator would.
-    final missing = [
-      if (_insuranceExpiry == null) 'del seguro',
-      if (_marbeteExpiry == null) 'del marbete',
-    ];
-    setState(() {
-      _error = missing.isEmpty
-          ? null
-          : 'Escoge la fecha de vencimiento ${missing.join(' y ')}.';
-    });
-    if (!formOk || missing.isNotEmpty) return;
+    // The dates are not form fields, so they are checked here; from now on
+    // each reports itself under its own field.
+    setState(() => _datesChecked = true);
+    final datesOk = _insuranceExpiry != null && _marbeteExpiry != null;
+    if (!formOk || !datesOk) return;
 
     final details = TruckDetails(
       plate: DoValidators.plateKey(_plate.text),
@@ -498,16 +485,12 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
           _error = failure.userMessage;
         });
       case Ok(:final value):
-        final messenger = ScaffoldMessenger.of(context);
+        final toast = Toaster.of(context);
         Navigator.of(context).pop(editing == null ? value : true);
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              editing == null
-                  ? 'Grúa ${details.plate} agregada a la flota.'
-                  : 'Cambios guardados.',
-            ),
-          ),
+        toast.show(
+          editing == null
+              ? 'Grúa ${details.plate} agregada a la flota.'
+              : 'Cambios guardados.',
         );
     }
   }

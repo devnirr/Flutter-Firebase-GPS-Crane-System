@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
+import '../../router.dart';
+import '../settlements/settlements_screen.dart';
+
 /// What the chofer earned, and what they owe.
 ///
 /// Every figure comes from the server-maintained rollup rather than a
@@ -53,7 +56,18 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
                 ),
                 const SizedBox(height: Insets.lg),
 
+                DriverBalanceCard(
+                  balance: ref.watch(myDriverBalanceProvider),
+                  onOpen: () => context.push(Routes.settlements),
+                ),
+                const SizedBox(height: Insets.lg),
+
                 _TotalCard(summary: summary, period: _period),
+                const SizedBox(height: Insets.lg),
+
+                RunningSettlementCard(
+                  draft: ref.watch(myRunningSettlementProvider).value,
+                ),
                 const SizedBox(height: Insets.lg),
 
                 if (summary.owesCash) ...[
@@ -161,9 +175,9 @@ class _CashOwedCard extends StatelessWidget {
           ),
           const SizedBox(height: Insets.sm),
           Text(
-            'Es la comisión de los servicios que cobraste en efectivo. '
-            'Entrégala en la oficina para seguir recibiendo servicios en '
-            'efectivo.',
+            'Es la comisión de los servicios que cobraste en efectivo. Se '
+            'descuenta en tu corte del viernes; si ese corte sale a favor de '
+            'Titan, la pagas por transferencia o depósito.',
             style: text.bodySmall?.copyWith(color: BrandColors.grey600),
           ),
         ],

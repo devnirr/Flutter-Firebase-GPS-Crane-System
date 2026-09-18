@@ -10,11 +10,11 @@ import {
   DriverLiveState,
   PaymentMethod,
   ServiceStatus,
-  UserRole,
 } from '../lib/enums.js';
 import { FieldValue, GeoPointOf, Paths, Timestamp } from '../lib/firestore.js';
 import { bearing, type LatLng } from '../lib/geo.js';
-import { commissionCents, loadPricing } from '../lib/pricing.js';
+import { loadPricing } from '../lib/pricing.js';
+import { takeHome } from '../lib/takeHome.js';
 import { notify } from '../lib/push.js';
 import { region } from '../callables/region.js';
 
@@ -147,15 +147,17 @@ export const recordEarnings = onDocumentWritten(
     const serviceId = event.params['serviceId'];
     const pricing = await loadPricing();
 
-    const gross =
-      ((after['final'] as Record<string, unknown> | undefined)?.['totalCents'] as number) ??
-      ((after['quote'] as Record<string, unknown> | undefined)?.['totalCents'] as number) ??
-      0;
-    const commission = commissionCents(pricing, gross);
-    const net = gross - commission;
+    // On an insurer's tow the company is billed later and owes the chofer
+    // their share; nothing is in the chofer's hands, so no cash debt.
+    const {
+      grossCents: gross,
+      netCents: net,
+      commissionCents: commission,
+    } = await takeHome(serviceId, after, pricing);
     const method = ((after['payment'] as Record<string, unknown>)['method'] as string) ??
       PaymentMethod.cash;
     const isCash = method === PaymentMethod.cash;
+    const insurerId = (after['insurerId'] as string | undefined) || null;
 
     const entryRef = Paths.earningEntry(driverId, serviceId);
     const existing = await entryRef.get();
@@ -172,6 +174,7 @@ export const recordEarnings = onDocumentWritten(
       commissionCents: commission,
       netCents: net,
       method,
+      insurerId,
       pickupAddress:
         ((after['pickup'] as Record<string, unknown>)['address'] as string) ?? '',
       dropoffAddress:

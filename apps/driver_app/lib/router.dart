@@ -14,6 +14,7 @@ import 'features/notifications/thread_read.dart';
 import 'features/orders/orders_screen.dart';
 import 'features/profile/driver_profile_screen.dart';
 import 'features/service/active_service_screen.dart';
+import 'features/settlements/settlements_screen.dart';
 import 'features/shell/driver_shell.dart';
 
 abstract final class Routes {
@@ -34,6 +35,10 @@ abstract final class Routes {
   static const chat = '/servicio/:id/chat';
   static const earnings = '/ganancias';
   static const notifications = '/notificaciones';
+  static const settlements = '/cortes';
+  static const settlement = '/cortes/:id';
+
+  static String settlementFor(String id) => '/cortes/$id';
 
   /// A conversation a customer opened from the map, before any job.
   static const chatRequest = '/chat-solicitud/:id';
@@ -152,6 +157,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(path: Routes.earnings, builder: (_, _) => const EarningsScreen()),
+      GoRoute(
+        path: Routes.settlements,
+        builder: (_, _) => const SettlementsScreen(),
+      ),
+      GoRoute(
+        path: Routes.settlement,
+        builder: (_, state) => SettlementDetailScreen(
+          settlementId: state.pathParameters['id'] ?? '',
+        ),
+      ),
       GoRoute(
         path: Routes.notifications,
         builder: (_, _) => const NotificationsScreen(),

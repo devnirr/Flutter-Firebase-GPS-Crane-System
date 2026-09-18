@@ -11,10 +11,11 @@ import {
 import { FieldValue, Paths, Timestamp, db } from '../lib/firestore.js';
 import { distanceMeters, type LatLng } from '../lib/geo.js';
 import { isAvailableWithin, positionsWithin } from '../lib/live.js';
-import { commissionCents, loadPricing } from '../lib/pricing.js';
+import { loadPricing } from '../lib/pricing.js';
 import { alertAdmins, sendOffer } from '../lib/push.js';
 import { vehiclePhotoUrls } from '../lib/servicePhoto.js';
 import { applyTransition } from '../lib/stateMachine.js';
+import { takeHome } from '../lib/takeHome.js';
 import { enqueueOfferExpiry } from '../lib/tasks.js';
 
 /**
@@ -270,11 +271,12 @@ async function findCandidates(options: {
     }
 
     // A chofer over the cash limit stops receiving cash work but keeps getting
-    // card work, so the limit throttles exposure without idling the truck. A
-    // job whose customer has not chosen yet may well end up cash, so it
-    // counts as cash here.
+    // card and insurer work — neither puts cash in their hands — so the limit
+    // throttles exposure without idling the truck. A job whose customer has
+    // not chosen yet may well end up cash, so it counts as cash here.
     if (
       options.paymentMethod !== 'card' &&
+      options.paymentMethod !== 'insurer' &&
       (driver['cashOwedCents'] as number | undefined ?? 0) >= pricing.maxCashOwedCents
     ) {
       tally.cashCapped++;
@@ -443,8 +445,9 @@ export async function dispatchNext(
   const chosen = candidates[0]!;
   const expiresAt = new Date(now + config.offerTtlMs);
   const pricing = await loadPricing();
-  const quote = (service['quote'] ?? {}) as Record<string, unknown>;
-  const gross = (quote['totalCents'] as number | undefined) ?? 0;
+  // Read before the transaction: an insurer's split lives in its own document.
+  const earnings = await takeHome(serviceId, service, pricing);
+  const gross = earnings.grossCents;
 
   let created = false;
 
@@ -494,7 +497,7 @@ export async function dispatchNext(
       grossCents: gross,
       // Take-home, not gross. A chofer working out the commission in their head
       // at the roadside declines.
-      netEarningsCents: gross - commissionCents(pricing, gross),
+      netEarningsCents: earnings.netCents,
       driverId: chosen.driverId,
     });
 
@@ -539,7 +542,7 @@ export async function dispatchNext(
     payload: {
       round: `${round}`,
       distanceM: `${chosen.distanceM}`,
-      netCents: `${gross - commissionCents(pricing, gross)}`,
+      netCents: `${earnings.netCents}`,
     },
   });
 

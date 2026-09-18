@@ -49,6 +49,27 @@ abstract final class DoValidators {
     return null;
   }
 
+  /// Required: a company's 9-digit RNC with a correct DGII check digit.
+  /// Mirrors `isValidCompanyRnc` in the functions, which is the authority.
+  static String? companyRnc(String? value) {
+    final d = digits(value);
+    if (d.isEmpty) return 'Escribe el RNC.';
+    if (d.length != 9) return 'El RNC de una empresa tiene 9 dígitos.';
+    const weights = [7, 9, 8, 6, 5, 4, 3, 2];
+    var sum = 0;
+    for (var i = 0; i < 8; i++) {
+      sum += int.parse(d[i]) * weights[i];
+    }
+    final remainder = sum % 11;
+    final check = remainder == 0
+        ? 2
+        : remainder == 1
+            ? 1
+            : 11 - remainder;
+    if (check != int.parse(d[8])) return 'Ese RNC no es válido. Revísalo.';
+    return null;
+  }
+
   /// A plate as it is keyed and compared: uppercase, no spaces or dashes.
   /// Mirrors `normalizePlate` in the functions, which is the authority.
   static String plateKey(String? value) =>
@@ -87,6 +108,32 @@ class CedulaInputFormatter extends TextInputFormatter {
     final buffer = StringBuffer();
     for (var i = 0; i < capped.length; i++) {
       if (i == 3 || i == 10) buffer.write('-');
+      buffer.write(capped[i]);
+    }
+    final text = buffer.toString();
+
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+}
+
+/// Types a company's RNC as the DGII prints it, `1-30-00000-1`, while the user
+/// enters bare digits. Eleven digits — a persona física billing under a cédula
+/// — are left as typed, since that number is grouped differently.
+class RncInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = DoValidators.digits(newValue.text);
+    final capped = digits.length > 11 ? digits.substring(0, 11) : digits;
+
+    final buffer = StringBuffer();
+    for (var i = 0; i < capped.length; i++) {
+      if (capped.length <= 9 && (i == 1 || i == 3 || i == 8)) buffer.write('-');
       buffer.write(capped[i]);
     }
     final text = buffer.toString();

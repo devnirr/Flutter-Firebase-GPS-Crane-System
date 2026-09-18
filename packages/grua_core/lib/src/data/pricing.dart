@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import '../domain/enums.dart';
 import '../domain/models/remote_config_models.dart';
 import '../domain/models/service.dart';
@@ -40,7 +42,8 @@ abstract final class Pricing {
     final distanceCents = (distance.cityKm * cityPerKmCents).round() +
         (distance.highwayKm * highwayPerKmCents).round();
     final minimumAdjustment =
-        (config.minimumCents - (baseCents + distanceCents)).clamp(0, 1 << 40);
+        // math.max, not clamp(0, 1 << 40), which is clamp(0, 0) on the web.
+        math.max(0, config.minimumCents - (baseCents + distanceCents));
     // What the percentages are taken from: the tow itself.
     final fareCents = baseCents + distanceCents + minimumAdjustment;
 

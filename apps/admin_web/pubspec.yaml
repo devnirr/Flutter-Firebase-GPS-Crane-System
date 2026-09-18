@@ -27,6 +27,7 @@ dependencies:
   fl_chart: ^1.2.0
   file_picker: ^12.2.0
   url_launcher: ^6.3.2
+  web: ^1.1.1
   shared_preferences: ^2.5.5
   csv: ^8.0.0
   data_table_2: ^3.0.0

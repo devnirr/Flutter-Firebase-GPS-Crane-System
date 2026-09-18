@@ -64,6 +64,14 @@ export function partiesFor(
   if (callerId !== clientId && callerId !== driverId) {
     throw permissionDenied('No formas parte de este servicio.');
   }
+  // An insurer's tow has no customer account to ring; the chofer calls the
+  // insured person's phone instead.
+  if (!clientId) {
+    throw precondition(
+      Code.invalidTransition,
+      'Este servicio no tiene un cliente en la app. Llama al asegurado por teléfono.',
+    );
+  }
   if (!driverId || !CONTACT_OPEN_STATUSES.includes(status)) {
     throw precondition(
       Code.invalidTransition,

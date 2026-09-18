@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import '../shared/toast.dart';
+
 /// Efectivo: what each chofer collected in cash and still holds for the
 /// company, and the cortes that brought it in.
 ///
@@ -15,6 +17,7 @@ class CashScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final drivers = ref.watch(allDriversProvider).value ?? const <Driver>[];
     final settlements = ref.watch(cashSettlementsProvider).value ?? const [];
 
@@ -29,7 +32,7 @@ class CashScreen extends ConsumerWidget {
         const SizedBox(height: Insets.xs),
         Text(
           'Lo que los choferes cobraron en efectivo y todavía no han entregado.',
-          style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+          style: text.bodyMedium?.copyWith(color: palette.textMuted),
         ),
         const SizedBox(height: Insets.xl),
         Wrap(
@@ -55,7 +58,7 @@ class CashScreen extends ConsumerWidget {
               if (holding.isEmpty)
                 Text(
                   'Ningún chofer tiene efectivo por entregar.',
-                  style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+                  style: text.bodyMedium?.copyWith(color: palette.textMuted),
                 )
               else
                 for (final driver in holding) _DriverCashRow(driver: driver),
@@ -73,7 +76,7 @@ class CashScreen extends ConsumerWidget {
               if (settlements.isEmpty)
                 Text(
                   'Todavía no hay cortes.',
-                  style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+                  style: text.bodyMedium?.copyWith(color: palette.textMuted),
                 )
               else
                 for (final corte in settlements)
@@ -106,6 +109,7 @@ class _DriverCashRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Insets.sm),
       child: Row(
@@ -121,7 +125,7 @@ class _DriverCashRow extends StatelessWidget {
                   driver.lastCashSettlementAt == null
                       ? 'Sin cortes anteriores'
                       : 'Último corte: ${DoTime.dateAndTime(driver.lastCashSettlementAt!)}',
-                  style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                  style: text.bodySmall?.copyWith(color: palette.textMuted),
                 ),
               ],
             ),
@@ -176,14 +180,10 @@ class _SettleDialogState extends ConsumerState<_SettleDialog> {
     if (!mounted) return;
     switch (result) {
       case Ok(:final value):
-        final messenger = ScaffoldMessenger.of(context);
+        final toast = Toaster.of(context);
         Navigator.of(context).pop();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              'Corte registrado: ${value.formatDOP} de ${widget.driver.shortName}.',
-            ),
-          ),
+        toast.show(
+          'Corte registrado: ${value.formatDOP} de ${widget.driver.shortName}.',
         );
       case Err(:final failure):
         setState(() {
@@ -196,6 +196,7 @@ class _SettleDialogState extends ConsumerState<_SettleDialog> {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final jobs = ref.watch(uncountedCashProvider(widget.driver.id)).value;
     final total = jobs?.fold(0, (sum, s) => sum + s.payment.capturedCents) ?? 0;
 
@@ -212,7 +213,7 @@ class _SettleDialogState extends ConsumerState<_SettleDialog> {
             else if (jobs.isEmpty)
               Text(
                 'No hay servicios en efectivo pendientes de entregar.',
-                style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+                style: text.bodyMedium?.copyWith(color: palette.textMuted),
               )
             else ...[
               ConstrainedBox(
@@ -289,6 +290,7 @@ class _Kpi extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     return SizedBox(
       width: 260,
       child: FloatingCard(
@@ -300,7 +302,7 @@ class _Kpi extends StatelessWidget {
             Text(
               value,
               style: text.headlineMedium?.copyWith(
-                color: accent ? BrandColors.red : BrandColors.ink,
+                color: accent ? palette.brand : palette.text,
               ),
             ),
           ],

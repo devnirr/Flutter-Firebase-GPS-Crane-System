@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../brand.dart';
+import '../palette.dart';
 
 /// The photos a customer took of their vehicle, as a row of thumbnails.
 ///
@@ -53,10 +54,11 @@ class VehiclePhoto extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget broken(BuildContext _, Object _, StackTrace? _) => const ColoredBox(
-          color: BrandColors.grey100,
+    final palette = context.palette;
+    Widget broken(BuildContext _, Object _, StackTrace? _) => ColoredBox(
+          color: palette.surfaceSubtle,
           child: Center(
-            child: Icon(Icons.broken_image_outlined, color: BrandColors.grey400),
+            child: Icon(Icons.broken_image_outlined, color: palette.textFaint),
           ),
         );
 
@@ -75,9 +77,9 @@ class VehiclePhoto extends StatelessWidget {
       errorBuilder: broken,
       loadingBuilder: (context, child, progress) => progress == null
           ? child
-          : const ColoredBox(
-              color: BrandColors.grey100,
-              child: Center(
+          : ColoredBox(
+              color: palette.surfaceSubtle,
+              child: const Center(
                 child: SizedBox.square(
                   dimension: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),

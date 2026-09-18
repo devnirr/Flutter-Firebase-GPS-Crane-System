@@ -73,7 +73,8 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
             ));
       case ServiceStatus.inProgress:
         await _confirmFinish(service);
-      case ServiceStatus.completed:
+      // An insurer's tow closes by itself: there is nothing to collect.
+      case ServiceStatus.completed when !service.isInsurerJob:
         await _collectCash(service);
       case _:
         break;
@@ -190,8 +191,11 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
                     const SizedBox(height: Insets.lg),
                     _JobCard(service: service),
                     if (service.status == ServiceStatus.arrived) ...[
-                      const SizedBox(height: Insets.lg),
-                      _WaitingCard(service: service),
+                      // Waiting is not billed to an insurance company.
+                      if (!service.isInsurerJob) ...[
+                        const SizedBox(height: Insets.lg),
+                        _WaitingCard(service: service),
+                      ],
                       const SizedBox(height: Insets.md),
                       _PaymentNotice(service: service),
                     ],
@@ -201,6 +205,11 @@ class _ActiveServiceScreenState extends ConsumerState<ActiveServiceScreen> {
                       busy: _busy,
                       onPressed: () => _advance(service),
                     ),
+                    if (service.isInsurerJob &&
+                        service.status == ServiceStatus.completed) ...[
+                      const SizedBox(height: Insets.sm),
+                      const _InsurerClosingHint(),
+                    ],
                     const SizedBox(height: Insets.md),
                     _CancelButton(service: service, busy: _busy, onRun: _run),
                   ],
@@ -359,14 +368,31 @@ class _ClientCard extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(service.clientName, style: text.titleSmall),
                 Text(
-                  service.clientPhone,
+                  service.clientName.isEmpty && service.isInsurerJob
+                      ? 'Asegurado'
+                      : service.clientName,
+                  style: text.titleSmall,
+                ),
+                Text(
+                  service.isInsurerJob
+                      ? 'Asegurado de ${service.insurerName.isEmpty ? 'la aseguradora' : service.insurerName}'
+                      : service.clientPhone,
                   style: text.bodySmall?.copyWith(color: BrandColors.grey600),
                 ),
               ],
             ),
           ),
+          if (service.isInsurerJob && service.clientPhone.isNotEmpty)
+            IconButton.filledTonal(
+              key: const Key('insured-call'),
+              tooltip: 'Llamar al asegurado',
+              // The insured has no app to ring: a plain phone call.
+              onPressed: () => unawaited(
+                launchUrl(Uri(scheme: 'tel', path: service.clientPhone)),
+              ),
+              icon: const Icon(Icons.call, size: 20),
+            ),
           if (service.canChat)
             IconButton.filledTonal(
               key: const Key('client-chat'),
@@ -435,9 +461,23 @@ class _JobCard extends StatelessWidget {
         children: [
           Text(service.vehicle.displayName, style: text.titleSmall),
           Text(
-            service.vehicle.condition.label,
+            service.isInsurerJob
+                ? [
+                    if (service.vehicle.plate.isNotEmpty) service.vehicle.plate,
+                    if (service.vehicle.color.isNotEmpty) service.vehicle.color,
+                  ].join(' · ')
+                : service.vehicle.condition.label,
             style: text.bodySmall?.copyWith(color: BrandColors.grey600),
           ),
+          if (service.insurance case final claim?
+              when claim.claimNumber.isNotEmpty) ...[
+            const SizedBox(height: Insets.xs),
+            Text(
+              'Siniestro ${claim.claimNumber}',
+              key: const Key('job-claim'),
+              style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ],
           // The customer's photos stay to hand on the way, for picking the
           // right car out of a row of them.
           if (service.vehicle.photoPaths.isNotEmpty) ...[
@@ -454,23 +494,43 @@ class _JobCard extends StatelessWidget {
             dropoff: service.dropoff?.displayAddress,
           ),
           const Divider(height: Insets.xxl),
-          Row(
-            children: [
-              const Icon(
-                Icons.payments_outlined,
-                size: 18,
-                color: BrandColors.grey600,
-              ),
-              const SizedBox(width: Insets.sm),
-              Expanded(
-                child: Text(
-                  _paymentLine(service.payment),
-                  style: text.bodyMedium,
+          if (service.isInsurerJob)
+            Row(
+              key: const Key('job-billed-to-insurer'),
+              children: [
+                const Icon(
+                  Icons.business_outlined,
+                  size: 18,
+                  color: BrandColors.grey600,
                 ),
-              ),
-              Text(service.totalCents.formatDOP, style: text.titleMedium),
-            ],
-          ),
+                const SizedBox(width: Insets.sm),
+                Expanded(
+                  child: Text(
+                    'Lo paga ${service.insurerName.isEmpty ? 'la aseguradora' : service.insurerName} · no cobres al cliente',
+                    style: text.bodyMedium,
+                  ),
+                ),
+              ],
+            )
+          else
+            Row(
+              children: [
+                const Icon(
+                  Icons.payments_outlined,
+                  size: 18,
+                  color: BrandColors.grey600,
+                ),
+                const SizedBox(width: Insets.sm),
+                Expanded(
+                  child: Text(
+                    _paymentLine(service.payment),
+                    style: text.bodyMedium,
+                  ),
+                ),
+                Text(service.totalCents.formatDOP, style: text.titleMedium),
+              ],
+            ),
+          _EarningsLine(serviceId: service.id),
         ],
       ),
     );
@@ -479,6 +539,44 @@ class _JobCard extends StatelessWidget {
 
 String _paymentLine(ServicePayment payment) =>
     payment.isPaid ? payment.status.label : 'Cobrar en efectivo';
+
+/// "Ganancia por este servicio": what the chofer takes home, from their own
+/// offer. Nothing on a job the office assigned by hand, which has no offer.
+class _EarningsLine extends ConsumerWidget {
+  const _EarningsLine({required this.serviceId});
+
+  final String serviceId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offer = ref.watch(myOfferProvider(serviceId)).value;
+    final net = offer?.netEarningsCents ?? 0;
+    if (net <= 0) return const SizedBox.shrink();
+
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: Insets.sm),
+      child: Row(
+        key: const Key('job-earnings'),
+        children: [
+          const Icon(
+            Icons.account_balance_wallet_outlined,
+            size: 18,
+            color: BrandColors.red,
+          ),
+          const SizedBox(width: Insets.sm),
+          Expanded(
+            child: Text('Ganancia por este servicio', style: text.bodyMedium),
+          ),
+          Text(
+            net.formatDOP,
+            style: text.titleMedium?.copyWith(color: BrandColors.red),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 /// What the chofer collects when the tow ends, while they wait to load.
 ///
@@ -490,13 +588,21 @@ class _PaymentNotice extends StatelessWidget {
   final Service service;
 
   @override
-  Widget build(BuildContext context) => InlineNotice(
-        key: const Key('payment-ready'),
-        tone: NoticeTone.success,
-        icon: Icons.payments_outlined,
-        message: 'Cobrarás ${service.totalCents.formatDOP} en efectivo al '
-            'terminar.',
-      );
+  Widget build(BuildContext context) => service.isInsurerJob
+      ? InlineNotice(
+          key: const Key('payment-insurer'),
+          tone: NoticeTone.info,
+          icon: Icons.business_outlined,
+          message: 'Servicio de aseguradora: no cobres nada al cliente. '
+              'Se factura a ${service.insurerName.isEmpty ? 'la aseguradora' : service.insurerName}.',
+        )
+      : InlineNotice(
+          key: const Key('payment-ready'),
+          tone: NoticeTone.success,
+          icon: Icons.payments_outlined,
+          message: 'Cobrarás ${service.totalCents.formatDOP} en efectivo al '
+              'terminar.',
+        );
 }
 
 /// Live waiting clock, with what it will cost the customer.
@@ -533,6 +639,44 @@ class _WaitingCard extends ConsumerWidget {
   }
 }
 
+/// An insurer's finished tow closes on its own. If it has not, the office
+/// sweeps it within minutes — and the chofer is told whom to call meanwhile.
+class _InsurerClosingHint extends ConsumerWidget {
+  const _InsurerClosingHint();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    final phone = ref.watch(appSettingsProvider).value?.supportPhone ?? '';
+    return Column(
+      key: const Key('insurer-closing-hint'),
+      children: [
+        Text(
+          'La aseguradora paga este servicio; no hay nada que cobrar. Se cierra '
+          'solo en unos minutos. Si no se cierra, llama a la oficina.',
+          textAlign: TextAlign.center,
+          style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+        ),
+        if (phone.isNotEmpty)
+          TextButton.icon(
+            key: const Key('call-office'),
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final opened = await launchUrl(Uri(scheme: 'tel', path: phone));
+              if (!opened) {
+                messenger.showSnackBar(
+                  const SnackBar(content: Text('No se pudo iniciar la llamada.')),
+                );
+              }
+            },
+            icon: const Icon(Icons.phone_outlined),
+            label: const Text('Llamar a la oficina'),
+          ),
+      ],
+    );
+  }
+}
+
 /// One button, whose label and colour follow the state machine.
 class _PrimaryAction extends StatelessWidget {
   const _PrimaryAction({
@@ -551,6 +695,11 @@ class _PrimaryAction extends StatelessWidget {
       ServiceStatus.accepted => ('LLEGUÉ', BrandColors.red),
       ServiceStatus.arrived => ('INICIAR SERVICIO', BrandColors.red),
       ServiceStatus.inProgress => ('FINALIZAR SERVICIO', BrandColors.ink),
+      // An insurer's tow closes on its own a moment after this.
+      ServiceStatus.completed when service.isInsurerJob => (
+          'SERVICIO COMPLETADO',
+          BrandColors.success,
+        ),
       ServiceStatus.completed => (
           'COBRADO EN EFECTIVO ${service.totalCents.formatDOP}',
           BrandColors.success,
@@ -559,6 +708,7 @@ class _PrimaryAction extends StatelessWidget {
     };
 
     final enabled = !busy &&
+        !(service.isInsurerJob && service.status == ServiceStatus.completed) &&
         const {
           ServiceStatus.accepted,
           ServiceStatus.arrived,

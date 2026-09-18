@@ -1,0 +1,110 @@
+{
+  "_comment": "Monthly insurer invoices and NCF numbering. Read by functions/test/insurerInvoice.test.ts and packages/grua_core/test/insurer_invoicing_test.dart, so the server and the app agree. Instants are UTC; Santo Domingo is UTC-4.",
+  "ncf": [
+    { "prefix": "B01", "sequence": 1, "ncf": "B0100000001" },
+    { "prefix": "B01", "sequence": 2, "ncf": "B0100000002" },
+    { "prefix": "B01", "sequence": 12345678, "ncf": "B0112345678" },
+    { "prefix": "B02", "sequence": 99999999, "ncf": "B0299999999" }
+  ],
+  "badNcf": ["", "B01", "B010000000", "B01000000001", "A0100000001", "B0100000000", "B9900000001"],
+  "periods": [
+    { "key": "2026-09", "start": "2026-09-01T04:00:00.000Z", "end": "2026-10-01T04:00:00.000Z", "label": "septiembre 2026" },
+    { "key": "2026-12", "start": "2026-12-01T04:00:00.000Z", "end": "2027-01-01T04:00:00.000Z", "label": "diciembre 2026" },
+    { "key": "2027-02", "start": "2027-02-01T04:00:00.000Z", "end": "2027-03-01T04:00:00.000Z", "label": "febrero 2027" }
+  ],
+  "periodOf": [
+    { "instant": "2026-09-01T03:59:59.000Z", "key": "2026-08", "previous": "2026-07" },
+    { "instant": "2026-09-01T04:00:00.000Z", "key": "2026-09", "previous": "2026-08" },
+    { "instant": "2026-10-01T10:00:00.000Z", "key": "2026-10", "previous": "2026-09" },
+    { "instant": "2026-01-01T10:00:00.000Z", "key": "2026-01", "previous": "2025-12" }
+  ],
+  "due": [
+    { "issuedAt": "2026-10-01T10:00:00.000Z", "termsDays": 30, "dueAt": "2026-11-01T03:59:59.999Z" },
+    { "issuedAt": "2026-10-01T02:00:00.000Z", "termsDays": 30, "dueAt": "2026-10-31T03:59:59.999Z" },
+    { "issuedAt": "2026-10-01T10:00:00.000Z", "termsDays": 0, "dueAt": "2026-10-02T03:59:59.999Z" }
+  ],
+  "sequences": [
+    { "name": "the first test number", "sequence": { "nextNumber": 1, "lastNumber": 99999999, "expiresOn": null }, "now": "2026-09-16T12:00:00.000Z", "blocked": false, "remaining": 99999999 },
+    { "name": "the last number of a range", "sequence": { "nextNumber": 500, "lastNumber": 500, "expiresOn": null }, "now": "2026-09-16T12:00:00.000Z", "blocked": false, "remaining": 1 },
+    { "name": "a range used up", "sequence": { "nextNumber": 501, "lastNumber": 500, "expiresOn": null }, "now": "2026-09-16T12:00:00.000Z", "blocked": true, "remaining": 0 },
+    { "name": "the last minute of the expiry day", "sequence": { "nextNumber": 1, "lastNumber": 500, "expiresOn": "2026-09-15" }, "now": "2026-09-16T03:59:59.000Z", "blocked": false, "remaining": 500 },
+    { "name": "the day after expiry", "sequence": { "nextNumber": 1, "lastNumber": 500, "expiresOn": "2026-09-15" }, "now": "2026-09-16T04:00:00.000Z", "blocked": true, "remaining": 500 }
+  ],
+  "invoices": [
+    {
+      "name": "September, with a tow left over from August and a cancellation fee",
+      "cutoff": "2026-10-01T04:00:00.000Z",
+      "services": [
+        { "id": "a", "status": "closed", "finishedAt": "2026-09-02T15:00:00.000Z", "subtotalCents": 250000, "feeCents": 0 },
+        { "id": "b", "status": "completed", "finishedAt": "2026-09-10T15:00:00.000Z", "subtotalCents": 350000, "feeCents": 0 },
+        { "id": "c", "status": "cancelled", "finishedAt": "2026-09-12T15:00:00.000Z", "subtotalCents": 250000, "feeCents": 50000 },
+        { "id": "d", "status": "cancelled", "finishedAt": "2026-09-13T15:00:00.000Z", "subtotalCents": 250000, "feeCents": 0 },
+        { "id": "e", "status": "closed", "finishedAt": "2026-10-01T04:00:00.000Z", "subtotalCents": 250000, "feeCents": 0 },
+        { "id": "f", "status": "closed", "finishedAt": "2026-10-01T03:59:59.000Z", "subtotalCents": 550000, "feeCents": 0 },
+        { "id": "g", "status": "in_progress", "finishedAt": null, "subtotalCents": 250000, "feeCents": 0 },
+        { "id": "h", "status": "closed", "finishedAt": "2026-08-20T15:00:00.000Z", "subtotalCents": 110000, "feeCents": 0 }
+      ],
+      "expect": {
+        "lines": ["h", "a", "b", "c", "f"],
+        "kinds": ["tow", "tow", "tow", "cancellation", "tow"],
+        "amounts": [110000, 250000, 350000, 50000, 550000],
+        "towCount": 4,
+        "cancellationCount": 1,
+        "subtotalCents": 1310000,
+        "itbisCents": 235800,
+        "totalCents": 1545800,
+        "leftover": 0
+      }
+    },
+    {
+      "name": "nothing billable",
+      "cutoff": "2026-10-01T04:00:00.000Z",
+      "services": [
+        { "id": "d", "status": "cancelled", "finishedAt": "2026-09-13T15:00:00.000Z", "subtotalCents": 250000, "feeCents": 0 },
+        { "id": "g", "status": "in_progress", "finishedAt": null, "subtotalCents": 250000, "feeCents": 0 },
+        { "id": "z", "status": "closed", "finishedAt": "2026-09-13T15:00:00.000Z", "subtotalCents": 0, "feeCents": 0 }
+      ],
+      "expect": null
+    },
+    {
+      "name": "a busy month is split",
+      "cutoff": "2026-10-01T04:00:00.000Z",
+      "maxLines": 2,
+      "services": [
+        { "id": "c", "status": "closed", "finishedAt": "2026-09-12T15:00:00.000Z", "subtotalCents": 700000, "feeCents": 0 },
+        { "id": "a", "status": "closed", "finishedAt": "2026-09-02T15:00:00.000Z", "subtotalCents": 250000, "feeCents": 0 },
+        { "id": "b", "status": "closed", "finishedAt": "2026-09-10T15:00:00.000Z", "subtotalCents": 350000, "feeCents": 0 }
+      ],
+      "expect": {
+        "lines": ["a", "b"],
+        "kinds": ["tow", "tow"],
+        "amounts": [250000, 350000],
+        "towCount": 2,
+        "cancellationCount": 0,
+        "subtotalCents": 600000,
+        "itbisCents": 108000,
+        "totalCents": 708000,
+        "leftover": 1
+      }
+    },
+    {
+      "name": "two tows finished at the same second keep a fixed order",
+      "cutoff": "2026-10-01T04:00:00.000Z",
+      "services": [
+        { "id": "z", "status": "closed", "finishedAt": "2026-09-05T15:00:00.000Z", "subtotalCents": 320000, "feeCents": 0 },
+        { "id": "m", "status": "closed", "finishedAt": "2026-09-05T15:00:00.000Z", "subtotalCents": 1100050, "feeCents": 0 }
+      ],
+      "expect": {
+        "lines": ["m", "z"],
+        "kinds": ["tow", "tow"],
+        "amounts": [1100050, 320000],
+        "towCount": 2,
+        "cancellationCount": 0,
+        "subtotalCents": 1420050,
+        "itbisCents": 255609,
+        "totalCents": 1675659,
+        "leftover": 0
+      }
+    }
+  ]
+}

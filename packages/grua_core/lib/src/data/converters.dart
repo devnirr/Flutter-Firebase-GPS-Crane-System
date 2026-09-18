@@ -33,6 +33,7 @@ class NullableTimestampConverter implements JsonConverter<DateTime?, Object?> {
   DateTime? fromJson(Object? json) => switch (json) {
         final Timestamp t => t.toDate().toUtc(),
         final int ms => DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true),
+        final DateTime d => d.toUtc(),
         final String s => DateTime.tryParse(s)?.toUtc(),
         _ => null,
       };

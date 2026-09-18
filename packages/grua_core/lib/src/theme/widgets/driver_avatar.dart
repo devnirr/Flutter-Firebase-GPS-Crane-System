@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/models/driver.dart';
 import '../brand.dart';
+import '../palette.dart';
 
 /// A chofer's face, with their availability as a dot on the bottom-right.
 ///
@@ -48,6 +49,7 @@ class DriverAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final state = presence;
     final dot = (size * 0.3).clamp(10.0, 24.0);
 
@@ -74,7 +76,7 @@ class DriverAvatar extends StatelessWidget {
                       color: state.color,
                       shape: BoxShape.circle,
                       // The ring separates the dot from a photo of any colour.
-                      border: Border.all(color: BrandColors.white, width: 2),
+                      border: Border.all(color: palette.surface, width: 2),
                     ),
                   ),
                 ),
@@ -142,13 +144,14 @@ class _Initials extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return ColoredBox(
-      color: BrandColors.grey100,
+      color: palette.surfaceSubtle,
       child: Center(
         child: Text(
           _letters,
           style: TextStyle(
-            color: BrandColors.grey800,
+            color: palette.textStrong,
             fontSize: size * 0.38,
             fontWeight: FontWeight.w600,
           ),

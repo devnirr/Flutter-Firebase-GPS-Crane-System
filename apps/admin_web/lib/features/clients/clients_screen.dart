@@ -83,6 +83,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
 
     final clients = ref.watch(allClientsProvider);
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final all = clients.value ?? const <AppUser>[];
     final filtered = _apply(all);
 
@@ -91,15 +92,24 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.all(Insets.xl),
-          child: Row(
+          // A Wrap: on a 1024-px screen the search and the filter drop to a
+          // second line instead of running off the edge.
+          child: Wrap(
+            spacing: Insets.lg,
+            runSpacing: Insets.md,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text('Clientes', style: text.headlineSmall),
-              const SizedBox(width: Insets.md),
-              Text(
-                all.isEmpty ? '' : '${all.length} registrados',
-                style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Clientes', style: text.headlineSmall),
+                  const SizedBox(width: Insets.md),
+                  Text(
+                    all.isEmpty ? '' : '${all.length} registrados',
+                    style: text.bodySmall?.copyWith(color: palette.textMuted),
+                  ),
+                ],
               ),
-              const SizedBox(width: Insets.xl),
               SizedBox(
                 width: 300,
                 height: 38,
@@ -112,12 +122,10 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: Insets.md),
               _FilterDropdown(
                 value: _filter,
                 onChanged: (value) => setState(() => _filter = value),
               ),
-              const Spacer(),
             ],
           ),
         ),
@@ -237,6 +245,7 @@ class _ClientTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
@@ -247,7 +256,7 @@ class _ClientTable extends StatelessWidget {
             minWidth: MediaQuery.sizeOf(context).width - 300,
           ),
           child: DataTable(
-            headingRowColor: const WidgetStatePropertyAll(BrandColors.offWhite),
+            headingRowColor: WidgetStatePropertyAll(palette.canvas),
             headingTextStyle: text.labelSmall,
             dividerThickness: 1,
             columns: const [
@@ -272,14 +281,14 @@ class _ClientTable extends StatelessWidget {
                             client.hasProfile ? client.name : 'Sin nombre',
                             style: text.titleSmall?.copyWith(
                               color: client.hasProfile
-                                  ? BrandColors.ink
-                                  : BrandColors.grey600,
+                                  ? palette.text
+                                  : palette.textMuted,
                             ),
                           ),
                           Text(
                             client.displayPhone,
                             style: text.bodySmall
-                                ?.copyWith(color: BrandColors.grey600),
+                                ?.copyWith(color: palette.textMuted),
                           ),
                         ],
                       ),
@@ -289,7 +298,7 @@ class _ClientTable extends StatelessWidget {
                         client.email.isEmpty ? '—' : client.email,
                         style: client.email.isEmpty
                             ? text.bodyMedium
-                                ?.copyWith(color: BrandColors.grey400)
+                                ?.copyWith(color: palette.textFaint)
                             : text.bodyMedium,
                       ),
                     ),
@@ -304,7 +313,7 @@ class _ClientTable extends StatelessWidget {
                           : Text(
                               '—',
                               style: text.bodyMedium
-                                  ?.copyWith(color: BrandColors.grey400),
+                                  ?.copyWith(color: palette.textFaint),
                             ),
                     ),
                     DataCell(Text(client.preferredPaymentMethod.label)),
@@ -314,7 +323,7 @@ class _ClientTable extends StatelessWidget {
                           ? Text(
                               '—',
                               style: text.bodyMedium
-                                  ?.copyWith(color: BrandColors.grey400),
+                                  ?.copyWith(color: palette.textFaint),
                             )
                           : Tooltip(
                               message: DoTime.dateAndTime(client.createdAt!),
@@ -339,15 +348,17 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+
     final (label, fg, bg) = switch (client) {
       _ when client.blocked =>
-        ('Bloqueado', BrandColors.danger, BrandColors.dangerTint),
+        ('Bloqueado', palette.danger, palette.dangerTint),
       // A phone-verified account with no name never finished registration, so
       // it cannot request yet. Worth seeing: it usually means the profile
       // screen was abandoned, not that the customer is inactive.
       _ when !client.hasProfile =>
-        ('Sin completar', BrandColors.warning, BrandColors.warningTint),
-      _ => ('Activo', BrandColors.success, BrandColors.successTint),
+        ('Sin completar', palette.warning, palette.warningTint),
+      _ => ('Activo', palette.success, palette.successTint),
     };
 
     final pill = Container(

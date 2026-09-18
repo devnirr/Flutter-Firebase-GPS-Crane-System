@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import '../shared/toast.dart';
 import 'service_detail_dialog.dart';
 
 /// Every service, past and present.
@@ -185,13 +186,13 @@ class _ServicesScreenState extends ConsumerState<ServicesScreen> {
       case Ok(value: final service?):
         await showServiceDetailDialog(context, service);
       case Ok():
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No hay un servicio con el código $normalized.')),
+        showToast(
+          context,
+          'No hay un servicio con el código $normalized.',
+          tone: ToastTone.error,
         );
       case Err(:final failure):
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(failure.userMessage)),
-        );
+        showToast(context, failure.userMessage, tone: ToastTone.error);
     }
   }
 
@@ -203,9 +204,7 @@ class _ServicesScreenState extends ConsumerState<ServicesScreen> {
             .catchError((Object _) => null);
     if (!mounted) return;
     if (service == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ese servicio no existe.')),
-      );
+      showToast(context, 'Ese servicio no existe.', tone: ToastTone.error);
       return;
     }
     await showServiceDetailDialog(context, service);
@@ -242,6 +241,7 @@ class _ServicesScreenState extends ConsumerState<ServicesScreen> {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final visible = _visible;
 
     return Column(
@@ -306,7 +306,7 @@ class _ServicesScreenState extends ConsumerState<ServicesScreen> {
                   _query.isEmpty
                       ? '${_items.length}${_hasMore ? '+' : ''} servicios'
                       : '${visible.length} de ${_items.length} cargados',
-                  style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+                  style: text.bodySmall?.copyWith(color: palette.textMuted),
                 ),
             ],
           ),
@@ -427,7 +427,8 @@ class _ServicesTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final muted = text.bodySmall?.copyWith(color: BrandColors.grey600);
+    final palette = context.palette;
+    final muted = text.bodySmall?.copyWith(color: palette.textMuted);
 
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
@@ -439,7 +440,7 @@ class _ServicesTable extends StatelessWidget {
             dataRowMinHeight: 56,
             dataRowMaxHeight: 60,
             columnSpacing: 28,
-            headingRowColor: const WidgetStatePropertyAll(BrandColors.offWhite),
+            headingRowColor: WidgetStatePropertyAll(palette.canvas),
             headingTextStyle: text.labelSmall,
             dividerThickness: 1,
             columns: const [
@@ -488,7 +489,7 @@ class _ServicesTable extends StatelessWidget {
                                 ? Icons.payments_outlined
                                 : Icons.credit_card,
                             size: 16,
-                            color: BrandColors.grey600,
+                            color: palette.textMuted,
                           ),
                           const SizedBox(width: Insets.xs),
                           Text(s.payment.method.label),

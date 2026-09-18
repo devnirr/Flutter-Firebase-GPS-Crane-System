@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../shared/form_dialog.dart';
+import '../shared/toast.dart';
 
 /// How the dialog gets a file off the office's machine.
 ///
@@ -13,13 +14,15 @@ import '../shared/form_dialog.dart';
 /// required attachment cannot be filled in is a form that cannot be tested.
 typedef DocumentPicker = Future<PickedDocument?> Function();
 
-final documentPickerProvider =
-    Provider<DocumentPicker>((ref) => pickDocumentFromDisk);
+final documentPickerProvider = Provider<DocumentPicker>(
+  (ref) => pickDocumentFromDisk,
+);
 
 /// The profile-photo picker. Images the browser can draw only: the roster shows
 /// this file in a circle, where a PDF or a HEIC would just be initials.
-final avatarPickerProvider =
-    Provider<DocumentPicker>((ref) => pickAvatarFromDisk);
+final avatarPickerProvider = Provider<DocumentPicker>(
+  (ref) => pickAvatarFromDisk,
+);
 
 Future<PickedDocument?> pickDocumentFromDisk() =>
     _pickFromDisk(const ['jpg', 'jpeg', 'png', 'webp', 'heic', 'pdf']);
@@ -151,8 +154,10 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final trucks = ref.watch(allTrucksProvider).value ?? const <Truck>[];
-    final zoneSuggestions = ref
+    final zoneSuggestions =
+        ref
             .watch(appSettingsProvider)
             .value
             ?.activeZones
@@ -163,31 +168,34 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
     // A grúa with a chofer already on it would be reassigned by this form, so
     // the ones already spoken for are not offered — except this chofer's own.
     final ownTruckId = _editing?.assignedTruckId;
-    final available = trucks
-        .where(
-          (t) =>
-              t.id == ownTruckId ||
-              (t.active && !t.archived && !t.isAssigned),
-        )
-        .toList()
-      ..sort((a, b) => a.plate.compareTo(b.plate));
+    final available =
+        trucks
+            .where(
+              (t) =>
+                  t.id == ownTruckId ||
+                  (t.active && !t.archived && !t.isAssigned),
+            )
+            .toList()
+          ..sort((a, b) => a.plate.compareTo(b.plate));
     // Until the fleet loads the chofer's own grúa is not in that list, and a
     // dropdown whose value matches no item throws.
     final ownMissing =
         ownTruckId != null && !available.any((t) => t.id == ownTruckId);
 
     return Dialog(
-      backgroundColor: BrandColors.white,
-      shape: const RoundedRectangleBorder(borderRadius: Corners.brMd),
+      backgroundColor: palette.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 620,
+          maxWidth: 820,
           maxHeight: MediaQuery.sizeOf(context).height * 0.9,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             FormDialogHeader(
+              icon: Icons.badge_outlined,
               title: _isEdit ? 'Editar chofer' : 'Nuevo chofer',
               subtitle: _isEdit
                   ? 'Los cambios se guardan en la cuenta del chofer.'
@@ -198,7 +206,7 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(
                   Insets.xxl,
-                  Insets.lg,
+                  Insets.xl,
                   Insets.xxl,
                   Insets.lg,
                 ),
@@ -207,77 +215,102 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const FormSection('Identidad'),
-                      LabeledField(
-                        label: 'Foto del chofer',
-                        required: !_isEdit,
-                        help: 'JPG, PNG o WEBP con la cara visible. Máximo 5 MB.',
-                        child: _AvatarPicker(
-                          name: _editing?.name ?? '',
-                          currentUrl: _editing?.photoUrl ?? '',
-                          file: _avatar,
-                          error: _avatarError,
-                          onPick: _pickAvatar,
-                          onClear: () => setState(() {
-                            _avatar = null;
-                            _avatarError = null;
-                          }),
-                        ),
-                      ),
-                      LabeledField(
-                        label: 'Nombre completo',
-                        required: true,
-                        child: TextFormField(
-                          controller: _name,
-                          textCapitalization: TextCapitalization.words,
-                          decoration: const InputDecoration(
-                            hintText: 'Juan Alberto Pérez Núñez',
-                          ),
-                          validator: (value) {
-                            final v = (value ?? '').trim();
-                            if (v.length < 3) return 'Escribe el nombre completo.';
-                            if (!v.contains(' ')) return 'Falta el apellido.';
-                            return null;
-                          },
-                        ),
+                      const FormSection(
+                        'Identidad',
+                        note: 'Como aparece en la cédula del chofer.',
                       ),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
+                          SizedBox(
+                            width: 236,
                             child: LabeledField(
-                              label: 'Cédula',
-                              required: true,
-                              child: TextFormField(
-                                controller: _cedula,
-                                // Identity, not a detail: a wrong one is a
-                                // new account, not an edit.
-                                enabled: !_isEdit,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [CedulaInputFormatter()],
-                                decoration: const InputDecoration(
-                                  hintText: '001-1234567-8',
-                                ),
-                                // Not re-checked on an edit: an account opened
-                                // before the check existed must stay editable.
-                                validator: _isEdit ? null : DoValidators.cedula,
+                              label: 'Foto del chofer',
+                              required: !_isEdit,
+                              help:
+                                  'JPG, PNG o WEBP con la cara visible. '
+                                  'Máximo 5 MB.',
+                              child: _AvatarPicker(
+                                name: _editing?.name ?? '',
+                                currentUrl: _editing?.photoUrl ?? '',
+                                file: _avatar,
+                                error: _avatarError,
+                                onPick: _pickAvatar,
+                                onClear: () => setState(() {
+                                  _avatar = null;
+                                  _avatarError = null;
+                                }),
                               ),
                             ),
                           ),
-                          const SizedBox(width: Insets.lg),
+                          const SizedBox(width: Insets.xl),
                           Expanded(
-                            child: LabeledField(
-                              label: 'Teléfono',
-                              required: true,
-                              child: TextFormField(
-                                controller: _phone,
-                                keyboardType: TextInputType.phone,
-                                inputFormatters: [DoPhoneInputFormatter()],
-                                decoration: const InputDecoration(
-                                  hintText: '(809) 555-1234',
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                LabeledField(
+                                  label: 'Nombre completo',
+                                  required: true,
+                                  child: TextFormField(
+                                    controller: _name,
+                                    textCapitalization:
+                                        TextCapitalization.words,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Juan Alberto Pérez Núñez',
+                                    ),
+                                    validator: (value) {
+                                      final v = (value ?? '').trim();
+                                      if (v.length < 3) {
+                                        return 'Escribe el nombre completo.';
+                                      }
+                                      if (!v.contains(' ')) {
+                                        return 'Falta el apellido.';
+                                      }
+                                      return null;
+                                    },
+                                  ),
                                 ),
-                                validator: DoValidators.phone,
-                              ),
+                                FormRow(
+                                  left: LabeledField(
+                                    label: 'Cédula',
+                                    required: true,
+                                    help: _isEdit
+                                        ? 'Identifica al chofer: no se cambia.'
+                                        : null,
+                                    child: TextFormField(
+                                      controller: _cedula,
+                                      // Identity, not a detail: a wrong one is a
+                                      // new account, not an edit.
+                                      enabled: !_isEdit,
+                                      keyboardType: TextInputType.number,
+                                      inputFormatters: [CedulaInputFormatter()],
+                                      decoration: const InputDecoration(
+                                        hintText: '001-1234567-8',
+                                      ),
+                                      // Not re-checked on an edit: an account opened
+                                      // before the check existed must stay editable.
+                                      validator: _isEdit
+                                          ? null
+                                          : DoValidators.cedula,
+                                    ),
+                                  ),
+                                  right: LabeledField(
+                                    label: 'Teléfono',
+                                    required: true,
+                                    child: TextFormField(
+                                      controller: _phone,
+                                      keyboardType: TextInputType.phone,
+                                      inputFormatters: [
+                                        DoPhoneInputFormatter(),
+                                      ],
+                                      decoration: const InputDecoration(
+                                        hintText: '(809) 555-1234',
+                                      ),
+                                      validator: DoValidators.phone,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
@@ -307,45 +340,41 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
                         ),
                       ),
                       const SizedBox(height: Insets.sm),
-                      const FormSection('Licencia'),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Licencia de conducir',
-                              required: true,
-                              child: TextFormField(
-                                controller: _license,
-                                decoration: const InputDecoration(
-                                  hintText: 'Número de licencia',
-                                ),
-                                validator: (value) =>
-                                    (value ?? '').trim().isEmpty
-                                        ? 'Escribe el número de licencia.'
-                                        : null,
-                              ),
+                      const FormSection(
+                        'Licencia',
+                        note:
+                            'Una licencia vencida saca al chofer de la '
+                            'calle por sí sola.',
+                      ),
+                      FormRow(
+                        left: LabeledField(
+                          label: 'Licencia de conducir',
+                          required: true,
+                          child: TextFormField(
+                            controller: _license,
+                            decoration: const InputDecoration(
+                              hintText: 'Número de licencia',
                             ),
+                            validator: (value) => (value ?? '').trim().isEmpty
+                                ? 'Escribe el número de licencia.'
+                                : null,
                           ),
-                          const SizedBox(width: Insets.lg),
-                          Expanded(
-                            child: LabeledField(
-                              label: 'Vencimiento licencia',
-                              required: true,
-                              child: DateField(
-                                value: _licenseExpiry,
-                                onPick: _pickExpiry,
-                              ),
-                            ),
+                        ),
+                        right: LabeledField(
+                          label: 'Vencimiento licencia',
+                          required: true,
+                          child: DateField(
+                            value: _licenseExpiry,
+                            onPick: _pickExpiry,
                           ),
-                        ],
+                        ),
                       ),
                       LabeledField(
                         label: 'Foto de la licencia',
                         required: !_isEdit,
                         help: _isEdit
                             ? 'Solo si cambió la licencia. JPG, PNG o PDF. '
-                                'Máximo 10 MB.'
+                                  'Máximo 10 MB.'
                             : 'JPG, PNG o PDF. Máximo 10 MB.',
                         child: _PhotoPicker(
                           file: _licensePhoto,
@@ -364,16 +393,14 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
                         help: available.isEmpty
                             ? 'No hay grúas libres. Puedes asignarla después.'
                             : 'Sin una grúa asignada el chofer no puede ponerse '
-                                'en línea.',
+                                  'en línea.',
                         child: DropdownButtonFormField<String?>(
                           initialValue: _truckId,
                           isExpanded: true,
                           decoration: const InputDecoration(),
                           hint: const Text('Sin asignar'),
                           items: [
-                            const DropdownMenuItem(
-                              child: Text('Sin asignar'),
-                            ),
+                            const DropdownMenuItem(child: Text('Sin asignar')),
                             if (ownMissing)
                               DropdownMenuItem(
                                 value: ownTruckId,
@@ -390,12 +417,14 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
                                 ),
                               ),
                           ],
-                          onChanged: (value) => setState(() => _truckId = value),
+                          onChanged: (value) =>
+                              setState(() => _truckId = value),
                         ),
                       ),
                       LabeledField(
                         label: 'Zona de cobertura',
-                        help: 'Escribe una zona y presiona Enter. '
+                        help:
+                            'Escribe una zona y presiona Enter. '
                             'Sin zonas, el chofer recibe servicios en toda la '
                             'cobertura.',
                         child: _ZoneField(
@@ -403,11 +432,15 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
                           zones: _zones,
                           suggestions: zoneSuggestions,
                           onAdd: _addZone,
-                          onRemove: (zone) => setState(() => _zones.remove(zone)),
+                          onRemove: (zone) =>
+                              setState(() => _zones.remove(zone)),
                         ),
                       ),
                       const SizedBox(height: Insets.sm),
-                      const FormSection('Facturación'),
+                      const FormSection(
+                        'Facturación',
+                        note: 'Solo para un chofer que factura por su cuenta.',
+                      ),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -419,7 +452,7 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
                                 controller: _company,
                                 textCapitalization: TextCapitalization.words,
                                 decoration: const InputDecoration(
-                                  hintText: 'Solo si factura por su cuenta',
+                                  hintText: 'Transporte Reyes, SRL',
                                 ),
                               ),
                             ),
@@ -460,6 +493,7 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
             ),
             FormDialogFooter(
               submitting: _submitting,
+              note: '* Obligatorio',
               label: _isEdit ? 'Guardar cambios' : 'Crear chofer',
               onCancel: () => Navigator.of(context).pop(),
               onSubmit: _submit,
@@ -635,7 +669,9 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
       _error = null;
     });
 
-    final saved = await ref.read(functionsGatewayProvider).updateDriver(
+    final saved = await ref
+        .read(functionsGatewayProvider)
+        .updateDriver(
           driver.id,
           DriverUpdate(
             name: _name.text.trim(),
@@ -679,11 +715,9 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
       return;
     }
 
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = Toaster.of(context);
     Navigator.of(context).pop(true);
-    messenger.showSnackBar(
-      const SnackBar(content: Text('Cambios guardados.')),
-    );
+    toast.show('Cambios guardados.');
   }
 
   /// Closes the form and shows the temporary password on the navigator that
@@ -705,7 +739,9 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
     final photo = _avatar;
     if (photo == null) return null;
 
-    final upload = await ref.read(driverRepositoryProvider).uploadDriverPhoto(
+    final upload = await ref
+        .read(driverRepositoryProvider)
+        .uploadDriverPhoto(
           driverId: driverId,
           bytes: photo.bytes,
           contentType: photo.contentType,
@@ -732,7 +768,9 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
     final photo = _licensePhoto;
     if (photo == null) return null;
 
-    final upload = await ref.read(driverRepositoryProvider).uploadDocument(
+    final upload = await ref
+        .read(driverRepositoryProvider)
+        .uploadDocument(
           driverId: driverId,
           type: DriverDocumentType.licencia,
           bytes: photo.bytes,
@@ -746,7 +784,9 @@ class _CreateDriverDialogState extends ConsumerState<CreateDriverDialog> {
           '${_reason(upload.failureOrNull)}';
     }
 
-    final attached = await ref.read(functionsGatewayProvider).attachDriverDocument(
+    final attached = await ref
+        .read(functionsGatewayProvider)
+        .attachDriverDocument(
           driverId: driverId,
           type: DriverDocumentType.licencia,
           storagePath: path,
@@ -783,6 +823,7 @@ class _CreatedDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return AlertDialog(
       title: const Text('Chofer creado'),
@@ -805,9 +846,9 @@ class _CreatedDialog extends StatelessWidget {
                 vertical: Insets.sm,
               ),
               decoration: BoxDecoration(
-                color: BrandColors.offWhite,
+                color: palette.canvas,
                 borderRadius: Corners.brSm,
-                border: Border.all(color: BrandColors.grey200),
+                border: Border.all(color: palette.border),
               ),
               child: Row(
                 children: [
@@ -833,7 +874,7 @@ class _CreatedDialog extends StatelessWidget {
             Text(
               'Léesela al chofer ahora: no se puede volver a ver. '
               'La app le pedirá cambiarla al entrar.',
-              style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+              style: text.bodySmall?.copyWith(color: palette.textMuted),
             ),
             if (warning != null) ...[
               const SizedBox(height: Insets.lg),
@@ -874,12 +915,12 @@ class PickedDocument {
   bool get isPdf => extension == 'pdf';
 
   String get contentType => switch (extension) {
-        'png' => 'image/png',
-        'webp' => 'image/webp',
-        'heic' => 'image/heic',
-        'pdf' => 'application/pdf',
-        _ => 'image/jpeg',
-      };
+    'png' => 'image/png',
+    'webp' => 'image/webp',
+    'heic' => 'image/heic',
+    'pdf' => 'application/pdf',
+    _ => 'image/jpeg',
+  };
 
   String get sizeLabel {
     final kb = bytes.lengthInBytes / 1024;
@@ -912,12 +953,18 @@ class _AvatarPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final picked = file;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
+        // A Wrap, not a Row: in the narrow column beside the identity fields
+        // the button drops under the photo rather than off the edge.
+        Wrap(
+          spacing: Insets.md,
+          runSpacing: Insets.sm,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             if (picked != null)
               DriverAvatar(name: name, bytes: picked.bytes, size: 64)
@@ -928,15 +975,14 @@ class _AvatarPicker extends StatelessWidget {
                 width: 64,
                 height: 64,
                 decoration: BoxDecoration(
-                  color: BrandColors.offWhite,
+                  color: palette.canvas,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: error != null ? BrandColors.danger : BrandColors.grey200,
+                    color: error != null ? palette.danger : palette.border,
                   ),
                 ),
-                child: const Icon(Icons.person_outline, color: BrandColors.grey400),
+                child: Icon(Icons.person_outline, color: palette.textFaint),
               ),
-            const SizedBox(width: Insets.lg),
             if (picked == null)
               OutlinedButton.icon(
                 onPressed: onPick,
@@ -945,7 +991,9 @@ class _AvatarPicker extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: Insets.md),
                 ),
                 icon: const Icon(Icons.add_a_photo_outlined, size: 18),
-                label: Text(currentUrl.isEmpty ? 'Agregar foto' : 'Cambiar foto'),
+                label: Text(
+                  currentUrl.isEmpty ? 'Agregar foto' : 'Cambiar foto',
+                ),
               )
             else ...[
               TextButton(onPressed: onPick, child: const Text('Cambiar')),
@@ -959,10 +1007,7 @@ class _AvatarPicker extends StatelessWidget {
         ),
         if (error != null) ...[
           const SizedBox(height: Insets.xs),
-          Text(
-            error!,
-            style: text.bodySmall?.copyWith(color: BrandColors.danger),
-          ),
+          Text(error!, style: text.bodySmall?.copyWith(color: palette.danger)),
         ],
       ],
     );
@@ -985,6 +1030,7 @@ class _PhotoPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final picked = file;
 
     return Column(
@@ -993,10 +1039,10 @@ class _PhotoPicker extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(Insets.md),
           decoration: BoxDecoration(
-            color: BrandColors.offWhite,
+            color: palette.canvas,
             borderRadius: Corners.brSm,
             border: Border.all(
-              color: error != null ? BrandColors.danger : BrandColors.grey200,
+              color: error != null ? palette.danger : palette.border,
             ),
           ),
           child: Row(
@@ -1016,8 +1062,9 @@ class _PhotoPicker extends StatelessWidget {
                       ),
                       Text(
                         picked.sizeLabel,
-                        style: text.bodySmall
-                            ?.copyWith(color: BrandColors.grey600),
+                        style: text.bodySmall?.copyWith(
+                          color: palette.textMuted,
+                        ),
                       ),
                     ],
                   ),
@@ -1029,12 +1076,12 @@ class _PhotoPicker extends StatelessWidget {
                 ),
                 TextButton(onPressed: onPick, child: const Text('Cambiar')),
               ] else ...[
-                const Icon(Icons.badge_outlined, size: 20, color: BrandColors.grey600),
+                Icon(Icons.badge_outlined, size: 20, color: palette.textMuted),
                 const SizedBox(width: Insets.md),
                 Expanded(
                   child: Text(
                     'Ningún archivo seleccionado',
-                    style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+                    style: text.bodyMedium?.copyWith(color: palette.textMuted),
                   ),
                 ),
                 OutlinedButton.icon(
@@ -1054,10 +1101,7 @@ class _PhotoPicker extends StatelessWidget {
         ),
         if (error != null) ...[
           const SizedBox(height: Insets.xs),
-          Text(
-            error!,
-            style: text.bodySmall?.copyWith(color: BrandColors.danger),
-          ),
+          Text(error!, style: text.bodySmall?.copyWith(color: palette.danger)),
         ],
       ],
     );
@@ -1071,6 +1115,8 @@ class _Thumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+
     return ClipRRect(
       borderRadius: Corners.brXs,
       child: SizedBox(
@@ -1078,12 +1124,12 @@ class _Thumbnail extends StatelessWidget {
         height: 44,
         child: file.isPdf
             ? Container(
-                color: BrandColors.grey100,
+                color: palette.surfaceSubtle,
                 alignment: Alignment.center,
-                child: const Icon(
+                child: Icon(
                   Icons.picture_as_pdf,
                   size: 20,
-                  color: BrandColors.grey600,
+                  color: palette.textMuted,
                 ),
               )
             : Image.memory(
@@ -1091,12 +1137,12 @@ class _Thumbnail extends StatelessWidget {
                 fit: BoxFit.cover,
                 // HEIC has no decoder on the web; the file still uploads fine.
                 errorBuilder: (context, error, stack) => Container(
-                  color: BrandColors.grey100,
+                  color: palette.surfaceSubtle,
                   alignment: Alignment.center,
-                  child: const Icon(
+                  child: Icon(
                     Icons.image_outlined,
                     size: 20,
-                    color: BrandColors.grey600,
+                    color: palette.textMuted,
                   ),
                 ),
               ),
@@ -1122,8 +1168,10 @@ class _ZoneField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final unused =
-        suggestions.where((s) => !zones.any((z) => z.toLowerCase() == s.toLowerCase()));
+    final palette = context.palette;
+    final unused = suggestions.where(
+      (s) => !zones.any((z) => z.toLowerCase() == s.toLowerCase()),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1152,8 +1200,8 @@ class _ZoneField extends StatelessWidget {
                   onDeleted: () => onRemove(zone),
                   deleteIcon: const Icon(Icons.close, size: 14),
                   visualDensity: VisualDensity.compact,
-                  backgroundColor: BrandColors.redTint,
-                  side: const BorderSide(color: BrandColors.redTintStrong),
+                  backgroundColor: palette.brandTint,
+                  side: BorderSide(color: palette.brandTintStrong),
                 ),
             ],
           ),

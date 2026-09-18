@@ -12,10 +12,10 @@
     "build": "tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src test --ext .ts",
+    "lint": "eslint src test",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:emulator": "firebase emulators:exec --only firestore,database,auth \"vitest run --mode emulator\"",
+    "test:emulator": "firebase emulators:exec --only firestore,database,auth,storage \"vitest run --mode emulator\"",
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions"
   },
@@ -27,8 +27,14 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/node": "^20.17.12",
+    "eslint": "^9.39.5",
+    "firebase": "^12.19.0",
+    "globals": "^17.12.0",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^2.1.8"
   }
 }

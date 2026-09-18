@@ -16,11 +16,16 @@ import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
+import '../../domain/models/insurer.dart';
+import '../../domain/models/insurer_invoice.dart';
 import '../../domain/models/payments.dart';
+import '../../domain/models/pricing_rule.dart';
 import '../../domain/models/remote_config_models.dart';
 import '../../domain/models/service.dart';
+import '../../domain/models/settlement.dart';
 import '../../domain/models/truck.dart';
 import '../../domain/repositories.dart';
+import '../converters.dart';
 import '../paths.dart';
 
 /// Firestore-backed repositories.
@@ -190,6 +195,15 @@ class FirebaseAuthRepository implements AuthRepository {
     if (user == null) return UserRole.unknown;
     final token = await user.getIdTokenResult(forceRefresh);
     return UserRole.fromWire(token.claims?['role'] as String?);
+  }
+
+  @override
+  Future<String?> currentInsurerId({bool forceRefresh = false}) async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+    final token = await user.getIdTokenResult(forceRefresh);
+    final id = token.claims?['insurerId'];
+    return id is String && id.isNotEmpty ? id : null;
   }
 
   @override
@@ -673,6 +687,43 @@ class FirestoreServiceRepository implements ServiceRepository {
       .snapshots()
       .map((snap) => snap.docs.map((d) => d.data()).toList())
       .guarded('watchActiveServices');
+
+  @override
+  Stream<List<Service>> watchInsurerServices(
+    String insurerId, {
+    DateTime? since,
+    int limit = 200,
+  }) {
+    // Filtered on the company: the rules refuse the query otherwise.
+    var query =
+        Paths.services().where('insurerId', isEqualTo: insurerId);
+    if (since != null) {
+      query = query.where(
+        'createdAt',
+        isGreaterThanOrEqualTo: Timestamp.fromDate(since),
+      );
+    }
+    return query
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList())
+        .guarded('watchInsurerServices');
+  }
+
+  @override
+  Future<Result<List<Service>>> findInsurerServicesByClaim(
+    String insurerId,
+    String claimKey,
+  ) =>
+      _guard(() async {
+        final snap = await Paths.services()
+            .where('insurerId', isEqualTo: insurerId)
+            .where('insurance.claimKey', isEqualTo: claimKey)
+            .limit(20)
+            .get();
+        return snap.docs.map((d) => d.data()).toList();
+      });
 
   @override
   Stream<List<ServiceEvent>> watchEvents(String serviceId) =>
@@ -1194,6 +1245,94 @@ class FirebaseTypingRepository implements TypingRepository {
   }
 }
 
+class FirestoreInsurerRepository implements InsurerRepository {
+  const FirestoreInsurerRepository();
+
+  @override
+  Stream<List<Insurer>> watchInsurers() => Paths.insurers()
+      .orderBy('name')
+      .snapshots()
+      .map((snap) => snap.docs.map((d) => d.data()).toList())
+      .guarded('watchInsurers');
+
+  @override
+  Stream<Insurer?> watchInsurer(String id) => Paths.insurer(id)
+      .snapshots()
+      .map((snap) => snap.data())
+      .guarded('watchInsurer');
+
+  @override
+  Stream<InsurerMember?> watchMember(String insurerId, String uid) => Paths
+      .insurerMember(insurerId, uid)
+      .snapshots()
+      .map((snap) => snap.data())
+      .guarded('watchInsurerMember');
+
+  @override
+  Stream<List<InsurerMember>> watchMembers(String insurerId) => Paths
+      .insurerMembers(insurerId)
+      .orderBy('name')
+      .snapshots()
+      .map((snap) => snap.docs.map((d) => d.data()).toList())
+      .guarded('watchInsurerMembers');
+
+  @override
+  Stream<List<PricingRule>> watchPricingRules({String? insurerId}) {
+    final rules = Paths.pricingRules();
+    // The default list is the rows with no company; the rules only admit a
+    // query that says which it wants.
+    final query = insurerId == null
+        ? rules.where('insurerId', isNull: true)
+        : rules.where('insurerId', isEqualTo: insurerId);
+    return query
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList())
+        .guarded('watchPricingRules');
+  }
+
+  @override
+  Stream<List<InsurerInvoice>> watchInvoices({String? insurerId, int limit = 200}) {
+    Query<InsurerInvoice> query = Paths.insurerInvoices();
+    if (insurerId != null) query = query.where('insurerId', isEqualTo: insurerId);
+    return query
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList())
+        .guarded('watchInsurerInvoices');
+  }
+
+  @override
+  Stream<InsurerInvoice?> watchInvoice(String id) => Paths.insurerInvoice(id)
+      .snapshots()
+      .map((snap) => snap.data())
+      .guarded('watchInsurerInvoice');
+
+  @override
+  Stream<FiscalIssuer> watchFiscalIssuer() => Paths.fiscalIssuer()
+      .snapshots()
+      .map((snap) => FiscalIssuer.fromJson(snap.data()))
+      .guarded('watchFiscalIssuer');
+
+  @override
+  Stream<NcfSequence> watchNcfSequence(String prefix) => Paths.ncfSequence(prefix)
+      .snapshots()
+      .map((snap) => NcfSequence.fromJson(prefix, snap.data()))
+      .guarded('watchNcfSequence');
+
+  @override
+  Stream<List<Service>> watchServicesToInvoice({String? insurerId}) {
+    var query = Paths.services()
+        .where('payment.status', isEqualTo: PaymentStatus.toInvoice.wire);
+    if (insurerId != null) query = query.where('insurerId', isEqualTo: insurerId);
+    return query
+        .limit(2000)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList())
+        .guarded('watchServicesToInvoice');
+  }
+}
+
 class FirestoreEarningsRepository implements EarningsRepository {
   const FirestoreEarningsRepository();
 
@@ -1234,6 +1373,44 @@ class FirestoreEarningsRepository implements EarningsRepository {
   }
 
   @override
+  Stream<List<DriverSettlement>> watchDriverSettlements({
+    String? driverId,
+    SettlementStatus? status,
+    int limit = 50,
+  }) {
+    Query<DriverSettlement> query = Paths.driverSettlements();
+    if (driverId != null) query = query.where('driverId', isEqualTo: driverId);
+    if (status != null) query = query.where('status', isEqualTo: status.wire);
+    return query
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((snap) => snap.docs.map((d) => d.data()).toList())
+        .guarded('watchDriverSettlements');
+  }
+
+  @override
+  Stream<DriverSettlement?> watchDriverSettlement(String id) => Paths
+      .driverSettlement(id)
+      .snapshots()
+      .map((snap) => snap.data())
+      .guarded('watchDriverSettlement');
+
+  @override
+  Stream<List<EarningEntry>> watchUnsettledEntries(String driverId, {DateTime? since}) {
+    var query = Paths.earningEntries(driverId).where('settled', isEqualTo: false);
+    if (since != null) {
+      query = query.where('completedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(since));
+    }
+    return query
+          .orderBy('completedAt')
+          .limit(400)
+          .snapshots()
+          .map((snap) => snap.docs.map((d) => d.data()).toList())
+          .guarded('watchUnsettledEntries');
+  }
+
+  @override
   Stream<List<Service>> watchUncountedCash(String driverId) => Paths.services()
       // Equality on both: served by the single-field indexes, no composite.
       .where('driverId', isEqualTo: driverId)
@@ -1243,7 +1420,12 @@ class FirestoreEarningsRepository implements EarningsRepository {
       .map(
         (snap) => snap.docs
             .map((d) => d.data())
-            .where((s) => s.payment.isCash && s.payment.cashSettlementId == null)
+            .where(
+              (s) =>
+                  s.payment.isCash &&
+                  s.payment.cashSettlementId == null &&
+                  s.payment.weeklySettlementId == null,
+            )
             .toList(),
       )
       .guarded('watchUncountedCash');
@@ -1290,6 +1472,12 @@ class FirestoreConfigRepository implements ConfigRepository {
   Stream<AppSettings> watchAppSettings() => Paths.appSettings()
       .snapshots()
       .map((snap) => snap.data() ?? const AppSettings());
+
+  @override
+  Stream<DateTime?> watchSettlementsStartAt() => Paths.settlementsConfig()
+      .snapshots()
+      .map((snap) => const NullableTimestampConverter().fromJson(snap.data()?['startAt']))
+      .guarded('watchSettlementsStartAt');
 
   @override
   Future<AppSettings> currentAppSettings() async {

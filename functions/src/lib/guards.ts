@@ -1,6 +1,6 @@
 import type { CallableRequest } from 'firebase-functions/v2/https';
 
-import { DriverStatus, UserRole } from './enums.js';
+import { DriverStatus, InsurerRole, InsurerStatus, UserRole } from './enums.js';
 import { Code, permissionDenied, precondition, unauthenticated } from './errors.js';
 import { Paths } from './firestore.js';
 
@@ -35,6 +35,10 @@ const enforceAppCheck =
 export interface Caller {
   uid: string;
   role: UserRole | undefined;
+  /** Set only for people of an insurance company. */
+  insurerId?: string;
+  /** As the token says; `requireActiveInsurer` reads the current one. */
+  insurerRole?: InsurerRole;
 }
 
 /** Rejects a request with no App Check token. */
@@ -50,9 +54,13 @@ export function requireAuth(request: CallableRequest<unknown>): Caller {
   requireAppCheck(request);
   const auth = request.auth;
   if (!auth) throw unauthenticated();
+  const insurerId = auth.token['insurerId'];
+  const insurerRole = auth.token['insurerRole'];
   return {
     uid: auth.uid,
     role: auth.token['role'] as UserRole | undefined,
+    ...(typeof insurerId === 'string' && insurerId !== '' ? { insurerId } : {}),
+    ...(typeof insurerRole === 'string' ? { insurerRole: insurerRole as InsurerRole } : {}),
   };
 }
 
@@ -102,6 +110,61 @@ export async function requireActiveDriver(
   }
 
   return { ...caller, driver };
+}
+
+export interface InsurerCaller extends Caller {
+  insurerId: string;
+  /** From the member document, so a demotion takes effect at once. */
+  insurerRole: InsurerRole;
+  insurer: FirebaseFirestore.DocumentData;
+  member: FirebaseFirestore.DocumentData;
+}
+
+/**
+ * Requires a person of an insurance company who may act for it right now.
+ *
+ * Like `requireActiveDriver`, the claim is only the start. The company can be
+ * suspended and the person deactivated while their token is still good for up
+ * to an hour, so both documents are read on every call. The role returned is
+ * the member document's, not the token's.
+ */
+export async function requireActiveInsurer(
+  request: CallableRequest<unknown>,
+): Promise<InsurerCaller> {
+  const caller = requireRole(request, UserRole.insurer);
+  const insurerId = caller.insurerId;
+  if (!insurerId) throw permissionDenied('Esta cuenta no pertenece a una aseguradora.');
+
+  const [insurerSnap, memberSnap] = await Promise.all([
+    Paths.insurer(insurerId).get(),
+    Paths.insurerMember(insurerId, caller.uid).get(),
+  ]);
+  const insurer = insurerSnap.data();
+  const member = memberSnap.data();
+  if (!insurer || !member) {
+    throw permissionDenied('Esta cuenta no pertenece a una aseguradora.');
+  }
+
+  if (insurer['status'] !== InsurerStatus.active) {
+    throw precondition(
+      Code.accountSuspended,
+      'La cuenta de tu aseguradora está suspendida. Comunícate con la oficina.',
+    );
+  }
+  if (member['active'] !== true) {
+    throw precondition(
+      Code.accountSuspended,
+      'Tu usuario está desactivado. Pide acceso al administrador de tu empresa.',
+    );
+  }
+
+  return {
+    ...caller,
+    insurerId,
+    insurerRole: member['insurerRole'] as InsurerRole,
+    insurer,
+    member,
+  };
 }
 
 /** Requires a customer who is not blocked. */

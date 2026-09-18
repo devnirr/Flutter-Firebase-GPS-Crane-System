@@ -194,7 +194,13 @@ describe('joinFor', () => {
 
     const payload = JSON.parse(
       Buffer.from(join.token.split('.')[1]!, 'base64url').toString('utf8'),
-    ) as Record<string, any>;
+    ) as {
+      sub: string;
+      iss: string;
+      exp: number;
+      nbf: number;
+      video: Record<string, unknown>;
+    };
     expect(payload['sub']).toBe('driver-1');
     expect(payload['iss']).toBe('APIkey123');
     expect(payload['video']['room']).toBe('call-abc');

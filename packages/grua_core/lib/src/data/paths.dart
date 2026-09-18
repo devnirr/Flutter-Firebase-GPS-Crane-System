@@ -7,9 +7,13 @@ import '../domain/models/billing.dart';
 import '../domain/models/chat_request.dart';
 import '../domain/models/dispatch_models.dart';
 import '../domain/models/driver.dart';
+import '../domain/models/insurer.dart';
+import '../domain/models/insurer_invoice.dart';
 import '../domain/models/payments.dart';
+import '../domain/models/pricing_rule.dart';
 import '../domain/models/remote_config_models.dart';
 import '../domain/models/service.dart';
+import '../domain/models/settlement.dart';
 import '../domain/models/truck.dart';
 
 /// Every Firestore and Realtime Database path in the system, typed.
@@ -39,6 +43,11 @@ abstract final class Paths {
   static const String auditCollection = 'audit';
   static const String chatRequestsCollection = 'chatRequests';
   static const String cashSettlementsCollection = 'cashSettlements';
+  static const String insurersCollection = 'insurers';
+  static const String pricingRulesCollection = 'pricingRules';
+  static const String driverSettlementsCollection = 'driverSettlements';
+  static const String insurerInvoicesCollection = 'insurerInvoices';
+  static const String fiscalCollection = 'fiscal';
 
   static const String offersSubcollection = 'offers';
   static const String messagesSubcollection = 'messages';
@@ -51,6 +60,7 @@ abstract final class Paths {
   static const String notificationsSubcollection = 'notifications';
   static const String chatStateSubcollection = 'chatState';
   static const String blockedSubcollection = 'blocked';
+  static const String membersSubcollection = 'members';
 
   // -------------------------------------------------------------------------
   // Users
@@ -307,6 +317,93 @@ abstract final class Paths {
       );
 
   // -------------------------------------------------------------------------
+  // Insurance companies — server-written, read-only here
+  // -------------------------------------------------------------------------
+
+  /// Zone prices. Queries must filter on `insurerId` (null for the default
+  /// list), or the security rules refuse them.
+  static CollectionReference<PricingRule> pricingRules() => _db
+      .collection(pricingRulesCollection)
+      .withConverter<PricingRule>(
+        fromFirestore: (snap, _) => PricingRule.fromJson(snap.data() ?? const {}),
+        toFirestore: (_, _) => throw UnsupportedError(
+          'Zone prices are written by the pricing callables.',
+        ),
+      );
+
+  static CollectionReference<Insurer> insurers() => _db
+      .collection(insurersCollection)
+      .withConverter<Insurer>(
+        fromFirestore: (snap, _) =>
+            Insurer.fromJson(snap.id, snap.data() ?? const {}),
+        toFirestore: (_, _) =>
+            throw UnsupportedError('Insurers are written by the insurer callables.'),
+      );
+
+  static DocumentReference<Insurer> insurer(String id) => insurers().doc(id);
+
+  /// The company's people, keyed by their Auth uid.
+  static CollectionReference<InsurerMember> insurerMembers(String insurerId) =>
+      _db
+          .collection(insurersCollection)
+          .doc(insurerId)
+          .collection(membersSubcollection)
+          .withConverter<InsurerMember>(
+            fromFirestore: (snap, _) => InsurerMember.fromJson(
+              insurerId,
+              snap.id,
+              snap.data() ?? const {},
+            ),
+            toFirestore: (_, _) => throw UnsupportedError(
+              'Insurer members are written by the insurer callables.',
+            ),
+          );
+
+  static DocumentReference<InsurerMember> insurerMember(
+    String insurerId,
+    String uid,
+  ) =>
+      insurerMembers(insurerId).doc(uid);
+
+  /// Weekly cortes. Server-written; a chofer's queries must filter on their
+  /// own `driverId`.
+  static CollectionReference<DriverSettlement> driverSettlements() => _db
+      .collection(driverSettlementsCollection)
+      .withConverter<DriverSettlement>(
+        fromFirestore: (snap, _) =>
+            DriverSettlement.fromJson(snap.id, snap.data() ?? const {}),
+        toFirestore: (_, _) => throw UnsupportedError(
+          'Cortes are written by the settlement callables.',
+        ),
+      );
+
+  static DocumentReference<DriverSettlement> driverSettlement(String id) =>
+      driverSettlements().doc(id);
+
+  /// Monthly invoices to insurance companies. Server-written; a company's
+  /// queries must filter on its own `insurerId`.
+  static CollectionReference<InsurerInvoice> insurerInvoices() => _db
+      .collection(insurerInvoicesCollection)
+      .withConverter<InsurerInvoice>(
+        fromFirestore: (snap, _) =>
+            InsurerInvoice.fromJson(snap.id, snap.data() ?? const {}),
+        toFirestore: (_, _) => throw UnsupportedError(
+          'Invoices are written by the invoicing callables.',
+        ),
+      );
+
+  static DocumentReference<InsurerInvoice> insurerInvoice(String id) =>
+      insurerInvoices().doc(id);
+
+  /// The company that issues receipts. Office-readable, server-written.
+  static DocumentReference<Map<String, dynamic>> fiscalIssuer() =>
+      _db.collection(fiscalCollection).doc('issuer');
+
+  /// The NCF range receipts of [prefix] are numbered from.
+  static DocumentReference<Map<String, dynamic>> ncfSequence(String prefix) =>
+      _db.collection(fiscalCollection).doc('ncf_$prefix');
+
+  // -------------------------------------------------------------------------
   // Configuration
   // -------------------------------------------------------------------------
 
@@ -325,6 +422,10 @@ abstract final class Paths {
         fromFirestore: (snap, _) => DispatchConfig.fromJson(snap.data() ?? {}),
         toFirestore: (value, _) => value.toJson(),
       );
+
+  /// `startAt`: jobs finished before it are left out of weekly cortes.
+  static DocumentReference<Map<String, dynamic>> settlementsConfig() =>
+      _db.collection(configCollection).doc('settlements');
 
   static DocumentReference<AppSettings> appSettings() =>
       _db.collection(configCollection).doc('app').withConverter<AppSettings>(

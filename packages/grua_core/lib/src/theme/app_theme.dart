@@ -2,77 +2,108 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'brand.dart';
+import 'palette.dart';
 
 /// Themes for the three products.
 ///
 /// They share one palette and one type scale; what differs is density. The
 /// phone apps are thumb-driven and generous, the admin panel is a dispatcher's
 /// workstation and is deliberately tighter.
+///
+/// Every colour comes from a [BrandPalette], which is carried on the theme as
+/// an extension. That is what makes the panel's dark skin one call rather than
+/// a second set of screens: [admin] and [adminDark] are the same builder over
+/// [BrandPalette.light] and [BrandPalette.dark].
 abstract final class AppTheme {
   static const String _fontFamily = 'Roboto';
 
   /// Client and driver apps: white surfaces, red actions, black text.
-  static ThemeData phone() => _base(density: VisualDensity.standard);
-
-  /// Admin panel: same palette, tighter rows so a dispatcher sees more at once.
-  static ThemeData admin() => _base(
-        density: VisualDensity.compact,
-      ).copyWith(
-        scaffoldBackgroundColor: BrandColors.offWhite,
+  static ThemeData phone() => _base(
+        density: VisualDensity.standard,
+        palette: BrandPalette.light,
       );
 
-  static ThemeData _base({required VisualDensity density}) {
-    const scheme = ColorScheme.light(
-      primary: BrandColors.red,
-      primaryContainer: BrandColors.redTint,
-      onPrimaryContainer: BrandColors.redDeep,
-      secondary: BrandColors.ink,
-      onSecondary: BrandColors.white,
-      secondaryContainer: BrandColors.grey100,
-      onSecondaryContainer: BrandColors.ink,
-      onSurface: BrandColors.ink,
-      surfaceContainerLowest: BrandColors.white,
-      surfaceContainerLow: BrandColors.offWhite,
-      surfaceContainer: BrandColors.grey100,
-      surfaceContainerHigh: BrandColors.grey100,
-      surfaceContainerHighest: BrandColors.grey200,
-      onSurfaceVariant: BrandColors.grey600,
-      outline: BrandColors.grey200,
-      outlineVariant: BrandColors.grey100,
-      error: BrandColors.danger,
-      errorContainer: BrandColors.dangerTint,
-      onErrorContainer: BrandColors.redDeep,
+  /// Admin panel: same palette, tighter rows so a dispatcher sees more at once.
+  static ThemeData admin() => _adminOf(BrandPalette.light);
+
+  /// The panel at night: same layout and the same red, on near-black.
+  static ThemeData adminDark() => _adminOf(BrandPalette.dark);
+
+  /// The panel in one brightness, for a [MaterialApp] that switches skins.
+  static ThemeData adminFor(Brightness brightness) =>
+      brightness == Brightness.dark ? adminDark() : admin();
+
+  static ThemeData _adminOf(BrandPalette palette) => _base(
+        density: VisualDensity.compact,
+        palette: palette,
+      ).copyWith(scaffoldBackgroundColor: palette.canvas);
+
+  static ThemeData _base({
+    required VisualDensity density,
+    required BrandPalette palette,
+  }) {
+    final dark = palette.isDark;
+    final scheme = ColorScheme(
+      brightness: palette.brightness,
+      primary: palette.brand,
+      onPrimary: palette.onBrand,
+      primaryContainer: palette.brandTint,
+      onPrimaryContainer: dark ? palette.text : BrandColors.redDeep,
+      secondary: dark ? palette.text : BrandColors.ink,
+      onSecondary: dark ? BrandColors.ink : BrandColors.white,
+      secondaryContainer: palette.surfaceSubtle,
+      onSecondaryContainer: palette.text,
+      surface: palette.surface,
+      onSurface: palette.text,
+      surfaceContainerLowest: palette.surface,
+      surfaceContainerLow: palette.canvas,
+      surfaceContainer: palette.surfaceSubtle,
+      surfaceContainerHigh: palette.surfaceSubtle,
+      surfaceContainerHighest: palette.border,
+      onSurfaceVariant: palette.textMuted,
+      outline: palette.border,
+      outlineVariant: palette.borderSubtle,
+      error: palette.danger,
+      onError: BrandColors.white,
+      errorContainer: palette.dangerTint,
+      onErrorContainer: dark ? palette.text : BrandColors.redDeep,
+      inverseSurface: palette.inverseSurface,
+      onInverseSurface: palette.onInverseSurface,
     );
 
-    final text = _textTheme(BrandColors.ink);
+    final text = _textTheme(palette.text);
 
     return ThemeData(
       useMaterial3: true,
+      brightness: palette.brightness,
       colorScheme: scheme,
       fontFamily: _fontFamily,
       visualDensity: density,
-      scaffoldBackgroundColor: BrandColors.white,
+      scaffoldBackgroundColor: palette.surface,
+      canvasColor: palette.surface,
       textTheme: text,
       splashFactory: InkSparkle.splashFactory,
+      extensions: [palette],
 
       appBarTheme: AppBarTheme(
-        backgroundColor: BrandColors.white,
-        foregroundColor: BrandColors.ink,
+        backgroundColor: palette.surface,
+        foregroundColor: palette.text,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0.5,
         centerTitle: true,
         titleTextStyle: text.titleLarge,
-        systemOverlayStyle: SystemUiOverlayStyle.dark,
+        systemOverlayStyle:
+            dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       ),
 
       // The full-width red action from every mockup.
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: BrandColors.red,
-          foregroundColor: BrandColors.white,
-          disabledBackgroundColor: BrandColors.grey200,
-          disabledForegroundColor: BrandColors.grey600,
+          backgroundColor: palette.brand,
+          foregroundColor: palette.onBrand,
+          disabledBackgroundColor: palette.surfaceSubtle,
+          disabledForegroundColor: palette.textFaint,
           minimumSize: const Size.fromHeight(56),
           elevation: 0,
           shape: const RoundedRectangleBorder(borderRadius: Corners.brMd),
@@ -85,13 +116,14 @@ abstract final class AppTheme {
         ),
       ),
 
-      // Secondary action: white pill with a hairline, as on the tracking screen.
+      // Secondary action: a pill with a hairline, as on the tracking screen.
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: BrandColors.ink,
-          backgroundColor: BrandColors.white,
+          foregroundColor: palette.text,
+          backgroundColor: palette.surface,
+          disabledForegroundColor: palette.textFaint,
           minimumSize: const Size.fromHeight(48),
-          side: const BorderSide(color: BrandColors.grey200),
+          side: BorderSide(color: palette.border),
           shape: const RoundedRectangleBorder(borderRadius: Corners.brMd),
           textStyle: const TextStyle(
             fontFamily: _fontFamily,
@@ -103,7 +135,8 @@ abstract final class AppTheme {
 
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: BrandColors.red,
+          foregroundColor: palette.brand,
+          disabledForegroundColor: palette.textFaint,
           textStyle: const TextStyle(
             fontFamily: _fontFamily,
             fontSize: 15,
@@ -112,105 +145,167 @@ abstract final class AppTheme {
         ),
       ),
 
-      // Inputs are flat filled fields with no visible border until focus,
-      // matching the request form.
-      inputDecorationTheme: const InputDecorationTheme(
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(foregroundColor: palette.textStrong),
+      ),
+
+      iconTheme: IconThemeData(color: palette.textStrong),
+
+      // Inputs are flat filled fields with a hairline until focus, matching the
+      // request form.
+      inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: BrandColors.white,
-        contentPadding: EdgeInsets.symmetric(
+        fillColor: dark ? palette.surfaceSubtle : palette.surface,
+        contentPadding: const EdgeInsets.symmetric(
           horizontal: Insets.lg,
           vertical: Insets.lg,
         ),
-        hintStyle: TextStyle(color: BrandColors.grey400, fontSize: 15),
-        labelStyle: TextStyle(color: BrandColors.grey600, fontSize: 15),
+        hintStyle: TextStyle(color: palette.textFaint, fontSize: 15),
+        labelStyle: TextStyle(color: palette.textMuted, fontSize: 15),
+        floatingLabelStyle: TextStyle(color: palette.textMuted, fontSize: 15),
+        helperStyle: TextStyle(color: palette.textMuted, fontSize: 12),
+        prefixIconColor: palette.textFaint,
+        suffixIconColor: palette.textFaint,
         border: OutlineInputBorder(
           borderRadius: Corners.brMd,
-          borderSide: BorderSide(color: BrandColors.grey200),
+          borderSide: BorderSide(color: palette.border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: Corners.brMd,
-          borderSide: BorderSide(color: BrandColors.grey200),
+          borderSide: BorderSide(color: palette.border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: Corners.brMd,
-          borderSide: BorderSide(color: BrandColors.red, width: 1.6),
+          borderSide: BorderSide(color: palette.brand, width: 1.6),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: Corners.brMd,
+          borderSide: BorderSide(color: palette.borderSubtle),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: Corners.brMd,
-          borderSide: BorderSide(color: BrandColors.danger),
+          borderSide: BorderSide(color: palette.danger),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: Corners.brMd,
-          borderSide: BorderSide(color: BrandColors.danger, width: 1.6),
+          borderSide: BorderSide(color: palette.danger, width: 1.6),
         ),
       ),
 
-      cardTheme: const CardThemeData(
-        color: BrandColors.white,
+      cardTheme: CardThemeData(
+        color: palette.surface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: Corners.brLg),
+        shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
       ),
 
       chipTheme: ChipThemeData(
-        backgroundColor: BrandColors.grey100,
+        backgroundColor: palette.surfaceSubtle,
         labelStyle: text.labelMedium,
         side: BorderSide.none,
         shape: const RoundedRectangleBorder(borderRadius: Corners.brSm),
-        padding: const EdgeInsets.symmetric(horizontal: Insets.sm, vertical: Insets.xs),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Insets.sm,
+          vertical: Insets.xs,
+        ),
       ),
 
-      dividerTheme: const DividerThemeData(
-        color: BrandColors.grey100,
+      dividerTheme: DividerThemeData(
+        color: palette.borderSubtle,
         thickness: 1,
         space: 1,
       ),
 
-      bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: BrandColors.white,
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: palette.surface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: Corners.sheet),
+        shape: const RoundedRectangleBorder(borderRadius: Corners.sheet),
         showDragHandle: true,
-        dragHandleColor: BrandColors.grey200,
+        dragHandleColor: palette.border,
       ),
 
       dialogTheme: DialogThemeData(
-        backgroundColor: BrandColors.white,
+        backgroundColor: palette.surfaceRaised,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
         titleTextStyle: text.titleLarge,
         contentTextStyle: text.bodyMedium,
       ),
 
+      popupMenuTheme: PopupMenuThemeData(
+        color: palette.surfaceRaised,
+        surfaceTintColor: Colors.transparent,
+        textStyle: text.bodyMedium,
+        shape: const RoundedRectangleBorder(borderRadius: Corners.brSm),
+      ),
+
+      menuTheme: MenuThemeData(
+        style: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(palette.surfaceRaised),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        ),
+      ),
+
+      dropdownMenuTheme: DropdownMenuThemeData(
+        textStyle: text.bodyMedium,
+        menuStyle: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(palette.surfaceRaised),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        ),
+      ),
+
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: palette.inverseSurface,
+          borderRadius: Corners.brXs,
+        ),
+        textStyle: text.bodySmall?.copyWith(color: palette.onInverseSurface),
+      ),
+
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: BrandColors.ink,
-        contentTextStyle: text.bodyMedium?.copyWith(color: BrandColors.white),
+        backgroundColor: palette.inverseSurface,
+        contentTextStyle:
+            text.bodyMedium?.copyWith(color: palette.onInverseSurface),
         behavior: SnackBarBehavior.floating,
         shape: const RoundedRectangleBorder(borderRadius: Corners.brSm),
         insetPadding: const EdgeInsets.all(Insets.lg),
       ),
 
       switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected) ? BrandColors.white : BrandColors.white,
-        ),
+        thumbColor: const WidgetStatePropertyAll(BrandColors.white),
         trackColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected) ? BrandColors.success : BrandColors.grey200,
+          (s) => s.contains(WidgetState.selected)
+              ? palette.success
+              : palette.border,
         ),
         trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
       ),
 
-      progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: BrandColors.red,
-        linearTrackColor: BrandColors.grey100,
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: palette.brand,
+        linearTrackColor: palette.surfaceSubtle,
       ),
 
-      listTileTheme: const ListTileThemeData(
-        iconColor: BrandColors.grey800,
-        textColor: BrandColors.ink,
-        shape: RoundedRectangleBorder(borderRadius: Corners.brSm),
+      listTileTheme: ListTileThemeData(
+        iconColor: palette.textStrong,
+        textColor: palette.text,
+        shape: const RoundedRectangleBorder(borderRadius: Corners.brSm),
+      ),
+
+      tabBarTheme: TabBarThemeData(
+        labelColor: palette.brand,
+        unselectedLabelColor: palette.textMuted,
+        indicatorColor: palette.brand,
+        dividerColor: palette.borderSubtle,
+      ),
+
+      datePickerTheme: DatePickerThemeData(
+        backgroundColor: palette.surfaceRaised,
+        surfaceTintColor: Colors.transparent,
+        headerBackgroundColor: palette.brand,
+        headerForegroundColor: palette.onBrand,
       ),
     );
   }

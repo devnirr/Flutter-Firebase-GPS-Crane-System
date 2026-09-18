@@ -15,6 +15,8 @@ export interface CashJob {
     status?: unknown;
     capturedCents?: unknown;
     cashSettlementId?: unknown;
+    /** The weekly corte that charged this job's commission instead. */
+    weeklySettlementId?: unknown;
   } | null;
 }
 
@@ -27,7 +29,10 @@ export function unsettledCash(jobs: readonly CashJob[]): {
     return (
       payment.method === PaymentMethod.cash &&
       payment.status === PaymentStatus.cashCollected &&
-      !payment.cashSettlementId
+      !payment.cashSettlementId &&
+      // The chofer kept this cash and paid its commission at a weekly corte:
+      // the company is not owed the money again.
+      !payment.weeklySettlementId
     );
   });
   return {

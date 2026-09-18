@@ -9,9 +9,14 @@ import 'models/chat_prefs.dart';
 import 'models/chat_request.dart';
 import 'models/dispatch_models.dart';
 import 'models/driver.dart';
+import 'models/insurer.dart';
+import 'models/insurer_invoice.dart';
+import 'models/insurer_service.dart';
 import 'models/payments.dart';
+import 'models/pricing_rule.dart';
 import 'models/remote_config_models.dart';
 import 'models/service.dart';
+import 'models/settlement.dart';
 import 'models/truck.dart';
 import 'value_objects.dart';
 
@@ -34,6 +39,10 @@ abstract interface class AuthRepository {
 
   /// Custom claims, refreshed from the ID token. `null` until signed in.
   Future<UserRole> currentRole({bool forceRefresh = false});
+
+  /// The insurance company the signed-in person works for, from the token's
+  /// claims. Null for anyone else.
+  Future<String?> currentInsurerId({bool forceRefresh = false});
 
   /// Starts phone verification. Returns a verification id to pass to
   /// [confirmSmsCode], or completes the sign-in directly on Android
@@ -190,6 +199,22 @@ abstract interface class ServiceRepository {
 
   /// Everything a dispatcher needs on the operations map.
   Stream<List<Service>> watchActiveServices();
+
+  /// An insurance company's tows, newest first: those ordered since [since]
+  /// when given, otherwise the latest [limit].
+  Stream<List<Service>> watchInsurerServices(
+    String insurerId, {
+    DateTime? since,
+    int limit = 200,
+  });
+
+  /// An insurance company's tows for one claim, however old: what its
+  /// history search falls back on past the latest tows it has loaded.
+  /// [claimKey] as `InsuranceClaim.claimKey` stores it.
+  Future<Result<List<Service>>> findInsurerServicesByClaim(
+    String insurerId,
+    String claimKey,
+  );
 
   Stream<List<ServiceEvent>> watchEvents(String serviceId);
 
@@ -399,6 +424,41 @@ abstract interface class ChatPrefsRepository {
   });
 }
 
+/// Insurance companies, their people and their zone prices. Read-only: every
+/// change goes through [FunctionsGateway].
+abstract interface class InsurerRepository {
+  /// Every company, by name. The office's list.
+  Stream<List<Insurer>> watchInsurers();
+
+  Stream<Insurer?> watchInsurer(String id);
+
+  Stream<List<InsurerMember>> watchMembers(String insurerId);
+
+  /// One person's own record — what the rules let an operator read.
+  Stream<InsurerMember?> watchMember(String insurerId, String uid);
+
+  /// The stored zone prices of one table owner: a company, or the default list
+  /// when [insurerId] is null. Every class of vehicle.
+  Stream<List<PricingRule>> watchPricingRules({String? insurerId});
+
+  /// Monthly invoices, newest first: every company's for the office, or one
+  /// company's for its managers.
+  Stream<List<InsurerInvoice>> watchInvoices({String? insurerId, int limit = 200});
+
+  Stream<InsurerInvoice?> watchInvoice(String id);
+
+  /// The company that issues receipts. The office's.
+  Stream<FiscalIssuer> watchFiscalIssuer();
+
+  /// The NCF range receipts of [prefix] are numbered from; the test range
+  /// while none is stored. The office's.
+  Stream<NcfSequence> watchNcfSequence(String prefix);
+
+  /// Finished services waiting for their company's next invoice. The
+  /// office's.
+  Stream<List<Service>> watchServicesToInvoice({String? insurerId});
+}
+
 abstract interface class EarningsRepository {
   Stream<EarningsSummary?> watchSummary(String driverId);
 
@@ -417,6 +477,23 @@ abstract interface class EarningsRepository {
   /// The cash jobs [driverId] collected that no corte has counted yet: what
   /// the next corte will be made of.
   Stream<List<Service>> watchUncountedCash(String driverId);
+
+  /// Weekly cortes, newest first — every chofer's for the office, or one
+  /// chofer's.
+  Stream<List<DriverSettlement>> watchDriverSettlements({
+    String? driverId,
+    SettlementStatus? status,
+    int limit = 50,
+  });
+
+  Stream<DriverSettlement?> watchDriverSettlement(String id);
+
+  /// The jobs [driverId] finished that no weekly corte has taken yet: what
+  /// Friday's corte will be made of.
+  ///
+  /// Oldest first, and only from [since] — the day weekly cortes began — as
+  /// the server reads them.
+  Stream<List<EarningEntry>> watchUnsettledEntries(String driverId, {DateTime? since});
 }
 
 abstract interface class InvoiceRepository {
@@ -434,6 +511,9 @@ abstract interface class ConfigRepository {
   Stream<AppSettings> watchAppSettings();
 
   Future<AppSettings> currentAppSettings();
+
+  /// The day weekly cortes began, or null when the office has not set one.
+  Stream<DateTime?> watchSettlementsStartAt();
 }
 
 /// The result of asking the server what a tow will cost.
@@ -827,6 +907,119 @@ abstract interface class FunctionsGateway {
     required String driverId,
     String note = '',
   });
+
+  /// What a tow will cost the signed-in person's company. Never the chofer's
+  /// share.
+  Future<Result<InsurerQuote>> quoteInsurerService({
+    required ServiceLocation pickup,
+    required ServiceLocation dropoff,
+    required VehicleType vehicleType,
+  });
+
+  /// Orders a tow for the signed-in person's company and starts dispatch.
+  /// [priced] bills the distance of that preview.
+  Future<Result<CreatedInsurerService>> createInsurerService(
+    InsurerServiceRequest request, {
+    InsurerQuote? priced,
+  });
+
+  /// The signed-in person of a company has chosen their own password.
+  Future<Result<void>> insurerPasswordChanged();
+
+  /// Opens an insurance company's account. Admin only. Returns its id.
+  Future<Result<String>> createInsurer({
+    required InsurerDetails details,
+    int? driverPayoutBps,
+  });
+
+  /// Edits a company. Only what is passed changes; [clearDriverPayout] puts
+  /// the chofer share back to the default. Admin only.
+  Future<Result<void>> updateInsurer({
+    required String insurerId,
+    InsurerDetails? details,
+    InsurerStatus? status,
+    String? statusReason,
+    int? driverPayoutBps,
+    bool clearDriverPayout = false,
+  });
+
+  /// Adds a person to a company. The office, or that company's manager.
+  Future<Result<NewInsurerUser>> createInsurerUser({
+    required String insurerId,
+    required String name,
+    required String email,
+    required InsurerRole role,
+    String phone = '',
+  });
+
+  Future<Result<void>> updateInsurerUser({
+    required String insurerId,
+    required String uid,
+    String? name,
+    String? phone,
+    InsurerRole? role,
+    bool? active,
+  });
+
+  /// Saves one class's whole zone table, for a company or the default list
+  /// ([insurerId] null). Admin only.
+  Future<Result<void>> savePricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+    required List<PricingRule> rows,
+  });
+
+  /// Removes one class's stored table: a company goes back to the default
+  /// list, the default list to the built-in one. Admin only.
+  Future<Result<void>> resetPricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+  });
+
+  /// Makes weekly cortes now, for [driverId] or every chofer. Admin only.
+  /// Returns the ids of the cortes made.
+  Future<Result<List<String>>> generateDriverSettlements({String? driverId});
+
+  /// Closes a pending corte: the transfer went out, or the chofer's payment
+  /// came in. [reference] is required when money moved. Admin only.
+  Future<Result<void>> settleDriverSettlement({
+    required String settlementId,
+    required String reference,
+    String note = '',
+  });
+
+  /// Cancels a pending corte; its jobs go back into the next one. Admin only.
+  Future<Result<void>> voidDriverSettlement({
+    required String settlementId,
+    required String reason,
+  });
+
+  /// Makes monthly invoices now, for [insurerId] or every company, for
+  /// [periodKey] (`2026-09`; last month when null). Admin only.
+  Future<Result<InvoiceRun>> generateInsurerInvoices({
+    String? insurerId,
+    String? periodKey,
+  });
+
+  /// Records the transfer that paid an invoice. Admin only.
+  Future<Result<void>> markInsurerInvoicePaid({
+    required String invoiceId,
+    required String reference,
+    String note = '',
+  });
+
+  /// Voids an unpaid invoice; its services wait for the next one. Admin only.
+  Future<Result<void>> voidInsurerInvoice({
+    required String invoiceId,
+    required String reason,
+  });
+
+  /// Saves the razón social, RNC and terms printed on invoices. Admin only.
+  Future<Result<void>> saveFiscalIssuer(FiscalIssuer issuer);
+
+  /// Sets the range receipts are numbered from — a test one, or the DGII's.
+  /// Returns the NCF the next receipt takes. Admin only.
+  Future<Result<String>> saveNcfSequence(NcfSequence sequence);
 
   Future<Result<void>> cancelByDriver({
     required String serviceId,

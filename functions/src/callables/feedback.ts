@@ -1,9 +1,9 @@
 import { onCall } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
-import { CONTACT_OPEN_STATUSES, ServiceStatus, UserRole } from '../lib/enums.js';
+import { CONTACT_OPEN_STATUSES, ServiceStatus } from '../lib/enums.js';
 import { Code, invalidArgument, precondition } from '../lib/errors.js';
-import { FieldValue, GeoPointOf, Paths } from '../lib/firestore.js';
+import { FieldValue, Paths } from '../lib/firestore.js';
 import { requireActiveDriver, requireAuth } from '../lib/guards.js';
 import { region } from './region.js';
 

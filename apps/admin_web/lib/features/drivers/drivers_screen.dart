@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import '../shared/toast.dart';
 import 'create_driver_dialog.dart';
 import 'driver_details_dialog.dart';
 import 'driver_status_dialog.dart';
@@ -51,26 +52,36 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
           padding: const EdgeInsets.all(Insets.xl),
           child: Row(
             children: [
-              Text('Choferes', style: text.headlineSmall),
-              const SizedBox(width: Insets.xl),
-              SizedBox(
-                width: 260,
-                height: 38,
-                child: TextField(
-                  onChanged: (value) => setState(() => _query = value),
-                  decoration: const InputDecoration(
-                    hintText: 'Nombre, cédula o placa',
-                    prefixIcon: Icon(Icons.search, size: 18),
-                    contentPadding: EdgeInsets.zero,
-                  ),
+              // The title, the search and the filter share whatever is left
+              // over once the action has its place, and drop to a second line
+              // on a 1024-px screen rather than off the edge of it.
+              Expanded(
+                child: Wrap(
+                  spacing: Insets.lg,
+                  runSpacing: Insets.md,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text('Choferes', style: text.headlineSmall),
+                    SizedBox(
+                      width: 260,
+                      height: 38,
+                      child: TextField(
+                        onChanged: (value) => setState(() => _query = value),
+                        decoration: const InputDecoration(
+                          hintText: 'Nombre, cédula o placa',
+                          prefixIcon: Icon(Icons.search, size: 18),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                    _StatusFilter(
+                      value: _filter,
+                      onChanged: (value) => setState(() => _filter = value),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: Insets.md),
-              _StatusFilter(
-                value: _filter,
-                onChanged: (value) => setState(() => _filter = value),
-              ),
-              const Spacer(),
               ElevatedButton.icon(
                 onPressed: () => unawaited(_createDriver(context)),
                 style: ElevatedButton.styleFrom(
@@ -166,17 +177,14 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
   /// The roster is live, so the new status pill appears without anything done
   /// here beyond reporting how it went.
   Future<void> _changeStatus(Driver driver, DriverStatus target) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = Toaster.of(context);
 
     // The server refuses this too; saying so first saves typing a reason for
     // a change that cannot happen.
     if (!target.canWork && driver.isBusy) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Este chofer tiene un servicio en curso. Reasígnalo primero.',
-          ),
-        ),
+      toast.show(
+        'Este chofer tiene un servicio en curso. Reasígnalo primero.',
+        tone: ToastTone.error,
       );
       return;
     }
@@ -189,19 +197,16 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
           status: target,
           reason: reason,
         );
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          result.isErr
-              ? result.failureOrNull?.userMessage ??
-                  'No se pudo cambiar el estado del chofer.'
-              : switch (target) {
-                  DriverStatus.active => '${driver.name} ya puede trabajar.',
-                  DriverStatus.suspended => '${driver.name} fue suspendido.',
-                  _ => '${driver.name} quedó inactivo.',
-                },
-        ),
-      ),
+    toast.show(
+      result.isErr
+          ? result.failureOrNull?.userMessage ??
+              'No se pudo cambiar el estado del chofer.'
+          : switch (target) {
+              DriverStatus.active => '${driver.name} ya puede trabajar.',
+              DriverStatus.suspended => '${driver.name} fue suspendido.',
+              _ => '${driver.name} quedó inactivo.',
+            },
+      tone: result.isErr ? ToastTone.error : ToastTone.success,
     );
   }
 
@@ -227,7 +232,9 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: BrandColors.danger),
+            style: TextButton.styleFrom(
+              foregroundColor: context.palette.danger,
+            ),
             child: const Text('Eliminar'),
           ),
         ],
@@ -235,18 +242,14 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
     );
     if (confirmed != true || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = Toaster.of(context);
     final result =
         await ref.read(functionsGatewayProvider).archiveDriver(driver.id);
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          result.isErr
-              ? result.failureOrNull?.userMessage ??
-                  'No se pudo eliminar al chofer.'
-              : '${driver.name} fue eliminado.',
-        ),
-      ),
+    toast.show(
+      result.isErr
+          ? result.failureOrNull?.userMessage ?? 'No se pudo eliminar al chofer.'
+          : '${driver.name} fue eliminado.',
+      tone: result.isErr ? ToastTone.error : ToastTone.success,
     );
   }
 }
@@ -303,6 +306,7 @@ class _DriverTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
@@ -319,7 +323,7 @@ class _DriverTable extends StatelessWidget {
             // Tighter than the default 56, so the actions column fits a laptop
             // screen instead of sitting past a sideways scroll.
             columnSpacing: 28,
-            headingRowColor: const WidgetStatePropertyAll(BrandColors.offWhite),
+            headingRowColor: WidgetStatePropertyAll(palette.canvas),
             headingTextStyle: text.labelSmall,
             dividerThickness: 1,
             columns: const [
@@ -355,12 +359,12 @@ class _DriverTable extends StatelessWidget {
                                 Text(
                                   driver.email,
                                   style: text.bodySmall
-                                      ?.copyWith(color: BrandColors.grey800),
+                                      ?.copyWith(color: palette.textStrong),
                                 ),
                               Text(
                                 driver.phone,
                                 style: text.bodySmall
-                                    ?.copyWith(color: BrandColors.grey600),
+                                    ?.copyWith(color: palette.textMuted),
                               ),
                             ],
                           ),
@@ -385,8 +389,8 @@ class _DriverTable extends StatelessWidget {
                           // Below 60% is either a notification problem or
                           // cherry-picking; both need looking at.
                           color: driver.acceptanceRate < 0.6
-                              ? BrandColors.danger
-                              : BrandColors.ink,
+                              ? palette.danger
+                              : palette.text,
                         ),
                       ),
                     ),
@@ -400,8 +404,8 @@ class _DriverTable extends StatelessWidget {
                             : driver.cashOnHandCents.formatDOP,
                         style: text.bodyMedium?.copyWith(
                           color: driver.cashOnHandCents > 0
-                              ? BrandColors.warning
-                              : BrandColors.grey600,
+                              ? palette.warning
+                              : palette.textMuted,
                         ),
                       ),
                     ),
@@ -432,10 +436,10 @@ class _DriverTable extends StatelessWidget {
                                 driver,
                                 DriverStatus.suspended,
                               ),
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.block,
                                 size: 20,
-                                color: BrandColors.warning,
+                                color: palette.warning,
                               ),
                             )
                           else
@@ -444,20 +448,20 @@ class _DriverTable extends StatelessWidget {
                               visualDensity: VisualDensity.compact,
                               onPressed: () =>
                                   onChangeStatus(driver, DriverStatus.active),
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.check_circle_outline,
                                 size: 20,
-                                color: BrandColors.success,
+                                color: palette.success,
                               ),
                             ),
                           IconButton(
                             tooltip: 'Eliminar',
                             visualDensity: VisualDensity.compact,
                             onPressed: () => onDelete(driver),
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.delete_outline,
                               size: 20,
-                              color: BrandColors.danger,
+                              color: palette.danger,
                             ),
                           ),
                         ],
@@ -480,12 +484,15 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+
     final (label, fg, bg) = switch (status) {
-      DriverStatus.active => ('Activo', BrandColors.success, BrandColors.successTint),
-      DriverStatus.inactive => ('Inactivo', BrandColors.grey600, BrandColors.grey100),
+      DriverStatus.active => ('Activo', palette.success, palette.successTint),
+      DriverStatus.inactive =>
+        ('Inactivo', palette.textMuted, palette.surfaceSubtle),
       DriverStatus.suspended =>
-        ('Suspendido', BrandColors.danger, BrandColors.dangerTint),
-      DriverStatus.unknown => ('—', BrandColors.grey600, BrandColors.grey100),
+        ('Suspendido', palette.danger, palette.dangerTint),
+      DriverStatus.unknown => ('—', palette.textMuted, palette.surfaceSubtle),
     };
 
     return Container(

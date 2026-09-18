@@ -32,6 +32,11 @@ enum UserRole {
   admin('admin'),
   @JsonValue('ops')
   ops('ops'),
+
+  /// A person of an insurance company. Uses the web panel, fenced to their
+  /// own company's tows.
+  @JsonValue('insurer')
+  insurer('insurer'),
   @JsonValue('unknown')
   unknown('unknown');
 
@@ -43,6 +48,59 @@ enum UserRole {
       _resolve(UserRole.values, wire, (v) => v.wire, UserRole.unknown);
 
   bool get isStaff => this == UserRole.admin || this == UserRole.ops;
+
+  bool get isInsurer => this == UserRole.insurer;
+
+  /// Whether this account may sign in to the web panel at all. What it sees
+  /// there is a separate question.
+  bool get canUsePanel => isStaff || isInsurer;
+}
+
+/// What a person can do inside their insurance company.
+enum InsurerRole {
+  /// Adds and removes the company's people, and sees its invoices.
+  @JsonValue('manager')
+  manager('manager', 'Administrador'),
+
+  /// Creates and follows the company's tows.
+  @JsonValue('operator')
+  operator('operator', 'Operador'),
+
+  @JsonValue('unknown')
+  unknown('unknown', 'Desconocido');
+
+  const InsurerRole(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static InsurerRole fromWire(String? wire) =>
+      _resolve(InsurerRole.values, wire, (v) => v.wire, InsurerRole.unknown);
+
+  bool get canManageMembers => this == InsurerRole.manager;
+}
+
+/// Whether an insurance company may use the platform.
+enum InsurerStatus {
+  @JsonValue('active')
+  active('active', 'Activa'),
+
+  /// Switched off by the office. Its people cannot sign in or read anything.
+  @JsonValue('suspended')
+  suspended('suspended', 'Suspendida'),
+
+  @JsonValue('unknown')
+  unknown('unknown', 'Desconocido');
+
+  const InsurerStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static InsurerStatus fromWire(String? wire) =>
+      _resolve(InsurerStatus.values, wire, (v) => v.wire, InsurerStatus.unknown);
+
+  bool get isActive => this == InsurerStatus.active;
 }
 
 /// Lifecycle of a chofer's account, controlled entirely from the admin panel.
@@ -193,6 +251,50 @@ enum VehicleType {
   /// Needs the heavy grúa, and its price is only an estimate until the
   /// operator confirms it.
   bool get isHeavy => heavy.contains(this);
+}
+
+/// The column of the insurer zone tariff a vehicle is priced in. Mirrors
+/// `VehicleClass` in `functions/src/lib/zonePricing.ts`.
+enum VehicleClass {
+  /// Carro, motor.
+  @JsonValue('light')
+  light('light', 'Vehículo ligero'),
+
+  /// SUV / jeepeta, camioneta.
+  @JsonValue('suv')
+  suv('suv', 'SUV / Jeepeta'),
+
+  /// Camión, patana, autobús, equipo pesado.
+  @JsonValue('heavy')
+  heavy('heavy', 'Vehículo pesado'),
+
+  @JsonValue('unknown')
+  unknown('unknown', 'Desconocido');
+
+  const VehicleClass(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static VehicleClass fromWire(String? wire) =>
+      _resolve(VehicleClass.values, wire, (v) => v.wire, VehicleClass.unknown);
+
+  /// The classes the tariff has a column for.
+  static const List<VehicleClass> priced = [
+    VehicleClass.light,
+    VehicleClass.suv,
+    VehicleClass.heavy,
+  ];
+
+  static VehicleClass of(VehicleType type) => switch (type) {
+        VehicleType.sedan || VehicleType.motor => VehicleClass.light,
+        VehicleType.suv || VehicleType.camioneta => VehicleClass.suv,
+        VehicleType.camion ||
+        VehicleType.patana ||
+        VehicleType.equipoPesado =>
+          VehicleClass.heavy,
+        VehicleType.unknown => VehicleClass.unknown,
+      };
 }
 
 /// What the customer is told about a heavy vehicle, on the form, on the price
@@ -547,6 +649,10 @@ enum AssignmentMode {
 enum CancelledBy {
   @JsonValue('client')
   client('client', 'Cliente'),
+
+  /// A person of the insurance company that ordered the tow.
+  @JsonValue('insurer')
+  insurer('insurer', 'Aseguradora'),
   @JsonValue('driver')
   driver('driver', 'Chofer'),
   @JsonValue('admin')
@@ -610,6 +716,10 @@ enum PaymentMethod {
   card('card', 'Tarjeta'),
   @JsonValue('pending')
   pending('pending', 'Por elegir'),
+
+  /// Nobody pays at the roadside: the insurance company is billed monthly.
+  @JsonValue('insurer')
+  insurer('insurer', 'Aseguradora'),
   @JsonValue('unknown')
   unknown('unknown', 'Desconocido');
 
@@ -634,6 +744,14 @@ enum PaymentStatus {
   /// The chofer confirmed "Cobrado en efectivo": the job is paid.
   @JsonValue('cash_collected')
   cashCollected('cash_collected', 'Pagado en efectivo'),
+
+  /// An insurer's tow, done, waiting for the month's invoice.
+  @JsonValue('to_invoice')
+  toInvoice('to_invoice', 'Por facturar a la aseguradora'),
+
+  /// An insurer's tow on a monthly invoice, whose id is in `invoiceId`.
+  @JsonValue('invoiced')
+  invoiced('invoiced', 'Facturado a la aseguradora'),
 
   // The four below only appear on jobs from when there was a card rail. Kept
   // so an old service still reads correctly in the history.
@@ -661,6 +779,122 @@ enum PaymentStatus {
 
   bool get isSettled =>
       this == PaymentStatus.captured || this == PaymentStatus.cashCollected;
+}
+
+/// Where a weekly corte stands. Mirrors `SettlementStatus` in
+/// `functions/src/lib/settlements.ts`.
+enum SettlementStatus {
+  @JsonValue('pending')
+  pending('pending', 'Pendiente de pago'),
+
+  /// The transfer went out, or the chofer's payment came in.
+  @JsonValue('settled')
+  settled('settled', 'Pagado'),
+
+  /// Cancelled by the office; its jobs went back into the next corte.
+  @JsonValue('voided')
+  voided('voided', 'Anulado'),
+
+  @JsonValue('unknown')
+  unknown('unknown', 'Desconocido');
+
+  const SettlementStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static SettlementStatus fromWire(String? wire) => _resolve(
+        SettlementStatus.values,
+        wire,
+        (v) => v.wire,
+        SettlementStatus.unknown,
+      );
+}
+
+/// Where a monthly invoice to an insurance company stands. Mirrors
+/// `InsurerInvoiceStatus` in `functions/src/lib/insurerInvoice.ts`.
+enum InsurerInvoiceStatus {
+  /// Sent; waiting for the company's transfer.
+  @JsonValue('issued')
+  issued('issued', 'Por cobrar'),
+
+  @JsonValue('paid')
+  paid('paid', 'Cobrada'),
+
+  /// Cancelled by the office; its services went back to be invoiced again.
+  @JsonValue('voided')
+  voided('voided', 'Anulada'),
+
+  @JsonValue('unknown')
+  unknown('unknown', 'Desconocido');
+
+  const InsurerInvoiceStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static InsurerInvoiceStatus fromWire(String? wire) => _resolve(
+        InsurerInvoiceStatus.values,
+        wire,
+        (v) => v.wire,
+        InsurerInvoiceStatus.unknown,
+      );
+}
+
+/// What a line on a monthly invoice is for.
+enum InsurerInvoiceLineKind {
+  /// A tow, at its zone price.
+  tow('tow'),
+
+  /// The fee for a tow the company cancelled after the chofer set off.
+  cancellation('cancellation'),
+  unknown('unknown');
+
+  const InsurerInvoiceLineKind(this.wire);
+
+  final String wire;
+
+  static InsurerInvoiceLineKind fromWire(String? wire) => _resolve(
+        InsurerInvoiceLineKind.values,
+        wire,
+        (v) => v.wire,
+        InsurerInvoiceLineKind.unknown,
+      );
+}
+
+/// Who pays whom at a weekly corte.
+enum SettlementDirection {
+  /// Titan transfers the balance to the chofer.
+  @JsonValue('to_driver')
+  toDriver('to_driver'),
+
+  /// The chofer transfers or deposits the balance to Titan.
+  @JsonValue('to_company')
+  toCompany('to_company'),
+
+  /// Nothing moves.
+  @JsonValue('none')
+  none('none'),
+
+  @JsonValue('unknown')
+  unknown('unknown');
+
+  const SettlementDirection(this.wire);
+
+  final String wire;
+
+  static SettlementDirection fromWire(String? wire) => _resolve(
+        SettlementDirection.values,
+        wire,
+        (v) => v.wire,
+        SettlementDirection.unknown,
+      );
+
+  static SettlementDirection ofBalance(int balanceCents) => balanceCents > 0
+      ? SettlementDirection.toDriver
+      : balanceCents < 0
+          ? SettlementDirection.toCompany
+          : SettlementDirection.none;
 }
 
 /// Dominican tax receipt types (Números de Comprobante Fiscal).

@@ -2,9 +2,16 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 
 import { releaseIfFinished } from '../lib/driverRelease.js';
-import { OfferState, OperatorReviewState, ServiceStatus } from '../lib/enums.js';
+import {
+  OfferState,
+  OperatorReviewState,
+  PaymentStatus,
+  ServiceEventName,
+  ServiceStatus,
+} from '../lib/enums.js';
 import { FieldValue, Paths, Timestamp } from '../lib/firestore.js';
 import { alertAdmins } from '../lib/push.js';
+import { applyTransition } from '../lib/stateMachine.js';
 import { loadDispatchConfig } from '../dispatch/dispatchNext.js';
 import { expireOffer } from '../dispatch/offers.js';
 import { region } from '../callables/region.js';
@@ -242,5 +249,48 @@ export const tidyOrphanedOffers = onSchedule(
         await offer.ref.update({ state: OfferState.cancelled });
       }
     }
+  },
+);
+
+/** How long a finished insurer tow may wait for its automatic close. */
+const INSURER_CLOSE_GRACE_MS = 2 * 60 * 1000;
+
+/**
+ * Closes insurer tows left at `completed`.
+ *
+ * `completeService` closes them right after the chofer finishes, outside its
+ * transaction. If that one write fails, the job stays active: the chofer's
+ * app stays on it, and the claim cannot be ordered again. This finishes the
+ * job for them. The tow is already waiting for its invoice either way.
+ */
+export const closeFinishedInsurerTows = onSchedule(
+  { schedule: 'every 5 minutes', region, timeZone: 'America/Santo_Domingo' },
+  async () => {
+    const left = await Paths.services()
+      .where('status', '==', ServiceStatus.completed)
+      .where('payment.status', '==', PaymentStatus.toInvoice)
+      .limit(100)
+      .get();
+
+    let closed = 0;
+    for (const doc of left.docs) {
+      const completedAt = (doc.get('timeline.completedAt') as FirebaseFirestore.Timestamp | undefined)
+        ?.toMillis();
+      if (completedAt && Date.now() - completedAt < INSURER_CLOSE_GRACE_MS) continue;
+      try {
+        await applyTransition({
+          serviceId: doc.id,
+          event: ServiceEventName.closeService,
+          actorId: 'system',
+          actorRole: 'system',
+          meta: { reason: 'insurer_billed', sweep: true },
+        });
+        await releaseIfFinished(doc.get('driverId') as string);
+        closed++;
+      } catch (error) {
+        logger.error('sweep.insurerCloseFailed', { serviceId: doc.id, error });
+      }
+    }
+    if (closed > 0) logger.warn('sweep.closedInsurerTows', { count: closed });
   },
 );

@@ -63,6 +63,42 @@ service cloud.firestore {
       return ok() && role() == 'driver';
     }
 
+    // People of an insurance company. The claim names the company; the two
+    // documents below say whether the company is active and whether this
+    // person still is. Both are read because a token outlives a suspension or
+    // a deactivation by up to an hour. Paths are built from the token, never
+    // from the document being read, so a query can always be judged.
+    function myInsurerId() {
+      return request.auth.token.get('insurerId', '');
+    }
+
+    function insurerMemberDoc() {
+      return get(/databases/$(database)/documents/insurers/$(myInsurerId())/members/$(uid())).data;
+    }
+
+    function isActiveInsurer() {
+      return ok()
+        && role() == 'insurer'
+        && myInsurerId() != ''
+        && get(/databases/$(database)/documents/insurers/$(myInsurerId())).data.get('status', '') == 'active'
+        && insurerMemberDoc().get('active', false) == true;
+    }
+
+    function isActiveInsurerOf(insurerId) {
+      return isActiveInsurer() && myInsurerId() == insurerId;
+    }
+
+    function isInsurerManagerOf(insurerId) {
+      return isActiveInsurerOf(insurerId)
+        && insurerMemberDoc().get('insurerRole', '') == 'manager';
+    }
+
+    // A tow the caller's own company ordered. Queries must filter on
+    // insurerId == the caller's company, or they are refused whole.
+    function isInsurerFor(svc) {
+      return isActiveInsurer() && svc.get('insurerId', '') == myInsurerId();
+    }
+
     // Reads the service being addressed. Costs one document read, which is why
     // it is only used where the answer genuinely depends on the parent.
     function serviceDoc(serviceId) {
@@ -231,7 +267,8 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
 
     match /services/{serviceId} {
-      allow read: if isStaff() || isPartyTo(resource.data);
+      allow read: if isStaff() || isPartyTo(resource.data)
+        || isInsurerFor(resource.data);
 
       // Status, driver, quote and payment are the whole system. None of them
       // are ever written from a phone.
@@ -244,10 +281,19 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // What an insurer's tow pays the chofer and keeps for the company. The
+      // insurance company can read the service, so the split lives here,
+      // where only the office can.
+      match /internal/{docId} {
+        allow read: if isStaff();
+        allow write: if false;
+      }
+
       // The append-only transition log. This is the audit trail, so nothing
       // may edit or remove an entry.
       match /events/{eventId} {
-        allow read: if isStaff() || isPartyTo(serviceDoc(serviceId));
+        allow read: if isStaff() || isPartyTo(serviceDoc(serviceId))
+          || isInsurerFor(serviceDoc(serviceId));
         allow write: if false;
       }
 
@@ -337,7 +383,44 @@ service cloud.firestore {
     // Mirrored from RTDB by a trigger so the customer subscribes to exactly one
     // document and never gains read access to the rest of the fleet.
     match /tracking/{serviceId} {
-      allow read: if isStaff() || isPartyTo(serviceDoc(serviceId));
+      allow read: if isStaff() || isPartyTo(serviceDoc(serviceId))
+        || isInsurerFor(serviceDoc(serviceId));
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // insurers — insurance companies billed monthly for their tows
+    // ---------------------------------------------------------------------
+
+    // Opened and edited only through the insurer callables. A company sees
+    // its own record; nobody sees another company's.
+    match /insurers/{insurerId} {
+      allow read: if isStaff() || isActiveInsurerOf(insurerId);
+      allow write: if false;
+
+      // The company's people. A manager sees all of them; anyone else only
+      // their own record, which is how the panel learns their role.
+      match /members/{memberId} {
+        allow read: if isStaff()
+          || isInsurerManagerOf(insurerId)
+          || (isActiveInsurerOf(insurerId) && uid() == memberId);
+        allow write: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // pricingRules — zone prices insurance companies are billed on
+    // ---------------------------------------------------------------------
+
+    // A row with no insurerId is the default list; a row with one is that
+    // company's negotiated price. A company sees the default list and its own
+    // rows, never another company's. Queries must filter on insurerId.
+    // Written only by the office, through a callable.
+    match /pricingRules/{ruleId} {
+      allow read: if isStaff()
+        || (isActiveInsurer()
+            && (resource.data.insurerId == null
+                || resource.data.insurerId == myInsurerId()));
       allow write: if false;
     }
 
@@ -358,6 +441,35 @@ service cloud.firestore {
         allow read: if isStaff() || (ok() && uid() == driverId);
         allow write: if false;
       }
+    }
+
+    // Weekly cortes: what the company and a chofer owe each other for a week.
+    // Written only by the settlement callables; a chofer reads their own.
+    // Queries must filter on the caller's driverId.
+    match /driverSettlements/{settlementId} {
+      allow read: if isStaff() || (ok() && uid() == resource.data.driverId);
+      allow write: if false;
+    }
+
+    // Monthly invoices to insurance companies, with their NCF. Written only by
+    // the invoicing callables. The office reads them all; a company's managers
+    // read their own. Queries must filter on the caller's insurerId.
+    match /insurerInvoices/{invoiceId} {
+      allow read: if isStaff() || isInsurerManagerOf(resource.data.insurerId);
+      allow write: if false;
+    }
+
+    // The company's fiscal details and NCF ranges: the office reads them, only
+    // the fiscal callables write them.
+    match /fiscal/{docId} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    // Every NCF ever issued, so none is issued twice. Server only.
+    match /ncfRegistry/{key} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Cortes: cash a chofer handed in to the office. Written only by

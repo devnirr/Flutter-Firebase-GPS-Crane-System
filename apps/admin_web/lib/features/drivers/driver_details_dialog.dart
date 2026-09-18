@@ -48,6 +48,7 @@ class DriverDetailsDialog extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final d = driver;
     // Live, so the header follows the chofer opening or closing the app while
     // the office is reading their record.
@@ -58,7 +59,7 @@ class DriverDetailsDialog extends ConsumerWidget {
     String date(DateTime? value) => value == null ? '—' : DoTime.fullDate(value);
 
     return Dialog(
-      backgroundColor: BrandColors.white,
+      backgroundColor: palette.surface,
       shape: const RoundedRectangleBorder(borderRadius: Corners.brMd),
       child: ConstrainedBox(
         constraints: BoxConstraints(
@@ -89,7 +90,7 @@ class DriverDetailsDialog extends ConsumerWidget {
                           '${_statusLabel(d.status)} · '
                           '${d.presence(appOpen: appOpen).label}',
                           style: text.bodySmall
-                              ?.copyWith(color: BrandColors.grey600),
+                              ?.copyWith(color: palette.textMuted),
                         ),
                       ],
                     ),
@@ -102,7 +103,7 @@ class DriverDetailsDialog extends ConsumerWidget {
                 ],
               ),
             ),
-            const Divider(height: 1, color: BrandColors.grey200),
+            Divider(height: 1, color: palette.border),
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(
@@ -162,11 +163,12 @@ class DriverDetailsDialog extends ConsumerWidget {
             ),
             Container(
               padding: const EdgeInsets.all(Insets.lg),
-              decoration: const BoxDecoration(
-                color: BrandColors.offWhite,
-                border: Border(top: BorderSide(color: BrandColors.grey200)),
-                borderRadius:
-                    BorderRadius.vertical(bottom: Radius.circular(Corners.md)),
+              decoration: BoxDecoration(
+                color: palette.canvas,
+                border: Border(top: BorderSide(color: palette.border)),
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(Corners.md),
+                ),
               ),
               // A Wrap rather than a Row: with two status changes beside Edit
               // and Close the buttons can outgrow the dialog's width.
@@ -236,10 +238,12 @@ class _StatusButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+
     final (icon, color) = switch (target) {
-      DriverStatus.active => (Icons.check_circle_outline, BrandColors.success),
-      DriverStatus.suspended => (Icons.block, BrandColors.danger),
-      _ => (Icons.pause_circle_outline, BrandColors.grey800),
+      DriverStatus.active => (Icons.check_circle_outline, palette.success),
+      DriverStatus.suspended => (Icons.block, palette.danger),
+      _ => (Icons.pause_circle_outline, palette.textStrong),
     };
 
     return OutlinedButton.icon(
@@ -265,6 +269,7 @@ class _Section extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: Insets.lg),
@@ -275,7 +280,7 @@ class _Section extends StatelessWidget {
             children: [
               FieldLabel(title.toUpperCase()),
               const SizedBox(width: Insets.sm),
-              const Expanded(child: Divider(color: BrandColors.grey200)),
+              Expanded(child: Divider(color: palette.border)),
             ],
           ),
           const SizedBox(height: Insets.xs),
@@ -290,7 +295,7 @@ class _Section extends StatelessWidget {
                     child: Text(
                       label,
                       style: text.bodyMedium
-                          ?.copyWith(color: BrandColors.grey600),
+                          ?.copyWith(color: palette.textMuted),
                     ),
                   ),
                   Expanded(child: Text(value, style: text.bodyMedium)),

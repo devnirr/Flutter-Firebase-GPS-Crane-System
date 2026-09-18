@@ -15,9 +15,14 @@ import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
+import '../../domain/models/insurer.dart';
+import '../../domain/models/insurer_invoice.dart';
+import '../../domain/models/insurer_service.dart';
 import '../../domain/models/payments.dart';
+import '../../domain/models/pricing_rule.dart';
 import '../../domain/models/remote_config_models.dart';
 import '../../domain/models/service.dart';
+import '../../domain/models/settlement.dart';
 import '../../domain/models/truck.dart';
 import '../../domain/repositories.dart';
 import '../../domain/value_objects.dart';
@@ -50,6 +55,14 @@ class DemoAuthRepository implements AuthRepository {
   String? _userId;
   String? _pendingPhone;
 
+  /// Set while an insurance company's person is signed in to the panel demo:
+  /// typing one of the seeded company emails opens their portal instead of
+  /// the office's.
+  UserRole? _sessionRole;
+  String? _staffUserId;
+
+  UserRole get _role => _sessionRole ?? role;
+
   @override
   String? get currentUserId => _userId;
 
@@ -60,7 +73,14 @@ class DemoAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<UserRole> currentRole({bool forceRefresh = false}) async => role;
+  Future<UserRole> currentRole({bool forceRefresh = false}) async => _role;
+
+  @override
+  Future<String?> currentInsurerId({bool forceRefresh = false}) async {
+    if (_role != UserRole.insurer) return null;
+    final uid = _userId;
+    return uid == null ? null : _backend.insurerIdOf(uid);
+  }
 
   @override
   Future<Result<String>> startPhoneVerification(String e164Phone) async {
@@ -97,6 +117,21 @@ class DemoAuthRepository implements AuthRepository {
             message: 'Usuario o contraseña incorrectos.')),
       );
     }
+    // The driver app's demo signs in as a chofer: the one with this email,
+    // or the first one, unless a test already chose who.
+    if (role == UserRole.driver && _backend.driver(_backend.currentUserId) == null) {
+      final chosen = _backend.driverByEmail(email) ?? _backend.driver('driver-1');
+      if (chosen != null) {
+        _backend.currentUserId = chosen.id;
+        if (_backend.simulatesRequests) _backend.seedDriverWeek(chosen.id);
+      }
+    }
+    final member = role.isStaff ? _backend.insurerMemberByEmail(email) : null;
+    if (member != null) {
+      _staffUserId ??= _backend.currentUserId;
+      _backend.currentUserId = member.uid;
+      _sessionRole = UserRole.insurer;
+    }
     _userId = _backend.currentUserId;
     _controller.add(_userId);
     return _delayed(const Result.ok(null));
@@ -112,6 +147,9 @@ class DemoAuthRepository implements AuthRepository {
 
   @override
   Future<void> signOut() async {
+    if (_staffUserId case final staff?) _backend.currentUserId = staff;
+    _staffUserId = null;
+    _sessionRole = null;
     _userId = null;
     _controller.add(null);
   }
@@ -366,6 +404,31 @@ class DemoServiceRepository implements ServiceRepository {
       );
 
   @override
+  Future<Result<List<Service>>> findInsurerServicesByClaim(
+    String insurerId,
+    String claimKey,
+  ) async =>
+      _delayed(
+        Result.ok([
+          for (final s in _backend.insurerServices(insurerId))
+            if (s.insurance?.claimKey == claimKey) s,
+        ]),
+      );
+
+  @override
+  Stream<List<Service>> watchInsurerServices(
+    String insurerId, {
+    DateTime? since,
+    int limit = 200,
+  }) =>
+      _backend.serviceUpdates.map(
+        (_) => _backend
+            .insurerServices(insurerId, since: since)
+            .take(limit)
+            .toList(),
+      );
+
+  @override
   Stream<List<ServiceEvent>> watchEvents(String serviceId) =>
       _backend.serviceUpdates.map((_) => _backend.eventsFor(serviceId));
 
@@ -444,17 +507,20 @@ class DemoServiceRepository implements ServiceRepository {
 }
 
 /// The demo cascade assigns a chofer directly instead of publishing an offer,
-/// so there is never an incoming one to ring. The real implementation streams
-/// `services/{id}/offers/{driverId}`.
+/// so there is never an incoming one to ring. The offer it accepted on the
+/// chofer's behalf is still there to read, for what the job pays. The real
+/// implementation streams `services/{id}/offers/{driverId}`.
 class DemoOfferRepository implements OfferRepository {
-  const DemoOfferRepository();
+  const DemoOfferRepository([this._backend]);
+
+  final DemoBackend? _backend;
 
   @override
   Stream<Offer?> watchIncomingOffer(String driverId) => Stream.value(null);
 
   @override
   Stream<Offer?> watchOffer(String serviceId, String driverId) =>
-      Stream.value(null);
+      _backend?.offerUpdates(serviceId, driverId) ?? Stream.value(null);
 }
 
 class DemoCallRepository implements CallRepository {
@@ -705,6 +771,56 @@ class DemoChatPrefsRepository implements ChatPrefsRepository {
   }
 }
 
+class DemoInsurerRepository implements InsurerRepository {
+  DemoInsurerRepository(this._backend);
+
+  final DemoBackend _backend;
+
+  @override
+  Stream<List<Insurer>> watchInsurers() =>
+      _backend.serviceUpdates.map((_) => _backend.allInsurers);
+
+  @override
+  Stream<Insurer?> watchInsurer(String id) =>
+      _backend.serviceUpdates.map((_) => _backend.insurer(id));
+
+  @override
+  Stream<InsurerMember?> watchMember(String insurerId, String uid) =>
+      _backend.serviceUpdates.map((_) => _backend.insurerMember(insurerId, uid));
+
+  @override
+  Stream<List<InsurerMember>> watchMembers(String insurerId) =>
+      _backend.serviceUpdates.map((_) => _backend.insurerMembers(insurerId));
+
+  @override
+  Stream<List<PricingRule>> watchPricingRules({String? insurerId}) =>
+      _backend.serviceUpdates
+          .map((_) => _backend.pricingRules(insurerId: insurerId));
+
+  @override
+  Stream<List<InsurerInvoice>> watchInvoices({String? insurerId, int limit = 200}) =>
+      _backend.serviceUpdates.map(
+        (_) => _backend.insurerInvoices(insurerId: insurerId).take(limit).toList(),
+      );
+
+  @override
+  Stream<InsurerInvoice?> watchInvoice(String id) =>
+      _backend.serviceUpdates.map((_) => _backend.insurerInvoice(id));
+
+  @override
+  Stream<FiscalIssuer> watchFiscalIssuer() =>
+      _backend.serviceUpdates.map((_) => _backend.fiscalIssuer);
+
+  @override
+  Stream<NcfSequence> watchNcfSequence(String prefix) =>
+      _backend.serviceUpdates.map((_) => _backend.ncfSequence(prefix));
+
+  @override
+  Stream<List<Service>> watchServicesToInvoice({String? insurerId}) =>
+      _backend.serviceUpdates
+          .map((_) => _backend.servicesToInvoice(insurerId: insurerId));
+}
+
 class DemoEarningsRepository implements EarningsRepository {
   DemoEarningsRepository(this._backend);
 
@@ -746,6 +862,36 @@ class DemoEarningsRepository implements EarningsRepository {
   @override
   Stream<List<Service>> watchUncountedCash(String driverId) =>
       _backend.serviceUpdates.map((_) => _backend.uncountedCash(driverId));
+
+  @override
+  Stream<List<DriverSettlement>> watchDriverSettlements({
+    String? driverId,
+    SettlementStatus? status,
+    int limit = 50,
+  }) =>
+      _backend.serviceUpdates.map(
+        (_) => _backend
+            .driverSettlements(driverId: driverId)
+            .where((s) => status == null || s.status == status)
+            .take(limit)
+            .toList(),
+      );
+
+  @override
+  Stream<DriverSettlement?> watchDriverSettlement(String id) =>
+      _backend.serviceUpdates.map((_) => _backend.driverSettlement(id));
+
+  @override
+  Stream<List<EarningEntry>> watchUnsettledEntries(String driverId, {DateTime? since}) =>
+      _backend.serviceUpdates.map(
+        (_) => [
+          for (final e in _backend.earningEntries(driverId))
+            if (!e.settled &&
+                e.completedAt != null &&
+                (since == null || !e.completedAt!.isBefore(since)))
+              e,
+        ]..sort((a, b) => a.completedAt!.compareTo(b.completedAt!)),
+      );
 }
 
 class DemoInvoiceRepository implements InvoiceRepository {
@@ -789,6 +935,10 @@ class DemoConfigRepository implements ConfigRepository {
 
   @override
   Future<AppSettings> currentAppSettings() async => _backend.settings;
+
+  @override
+  Stream<DateTime?> watchSettlementsStartAt() =>
+      _backend.serviceUpdates.map((_) => _backend.settlementsStartAt);
 }
 
 /// How the demo writes a [NearbyTruck.ref]: the driver id, unsealed.
@@ -1007,6 +1157,14 @@ class DemoFunctionsGateway implements FunctionsGateway {
     if (service == null) {
       return const Result.err(Failure(FailureCode.notFound));
     }
+    // The company that ordered it, cancelling from the portal.
+    // A company's person cancels only through the company path, which also
+    // refuses a tow that is not the company's.
+    if (_backend.insurerIdOf(_backend.currentUserId) != null) {
+      return _delayed(
+        _backend.cancelByInsurer(_backend.currentUserId, serviceId),
+      );
+    }
     if (!service.status.isCancellableByClient) {
       return const Result.err(Failure(FailureCode.invalidTransition));
     }
@@ -1144,6 +1302,216 @@ class DemoFunctionsGateway implements FunctionsGateway {
       _delayed(
         _backend.settleDriverCash(driverId, _backend.currentUserId, note: note),
       );
+
+  @override
+  Future<Result<InsurerQuote>> quoteInsurerService({
+    required ServiceLocation pickup,
+    required ServiceLocation dropoff,
+    required VehicleType vehicleType,
+  }) async {
+    final uid = _backend.currentUserId;
+    final refused = _backend.insurerRefusal(uid);
+    if (refused != null) return _delayed(Result.err(refused));
+    final insurerId = _backend.insurerIdOf(uid)!;
+    return _delayed(
+      _backend.quoteInsurerService(
+        insurerId: insurerId,
+        pickup: pickup,
+        dropoff: dropoff,
+        vehicleType: vehicleType,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<CreatedInsurerService>> createInsurerService(
+    InsurerServiceRequest request, {
+    InsurerQuote? priced,
+  }) async {
+    // Who is asking first, then whether the price still holds — the
+    // callable's order — and on the backend's own clock.
+    final refused = _backend.insurerRefusal(_backend.currentUserId);
+    if (refused != null) return _delayed(Result.err(refused));
+    if (priced != null && priced.isExpiredAt(_backend.now().toUtc())) {
+      return _delayed(
+        const Result.err(
+          Failure(FailureCode.quoteExpired, message: 'El precio venció. Vuelve a calcularlo.'),
+        ),
+      );
+    }
+    return _delayed(
+      _backend.orderInsurerService(_backend.currentUserId, request),
+    );
+  }
+
+  @override
+  Future<Result<void>> insurerPasswordChanged() async =>
+      _delayed(_backend.insurerPasswordChanged(_backend.currentUserId));
+
+  @override
+  Future<Result<String>> createInsurer({
+    required InsurerDetails details,
+    int? driverPayoutBps,
+  }) async =>
+      _delayed(
+        _backend.createInsurer(details, driverPayoutBps: driverPayoutBps),
+      );
+
+  @override
+  Future<Result<void>> updateInsurer({
+    required String insurerId,
+    InsurerDetails? details,
+    InsurerStatus? status,
+    String? statusReason,
+    int? driverPayoutBps,
+    bool clearDriverPayout = false,
+  }) async =>
+      _delayed(
+        _backend.updateInsurer(
+          insurerId,
+          details: details,
+          status: status,
+          statusReason: statusReason,
+          driverPayoutBps: driverPayoutBps,
+          clearDriverPayout: clearDriverPayout,
+        ),
+      );
+
+  @override
+  Future<Result<NewInsurerUser>> createInsurerUser({
+    required String insurerId,
+    required String name,
+    required String email,
+    required InsurerRole role,
+    String phone = '',
+  }) async =>
+      _delayed(
+        _backend.createInsurerUser(
+          actorId: _backend.currentUserId,
+          insurerId: insurerId,
+          name: name,
+          email: email,
+          role: role,
+          phone: phone,
+        ),
+      );
+
+  @override
+  Future<Result<void>> updateInsurerUser({
+    required String insurerId,
+    required String uid,
+    String? name,
+    String? phone,
+    InsurerRole? role,
+    bool? active,
+  }) async =>
+      _delayed(
+        _backend.updateInsurerUser(
+          actorId: _backend.currentUserId,
+          insurerId: insurerId,
+          uid: uid,
+          name: name,
+          phone: phone,
+          role: role,
+          active: active,
+        ),
+      );
+
+  @override
+  Future<Result<void>> savePricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+    required List<PricingRule> rows,
+  }) async =>
+      _delayed(
+        _backend.savePricingTable(
+          insurerId: insurerId,
+          vehicleClass: vehicleClass,
+          rows: rows,
+        ),
+      );
+
+  @override
+  Future<Result<void>> resetPricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+  }) async =>
+      _delayed(
+        _backend.resetPricingTable(
+          insurerId: insurerId,
+          vehicleClass: vehicleClass,
+        ),
+      );
+
+  @override
+  Future<Result<List<String>>> generateDriverSettlements({
+    String? driverId,
+  }) async =>
+      _delayed(
+        _backend.generateDriverSettlements(
+          driverId: driverId,
+          actorId: _backend.currentUserId,
+        ),
+      );
+
+  @override
+  Future<Result<void>> settleDriverSettlement({
+    required String settlementId,
+    required String reference,
+    String note = '',
+  }) async =>
+      _delayed(
+        _backend.settleDriverSettlement(
+          settlementId,
+          reference: reference,
+          note: note,
+        ),
+      );
+
+  @override
+  Future<Result<void>> voidDriverSettlement({
+    required String settlementId,
+    required String reason,
+  }) async =>
+      _delayed(_backend.voidDriverSettlement(settlementId, reason: reason));
+
+  @override
+  Future<Result<InvoiceRun>> generateInsurerInvoices({
+    String? insurerId,
+    String? periodKey,
+  }) async =>
+      _delayed(
+        _backend.generateInsurerInvoices(
+          actorId: _backend.currentUserId,
+          insurerId: insurerId,
+          periodKey: periodKey,
+        ),
+      );
+
+  @override
+  Future<Result<void>> markInsurerInvoicePaid({
+    required String invoiceId,
+    required String reference,
+    String note = '',
+  }) async =>
+      _delayed(
+        _backend.markInsurerInvoicePaid(invoiceId, reference: reference, note: note),
+      );
+
+  @override
+  Future<Result<void>> voidInsurerInvoice({
+    required String invoiceId,
+    required String reason,
+  }) async =>
+      _delayed(_backend.voidInsurerInvoice(invoiceId, reason: reason));
+
+  @override
+  Future<Result<void>> saveFiscalIssuer(FiscalIssuer issuer) async =>
+      _delayed(_backend.saveFiscalIssuer(issuer));
+
+  @override
+  Future<Result<String>> saveNcfSequence(NcfSequence sequence) async =>
+      _delayed(_backend.saveNcfSequence(sequence));
 
   @override
   Future<Result<void>> cancelByDriver({

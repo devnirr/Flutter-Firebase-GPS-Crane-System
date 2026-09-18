@@ -1,0 +1,579 @@
+{
+  "_about": "Worked examples for the insurer zone tariff. Run by functions/test/zonePricing.test.ts and packages/grua_core/test/zone_pricing_test.dart; both implementations must produce exactly these numbers. Amounts are DOP cents, before ITBIS.",
+  "defaultRules": [
+    {
+      "vehicleClass": "light",
+      "zoneMinKm": 0,
+      "zoneMaxKm": 10,
+      "baseCents": 250000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "light",
+      "zoneMinKm": 10,
+      "zoneMaxKm": 25,
+      "baseCents": 350000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "light",
+      "zoneMinKm": 25,
+      "zoneMaxKm": 50,
+      "baseCents": 550000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "light",
+      "zoneMinKm": 50,
+      "zoneMaxKm": null,
+      "baseCents": 550000,
+      "extraKmCents": 12000,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "suv",
+      "zoneMinKm": 0,
+      "zoneMaxKm": 10,
+      "baseCents": 320000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "suv",
+      "zoneMinKm": 10,
+      "zoneMaxKm": 25,
+      "baseCents": 450000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "suv",
+      "zoneMinKm": 25,
+      "zoneMaxKm": 50,
+      "baseCents": 700000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "suv",
+      "zoneMinKm": 50,
+      "zoneMaxKm": null,
+      "baseCents": 700000,
+      "extraKmCents": 15000,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "heavy",
+      "zoneMinKm": 0,
+      "zoneMaxKm": 10,
+      "baseCents": 550000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "heavy",
+      "zoneMinKm": 10,
+      "zoneMaxKm": 25,
+      "baseCents": 700000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "heavy",
+      "zoneMinKm": 25,
+      "zoneMaxKm": 50,
+      "baseCents": 1100000,
+      "extraKmCents": 0,
+      "insurerId": null
+    },
+    {
+      "vehicleClass": "heavy",
+      "zoneMinKm": 50,
+      "zoneMaxKm": null,
+      "baseCents": 1100000,
+      "extraKmCents": 25000,
+      "insurerId": null
+    }
+  ],
+  "vehicleClasses": {
+    "sedan": "light",
+    "motor": "light",
+    "suv": "suv",
+    "camioneta": "suv",
+    "camion": "heavy",
+    "patana": "heavy",
+    "equipo_pesado": "heavy",
+    "unknown": null
+  },
+  "defaultCases": [
+    {
+      "name": "carro, en el sitio",
+      "vehicleType": "sedan",
+      "distanceKm": 0,
+      "zoneMinKm": 0,
+      "distanceOut": 0,
+      "extraKm": 0,
+      "extraCents": 0,
+      "subtotalCents": 250000
+    },
+    {
+      "name": "carro, 7.3 km",
+      "vehicleType": "sedan",
+      "distanceKm": 7.3,
+      "zoneMinKm": 0,
+      "distanceOut": 7.3,
+      "extraKm": 7.3,
+      "extraCents": 0,
+      "subtotalCents": 250000
+    },
+    {
+      "name": "carro, exactamente 10 km es la primera zona",
+      "vehicleType": "sedan",
+      "distanceKm": 10,
+      "zoneMinKm": 0,
+      "distanceOut": 10,
+      "extraKm": 10,
+      "extraCents": 0,
+      "subtotalCents": 250000
+    },
+    {
+      "name": "carro, 10.04 km se redondea a 10.0",
+      "vehicleType": "sedan",
+      "distanceKm": 10.04,
+      "zoneMinKm": 0,
+      "distanceOut": 10,
+      "extraKm": 10,
+      "extraCents": 0,
+      "subtotalCents": 250000
+    },
+    {
+      "name": "carro, 10.1 km ya es la segunda zona",
+      "vehicleType": "sedan",
+      "distanceKm": 10.1,
+      "zoneMinKm": 10,
+      "distanceOut": 10.1,
+      "extraKm": 0.1,
+      "extraCents": 0,
+      "subtotalCents": 350000
+    },
+    {
+      "name": "motor, 24.9 km",
+      "vehicleType": "motor",
+      "distanceKm": 24.9,
+      "zoneMinKm": 10,
+      "distanceOut": 24.9,
+      "extraKm": 14.9,
+      "extraCents": 0,
+      "subtotalCents": 350000
+    },
+    {
+      "name": "jeepeta, exactamente 25 km",
+      "vehicleType": "suv",
+      "distanceKm": 25,
+      "zoneMinKm": 10,
+      "distanceOut": 25,
+      "extraKm": 15,
+      "extraCents": 0,
+      "subtotalCents": 450000
+    },
+    {
+      "name": "camioneta se cobra como jeepeta, 25.1 km",
+      "vehicleType": "camioneta",
+      "distanceKm": 25.1,
+      "zoneMinKm": 25,
+      "distanceOut": 25.1,
+      "extraKm": 0.1,
+      "extraCents": 0,
+      "subtotalCents": 700000
+    },
+    {
+      "name": "camion, exactamente 50 km",
+      "vehicleType": "camion",
+      "distanceKm": 50,
+      "zoneMinKm": 25,
+      "distanceOut": 50,
+      "extraKm": 25,
+      "extraCents": 0,
+      "subtotalCents": 1100000
+    },
+    {
+      "name": "carro, 50.04 km se queda en 25-50",
+      "vehicleType": "sedan",
+      "distanceKm": 50.04,
+      "zoneMinKm": 25,
+      "distanceOut": 50,
+      "extraKm": 25,
+      "extraCents": 0,
+      "subtotalCents": 550000
+    },
+    {
+      "name": "patana, 50.1 km: una decima extra",
+      "vehicleType": "patana",
+      "distanceKm": 50.1,
+      "zoneMinKm": 50,
+      "distanceOut": 50.1,
+      "extraKm": 0.1,
+      "extraCents": 2500,
+      "subtotalCents": 1102500
+    },
+    {
+      "name": "carro, 51.33 km",
+      "vehicleType": "sedan",
+      "distanceKm": 51.33,
+      "zoneMinKm": 50,
+      "distanceOut": 51.3,
+      "extraKm": 1.3,
+      "extraCents": 15600,
+      "subtotalCents": 565600
+    },
+    {
+      "name": "carro, 62 km: 5,500 + 12 x 120",
+      "vehicleType": "sedan",
+      "distanceKm": 62,
+      "zoneMinKm": 50,
+      "distanceOut": 62,
+      "extraKm": 12,
+      "extraCents": 144000,
+      "subtotalCents": 694000
+    },
+    {
+      "name": "jeepeta, 62.34 km: 7,000 + 12.3 x 150",
+      "vehicleType": "suv",
+      "distanceKm": 62.34,
+      "zoneMinKm": 50,
+      "distanceOut": 62.3,
+      "extraKm": 12.3,
+      "extraCents": 184500,
+      "subtotalCents": 884500
+    },
+    {
+      "name": "equipo pesado, 120 km: 11,000 + 70 x 250",
+      "vehicleType": "equipo_pesado",
+      "distanceKm": 120,
+      "zoneMinKm": 50,
+      "distanceOut": 120,
+      "extraKm": 70,
+      "extraCents": 1750000,
+      "subtotalCents": 2850000
+    }
+  ],
+  "customTables": [
+    {
+      "name": "precio negociado de una aseguradora",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": 10,
+          "baseCents": 200000,
+          "extraKmCents": 0,
+          "insurerId": "ins-demo"
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 10,
+          "zoneMaxKm": null,
+          "baseCents": 200000,
+          "extraKmCents": 10000,
+          "insurerId": "ins-demo"
+        }
+      ],
+      "cases": [
+        {
+          "distanceKm": 10,
+          "zoneMinKm": 0,
+          "extraCents": 0,
+          "subtotalCents": 200000
+        },
+        {
+          "distanceKm": 15,
+          "zoneMinKm": 10,
+          "extraCents": 50000,
+          "subtotalCents": 250000
+        }
+      ]
+    },
+    {
+      "name": "una tarifa por km que no da pesos exactos se redondea al peso",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": null,
+          "baseCents": 100000,
+          "extraKmCents": 12345,
+          "insurerId": null
+        }
+      ],
+      "cases": [
+        {
+          "distanceKm": 0.1,
+          "zoneMinKm": 0,
+          "extraCents": 1200,
+          "subtotalCents": 101200
+        }
+      ]
+    }
+  ],
+  "invalidTables": [
+    {
+      "name": "sin zonas",
+      "rules": []
+    },
+    {
+      "name": "no empieza en 0 km",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 10,
+          "zoneMaxKm": null,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        }
+      ]
+    },
+    {
+      "name": "hueco entre zonas",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": 10,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 12,
+          "zoneMaxKm": null,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        }
+      ]
+    },
+    {
+      "name": "zonas que se solapan",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": 10,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 5,
+          "zoneMaxKm": null,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        }
+      ]
+    },
+    {
+      "name": "la ultima zona tiene limite",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": 10,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 10,
+          "zoneMaxKm": 20,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        }
+      ]
+    },
+    {
+      "name": "una zona abierta que no es la ultima",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": null,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 10,
+          "zoneMaxKm": 20,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        }
+      ]
+    },
+    {
+      "name": "una zona que termina donde empieza",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": 10,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 10,
+          "zoneMaxKm": 10,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 10,
+          "zoneMaxKm": null,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        }
+      ]
+    },
+    {
+      "name": "mezcla tipos de vehiculo",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": 10,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        },
+        {
+          "vehicleClass": "suv",
+          "zoneMinKm": 10,
+          "zoneMaxKm": null,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": null
+        }
+      ]
+    },
+    {
+      "name": "mezcla aseguradoras",
+      "rules": [
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 0,
+          "zoneMaxKm": 10,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": "a"
+        },
+        {
+          "vehicleClass": "light",
+          "zoneMinKm": 10,
+          "zoneMaxKm": null,
+          "baseCents": 1,
+          "extraKmCents": 0,
+          "insurerId": "b"
+        }
+      ]
+    }
+  ],
+  "itbis": [
+    {
+      "subtotalCents": 694000,
+      "itbisCents": 124920,
+      "totalCents": 818920
+    },
+    {
+      "subtotalCents": 250000,
+      "itbisCents": 45000,
+      "totalCents": 295000
+    },
+    {
+      "subtotalCents": 101200,
+      "itbisCents": 18216,
+      "totalCents": 119416
+    },
+    {
+      "subtotalCents": 5,
+      "itbisCents": 1,
+      "totalCents": 6
+    },
+    {
+      "subtotalCents": 1,
+      "itbisCents": 0,
+      "totalCents": 1
+    },
+    {
+      "subtotalCents": 0,
+      "itbisCents": 0,
+      "totalCents": 0
+    }
+  ],
+  "payouts": [
+    {
+      "subtotalCents": 250000,
+      "driverPayoutBps": 7000,
+      "driverPayoutCents": 175000
+    },
+    {
+      "subtotalCents": 350000,
+      "driverPayoutBps": 7000,
+      "driverPayoutCents": 245000
+    },
+    {
+      "subtotalCents": 694000,
+      "driverPayoutBps": 7000,
+      "driverPayoutCents": 485800
+    },
+    {
+      "subtotalCents": 250000,
+      "driverPayoutBps": 6500,
+      "driverPayoutCents": 162500
+    },
+    {
+      "subtotalCents": 12345,
+      "driverPayoutBps": 7000,
+      "driverPayoutCents": 8600
+    },
+    {
+      "subtotalCents": 101200,
+      "driverPayoutBps": 3333,
+      "driverPayoutCents": 33700
+    },
+    {
+      "subtotalCents": 1,
+      "driverPayoutBps": 10000,
+      "driverPayoutCents": 0
+    },
+    {
+      "subtotalCents": 50,
+      "driverPayoutBps": 10000,
+      "driverPayoutCents": 50
+    },
+    {
+      "subtotalCents": 99,
+      "driverPayoutBps": 10000,
+      "driverPayoutCents": 99
+    },
+    {
+      "subtotalCents": 0,
+      "driverPayoutBps": 7000,
+      "driverPayoutCents": 0
+    }
+  ]
+}

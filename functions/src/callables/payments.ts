@@ -28,7 +28,11 @@ import { region } from './region.js';
  * Counts every cash job the chofer confirmed collecting that no earlier corte
  * counted, records them together, and marks each one so it is never counted
  * twice. Also clears the commission the chofer owed on those jobs, since the
- * company now has the whole amount.
+ * company now has the whole amount, and settles their earnings entries so the
+ * weekly corte does not charge that commission again.
+ *
+ * Jobs a weekly corte already charged are left out: under the weekly corte
+ * the chofer keeps the cash and pays only the commission.
  */
 export const settleDriverCash = onCall({ region, cors: true }, async (request) => {
   const parsed = z
@@ -60,6 +64,13 @@ export const settleDriverCash = onCall({ region, cors: true }, async (request) =
     if (serviceIds.length === 0) {
       throw precondition(Code.invalidTransition, 'Este chofer no tiene efectivo por entregar.');
     }
+    const entries = await tx.getAll(...serviceIds.map((id) => Paths.earningEntry(driverId, id)));
+    // A weekly corte that took the entry is the one that settles it.
+    const open = entries.filter((e) => e.exists && e.get('settled') !== true);
+    const commissionCents = open.reduce(
+      (sum, e) => sum + ((e.get('commissionCents') as number | undefined) ?? 0),
+      0,
+    );
 
     tx.create(settlementRef, {
       driverId,
@@ -77,16 +88,30 @@ export const settleDriverCash = onCall({ region, cors: true }, async (request) =
         'payment.cashSettledAt': FieldValue.serverTimestamp(),
       });
     }
+    for (const entry of open) {
+      tx.update(entry.ref, {
+        settled: true,
+        cashSettlementId: settlementRef.id,
+        retiredReason: 'cash_corte',
+        settledAt: FieldValue.serverTimestamp(),
+      });
+    }
     const onHand = (driver['cashOnHandCents'] as number | undefined) ?? 0;
+    // Only the commission of these jobs: a weekly corte may still be counting
+    // commission on others.
+    const owedLeft = Math.max(
+      0,
+      ((driver['cashOwedCents'] as number | undefined) ?? 0) - commissionCents,
+    );
     tx.update(Paths.driver(driverId), {
       cashOnHandCents: Math.max(0, onHand - totalCents),
-      cashOwedCents: 0,
+      cashOwedCents: owedLeft,
       lastCashSettlementAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
     tx.set(
       Paths.earnings(driverId),
-      { cashOwedCents: 0, updatedAt: FieldValue.serverTimestamp() },
+      { cashOwedCents: owedLeft, updatedAt: FieldValue.serverTimestamp() },
       { merge: true },
     );
 

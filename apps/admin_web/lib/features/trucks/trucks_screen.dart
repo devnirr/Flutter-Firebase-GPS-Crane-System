@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import '../shared/toast.dart';
 import 'truck_form_dialog.dart';
 
 /// The fleet.
@@ -18,6 +19,7 @@ class TrucksScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final fleet = ref.watch(allTrucksProvider);
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final now = DateTime.now().toUtc();
 
     // A deleted grúa is archived, not erased; the fleet is for the living.
@@ -42,7 +44,7 @@ class TrucksScreen extends ConsumerWidget {
               const SizedBox(width: Insets.lg),
               Text(
                 '${ordered.length} en la flota',
-                style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+                style: text.bodyMedium?.copyWith(color: palette.textMuted),
               ),
               const Spacer(),
               ElevatedButton.icon(
@@ -156,7 +158,9 @@ class TrucksScreen extends ConsumerWidget {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: BrandColors.danger),
+            style: TextButton.styleFrom(
+              foregroundColor: context.palette.danger,
+            ),
             child: const Text('Eliminar'),
           ),
         ],
@@ -164,18 +168,14 @@ class TrucksScreen extends ConsumerWidget {
     );
     if (confirmed != true || !context.mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = Toaster.of(context);
     final result =
         await ref.read(functionsGatewayProvider).archiveTruck(truck.id);
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          result.isErr
-              ? result.failureOrNull?.userMessage ??
-                  'No se pudo eliminar la grúa.'
-              : 'Grúa ${truck.displayPlate} eliminada.',
-        ),
-      ),
+    toast.show(
+      result.isErr
+          ? result.failureOrNull?.userMessage ?? 'No se pudo eliminar la grúa.'
+          : 'Grúa ${truck.displayPlate} eliminada.',
+      tone: result.isErr ? ToastTone.error : ToastTone.success,
     );
   }
 }
@@ -196,6 +196,7 @@ class _TruckCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final days = truck.daysUntilNextExpiry(now);
     final expired = truck.hasExpiredPaperwork(now);
     final soon = truck.hasExpiringPaperwork(now);
@@ -210,14 +211,14 @@ class _TruckCard extends StatelessWidget {
               Container(
                 width: 40,
                 height: 40,
-                decoration: const BoxDecoration(
-                  color: BrandColors.redTint,
+                decoration: BoxDecoration(
+                  color: palette.brandTint,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.local_shipping,
                   size: 20,
-                  color: BrandColors.red,
+                  color: palette.brand,
                 ),
               ),
               const SizedBox(width: Insets.md),
@@ -231,14 +232,14 @@ class _TruckCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: text.bodySmall
-                          ?.copyWith(color: BrandColors.grey600),
+                          ?.copyWith(color: palette.textMuted),
                     ),
                   ],
                 ),
               ),
               if (!truck.active)
-                const Icon(Icons.pause_circle_outline,
-                    size: 18, color: BrandColors.grey400),
+                Icon(Icons.pause_circle_outline,
+                    size: 18, color: palette.textFaint),
               IconButton(
                 tooltip: 'Editar',
                 visualDensity: VisualDensity.compact,
@@ -249,10 +250,10 @@ class _TruckCard extends StatelessWidget {
                 tooltip: 'Eliminar',
                 visualDensity: VisualDensity.compact,
                 onPressed: onDelete,
-                icon: const Icon(
+                icon: Icon(
                   Icons.delete_outline,
                   size: 20,
-                  color: BrandColors.danger,
+                  color: palette.danger,
                 ),
               ),
             ],

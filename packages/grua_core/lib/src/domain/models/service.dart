@@ -330,6 +330,10 @@ abstract class ServicePayment with _$ServicePayment {
 
     /// The corte that counted this job's cash, once the office received it.
     String? cashSettlementId,
+
+    /// The weekly corte that charged this job's commission instead: the
+    /// chofer kept the cash, and the office does not collect it again.
+    String? weeklySettlementId,
     @NullableTimestampConverter() DateTime? capturedAt,
     @NullableTimestampConverter() DateTime? cashCollectedAt,
     @NullableTimestampConverter() DateTime? cashSettledAt,
@@ -501,6 +505,63 @@ abstract class ServiceRatings with _$ServiceRatings {
       _$ServiceRatingsFromJson(json);
 }
 
+/// The insurance file behind a tow an insurance company ordered.
+@freezed
+abstract class InsuranceClaim with _$InsuranceClaim {
+  const factory InsuranceClaim({
+    /// Número de siniestro. What the company files the invoice line under.
+    @Default('') String claimNumber,
+
+    /// [claimNumber] with case and punctuation removed; duplicates are
+    /// compared on this.
+    @Default('') String claimKey,
+    @Default('') String policyNumber,
+    @Default('') String insuredName,
+    @Default('') String insuredPhone,
+  }) = _InsuranceClaim;
+
+  const InsuranceClaim._();
+
+  factory InsuranceClaim.fromJson(Map<String, dynamic> json) =>
+      _$InsuranceClaimFromJson(json);
+}
+
+/// How an insurer's tow was priced, at `services/{id}.billing`: the zone and
+/// the price before ITBIS.
+///
+/// Readable by the insurance company, so it carries no split — what the chofer
+/// is paid lives where only the office can read it.
+@freezed
+abstract class InsurerBilling with _$InsurerBilling {
+  const factory InsurerBilling({
+    @Default('') String insurerId,
+
+    /// `insurer` for the company's negotiated prices, `default` for the list.
+    @Default('default') String tariff,
+    @JsonKey(unknownEnumValue: VehicleClass.unknown)
+    @Default(VehicleClass.unknown) VehicleClass vehicleClass,
+    @Default(0) int zoneMinKm,
+    int? zoneMaxKm,
+    @Default(0) double distanceKm,
+    @CentsConverter() @Default(0) int baseCents,
+    @Default(0) double extraKm,
+    @CentsConverter() @Default(0) int extraKmCents,
+    @CentsConverter() @Default(0) int extraCents,
+    @CentsConverter() @Default(0) int subtotalCents,
+  }) = _InsurerBilling;
+
+  const InsurerBilling._();
+
+  factory InsurerBilling.fromJson(Map<String, dynamic> json) =>
+      _$InsurerBillingFromJson(json);
+
+  /// `0–10 km`, or `+50 km`.
+  String get zoneLabel =>
+      zoneMaxKm == null ? '+$zoneMinKm km' : '$zoneMinKm–$zoneMaxKm km';
+
+  bool get isNegotiated => tariff == 'insurer';
+}
+
 /// A tow service — the central document of the whole system.
 ///
 /// Everything except the chat subcollection is written by Cloud Functions. The
@@ -533,6 +594,12 @@ abstract class Service with _$Service {
     /// and "Cobrar" sent it, and the server refused it as not matching.
     @JsonKey(name: 'final') Quote? finalQuote,
     @Default(ServicePayment()) ServicePayment payment,
+
+    /// The insurance company that ordered this tow. Empty on a customer's.
+    @Default('') String insurerId,
+    @Default('') String insurerName,
+    InsuranceClaim? insurance,
+    InsurerBilling? billing,
     String? driverId,
     @Default('') String driverName,
     @Default('') String driverPhone,
@@ -571,6 +638,18 @@ abstract class Service with _$Service {
 
   bool get hasDriver => driverId != null && driverId!.isNotEmpty;
 
+  /// Ordered by an insurance company: nothing is collected at the roadside,
+  /// the company is billed at the end of the month.
+  bool get isInsurerJob =>
+      insurerId.isNotEmpty || payment.method == PaymentMethod.insurer;
+
+  /// What an insurer's tow is billed before ITBIS: the zone price, or the
+  /// quote when the zone price is missing — as the invoice reads it.
+  int get billedSubtotalCents {
+    final billed = billing?.subtotalCents ?? 0;
+    return billed > 0 ? billed : quote.subtotalCents;
+  }
+
   /// A heavy job still waiting for the operator to confirm price and grúa.
   bool get awaitsOperator => operatorReview?.isPending ?? false;
 
@@ -587,9 +666,11 @@ abstract class Service with _$Service {
     return sanePath(route.path, from: pickup.geo, to: end);
   }
 
-  bool get canChat => status.allowsContact && hasDriver;
+  /// Chat and in-app calls reach the customer's app. An insurer's tow has no
+  /// customer app on the other end — the chofer phones the insured instead.
+  bool get canChat => status.allowsContact && hasDriver && clientId.isNotEmpty;
 
-  bool get canCall => status.allowsContact && hasDriver;
+  bool get canCall => status.allowsContact && hasDriver && clientId.isNotEmpty;
 
   bool get isCancellableByClient => status.isCancellableByClient;
 

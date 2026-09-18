@@ -10,15 +10,23 @@ import '../../domain/models/chat_prefs.dart';
 import '../../domain/models/chat_request.dart';
 import '../../domain/models/dispatch_models.dart';
 import '../../domain/models/driver.dart';
+import '../../domain/models/insurer.dart';
+import '../../domain/models/insurer_invoice.dart';
+import '../../domain/models/insurer_service.dart';
 import '../../domain/models/payments.dart';
+import '../../domain/models/pricing_rule.dart';
 import '../../domain/models/remote_config_models.dart';
 import '../../domain/models/service.dart';
+import '../../domain/models/settlement.dart';
 import '../../domain/models/truck.dart';
 import '../../domain/repositories.dart';
 import '../../domain/value_objects.dart';
 import '../../utils/do_validators.dart';
 import '../../utils/money.dart';
+import '../insurer_invoicing.dart';
 import '../pricing.dart';
+import '../settlements.dart';
+import '../zone_pricing.dart';
 
 /// An in-memory stand-in for the whole backend.
 ///
@@ -39,10 +47,12 @@ class DemoBackend {
     this.dispatchDelay = const Duration(seconds: 6),
     this.driveStep = const Duration(milliseconds: 1500),
   })  : _random = random ?? math.Random(7),
-        _now = clock ?? DateTime.now;
+        _clock = clock ?? DateTime.now;
 
   final math.Random _random;
-  final DateTime Function() _now;
+  final DateTime Function() _clock;
+
+  DateTime _now() => _nowOverride ?? _clock();
 
   /// How long the simulated cascade takes to assign a chofer. Six seconds in
   /// the app so a reviewer sees the "buscando grúa" state; near-zero in tests,
@@ -66,6 +76,14 @@ class DemoBackend {
   final Map<String, EarningsSummary> _earnings = {};
   final Map<String, List<EarningEntry>> _earningEntries = {};
   final Map<String, Invoice> _invoices = {};
+
+  /// The offer each chofer accepted, by `serviceId/driverId`. The demo cascade
+  /// assigns without ringing, but the chofer still reads what they earn from
+  /// their offer, as on the real backend.
+  final Map<String, Offer> _offers = {};
+
+  /// Each insurance company's chofer share, when it is not the default.
+  final Map<String, int> _insurerPayoutBps = {};
 
   final PricingConfig _pricing = const PricingConfig();
   final DispatchConfig _dispatch = const DispatchConfig();
@@ -109,6 +127,7 @@ class DemoBackend {
   void seed() {
     if (_seeded) return;
     _seeded = true;
+    _seedInsurers();
 
     // `demo-client-1` is the account the client app signs in as; the rest are
     // here so the customer roster in the panel has something to show.
@@ -433,6 +452,126 @@ class DemoBackend {
     }
   }
 
+  /// Finished tows for the seeded company, last month and this one, waiting
+  /// for their invoice — so the demo's Facturación page has something to
+  /// bill. Not part of [seed]: tests count the company's tows.
+  void seedInsurerHistory() {
+    final insurer = _insurers['ins-demo'];
+    if (insurer == null) return;
+    final now = _now().toUtc();
+    final lastMonth = InvoicePeriod.of(now).previous;
+    final rows = <(String, DateTime, VehicleType, int, int?, double, int, String)>[
+      ('SIN-2026-001201', lastMonth.start.add(const Duration(days: 2, hours: 14)),
+          VehicleType.sedan, 0, 10, 6.4, 250000, 'Toyota Corolla'),
+      ('SIN-2026-001233', lastMonth.start.add(const Duration(days: 6, hours: 20)),
+          VehicleType.suv, 10, 25, 18.2, 450000, 'Hyundai Tucson'),
+      ('SIN-2026-001240', lastMonth.start.add(const Duration(days: 11, hours: 9)),
+          VehicleType.camion, 25, 50, 31.5, 1100000, 'Isuzu NPR'),
+      ('SIN-2026-001275', lastMonth.start.add(const Duration(days: 19, hours: 16)),
+          VehicleType.sedan, 50, null, 62.3, 698000, 'Honda Civic'),
+      ('SIN-2026-001302', now.subtract(const Duration(hours: 5)),
+          VehicleType.sedan, 0, 10, 4.1, 250000, 'Kia Picanto'),
+    ];
+    for (final (i, row) in rows.indexed) {
+      final (claim, at, type, minKm, maxKm, km, subtotal, vehicle) = row;
+      final id = 'svc-insurer-$i';
+      final parts = vehicle.split(' ');
+      final driverId = 'driver-${(i % 4) + 1}';
+      _services[id] = Service(
+        id: id,
+        clientId: '',
+        clientName: 'Asegurado ${i + 1}',
+        code: 'GR-${_dateCode(at)}-A${i + 1}',
+        status: ServiceStatus.closed,
+        insurerId: insurer.id,
+        insurerName: insurer.name,
+        insurance: InsuranceClaim(
+          claimNumber: claim,
+          claimKey: claim.replaceAll('-', ''),
+          policyNumber: 'POL-57890${i + 1}',
+          insuredName: const ['Juan Pérez', 'Ana Rosario', 'Luis Batista', 'Carmen Núñez', 'Pedro Gil'][i],
+        ),
+        vehicle: ServiceVehicle(
+          type: type,
+          make: parts.first,
+          model: parts.skip(1).join(' '),
+          plate: 'G${100200 + i * 311}',
+        ),
+        pickup: ServiceLocation(
+          geo: LatLng(18.47 + i * 0.01, -69.93 + i * 0.01),
+          address: 'Av. 27 de Febrero #${100 + i * 20}, Santo Domingo',
+        ),
+        dropoff: ServiceLocation(
+          geo: LatLng(18.49 + i * 0.01, -69.90 + i * 0.01),
+          address: 'Taller Autocentro, Santo Domingo',
+        ),
+        billing: InsurerBilling(
+          insurerId: insurer.id,
+          vehicleClass: VehicleClass.of(type),
+          zoneMinKm: minKm,
+          zoneMaxKm: maxKm,
+          distanceKm: km,
+          baseCents: subtotal,
+          subtotalCents: subtotal,
+        ),
+        quote: Quote(vehicleType: type, subtotalCents: subtotal, distanceKm: km),
+        payment: const ServicePayment(
+          method: PaymentMethod.insurer,
+          status: PaymentStatus.toInvoice,
+        ),
+        driverId: driverId,
+        driverName: _drivers[driverId]?.name ?? '',
+        timeline: ServiceTimeline(
+          createdAt: at.subtract(const Duration(minutes: 70)),
+          acceptedAt: at.subtract(const Duration(minutes: 66)),
+          arrivedAt: at.subtract(const Duration(minutes: 40)),
+          startedAt: at.subtract(const Duration(minutes: 35)),
+          completedAt: at,
+          closedAt: at,
+        ),
+        createdAt: at.subtract(const Duration(minutes: 70)),
+      );
+    }
+    _emitServices();
+  }
+
+  /// One insurance company with a manager and an operator, so the panel's
+  /// Aseguradoras page and the insurer's own view have something to show.
+  void _seedInsurers() {
+    final now = _now().toUtc();
+    _insurers['ins-demo'] = Insurer(
+      id: 'ins-demo',
+      name: 'Seguros Demo, S.A.',
+      rnc: '130000001',
+      contactName: 'Marta Díaz',
+      contactEmail: 'marta@segurosdemo.do',
+      contactPhone: '+18095550150',
+      billingEmail: 'facturas@segurosdemo.do',
+      status: InsurerStatus.active,
+      createdAt: now,
+    );
+    _insurerMembers['ins-demo'] = {
+      'insurer-manager-1': InsurerMember(
+        insurerId: 'ins-demo',
+        uid: 'insurer-manager-1',
+        name: 'Marta Díaz',
+        email: 'marta@segurosdemo.do',
+        role: InsurerRole.manager,
+        active: true,
+        createdAt: now,
+      ),
+      'insurer-operator-1': InsurerMember(
+        insurerId: 'ins-demo',
+        uid: 'insurer-operator-1',
+        name: 'Agente Restrepo',
+        email: 'restrepo@segurosdemo.do',
+        role: InsurerRole.operator,
+        active: true,
+        createdAt: now,
+      ),
+    };
+  }
+
   String _dateCode(DateTime at) {
     final yy = (at.year % 100).toString().padLeft(2, '0');
     final mm = at.month.toString().padLeft(2, '0');
@@ -453,6 +592,140 @@ class DemoBackend {
   AppUser? user(String uid) => _users[uid];
 
   Driver? driver(String uid) => _drivers[uid];
+
+  /// The chofer who signs in with [email], if any.
+  Driver? driverByEmail(String email) {
+    final wanted = email.trim().toLowerCase();
+    for (final d in _drivers.values) {
+      if (d.email.toLowerCase() == wanted) return d;
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Demo app only: somebody on the other end
+  // -------------------------------------------------------------------------
+
+  Timer? _requestSimulator;
+  var _simulated = 0;
+  final Set<String> _seededWeeks = {};
+
+  /// Whether requests arrive on their own. Only the demo app turns it on;
+  /// tests never do.
+  bool get simulatesRequests => _requestSimulator != null;
+
+  /// While the signed-in chofer is online and free, a new request arrives for
+  /// them every [every] — an insurance company's tow, then a customer's cash
+  /// tow, and so on — so the driver app can be walked through by hand with
+  /// nobody on the other end.
+  void startRequestSimulator({Duration every = const Duration(seconds: 12)}) {
+    if (_requestSimulator != null) return;
+    final timer = Timer.periodic(every, (_) => _simulateRequest());
+    _requestSimulator = timer;
+    _timers.add(timer);
+  }
+
+  void _simulateRequest() {
+    final driver = _drivers[currentUserId];
+    if (driver == null || !driver.isOnline || driver.isBusy) return;
+    final waiting = _services.values.any(
+      (s) => s.status == ServiceStatus.pendingDispatch || s.status == ServiceStatus.offered,
+    );
+    if (waiting) return;
+
+    final here = _live[driver.id]?.position ?? DoLocations.defaultCenter;
+    final pickup = ServiceLocation(
+      geo: LatLng(here.latitude + 0.012, here.longitude + 0.006),
+      address: 'Av. Winston Churchill #95, Santo Domingo',
+      reference: 'Frente a la farmacia',
+    );
+    final dropoff = ServiceLocation(
+      geo: LatLng(here.latitude + 0.045, here.longitude - 0.012),
+      address: 'Taller Autocentro, Av. Charles de Gaulle',
+    );
+    final n = ++_simulated;
+    if (n.isOdd) {
+      createInsurerService(
+        insurerId: 'ins-demo',
+        insurerName: _insurers['ins-demo']?.name ?? 'Seguros Demo, S.A.',
+        requestedBy: 'insurer-operator-1',
+        pickup: pickup,
+        dropoff: dropoff,
+        vehicle: ServiceVehicle(
+          make: 'Toyota',
+          model: 'Corolla',
+          color: 'Gris',
+          plate: 'G${123450 + n}',
+        ),
+        insurance: InsuranceClaim(
+          claimNumber: 'SIN-DEMO-${n.toString().padLeft(3, '0')}',
+          policyNumber: 'POL-5789023',
+          insuredName: 'Juan Carlos Pérez',
+          insuredPhone: '+18095550123',
+        ),
+        notes: 'El vehículo está en el parqueo del edificio.',
+        preferredDriverId: driver.id,
+      );
+      return;
+    }
+    const vehicle = ServiceVehicle(make: 'Honda', model: 'Civic', color: 'Negro', plate: 'A234567');
+    final km = pickup.geo.distanceKmTo(dropoff.geo) * 1.3;
+    createService(
+      clientId: 'demo-client-1',
+      pickup: pickup,
+      dropoff: dropoff,
+      vehicle: vehicle,
+      truckType: vehicle.inferredTruckType,
+      quote: Pricing.quoteFor(
+        config: _pricing,
+        vehicleType: vehicle.type,
+        distance: TripDistance.city(km, includedKm: _pricing.includedKm),
+        at: _now(),
+        chargeItbis: false,
+      ),
+      route: ServiceRoute(
+        distanceMeters: (km * 1000).round(),
+        durationSeconds: (km / 28 * 3600).round(),
+      ),
+      preferredDriverId: driver.id,
+    );
+  }
+
+  /// Last week for [driverId], as the demo app shows it: three insurer tows
+  /// and two cash tows — the office's own example, Carlos's week — made into
+  /// a corte that is waiting to be paid.
+  void seedDriverWeek(String driverId) {
+    if (!_seededWeeks.add(driverId) || !_drivers.containsKey(driverId)) return;
+    final now = _now().toUtc();
+    final friday = SettlementMath.payBy(now).subtract(const Duration(days: 7));
+    EarningEntry entry(String id, PaymentMethod method, int gross, int net, int daysBefore) =>
+        EarningEntry(
+          serviceId: 'demo-week-$driverId-$id',
+          driverId: driverId,
+          serviceCode: 'GR-DEMO-$id',
+          method: method,
+          grossCents: gross,
+          netCents: net,
+          commissionCents: gross - net,
+          completedAt: friday.subtract(Duration(days: daysBefore, hours: 3)),
+        );
+    (_earningEntries[driverId] ??= []).addAll([
+      entry('ins1', PaymentMethod.insurer, 350000, 245000, 4),
+      entry('ins2', PaymentMethod.insurer, 550000, 385000, 3),
+      entry('ins3', PaymentMethod.insurer, 250000, 175000, 2),
+      entry('cash1', PaymentMethod.cash, 400000, 320000, 2),
+      entry('cash2', PaymentMethod.cash, 500000, 400000, 1),
+    ]);
+    // Made on that Friday: only what finished before it.
+    try {
+      _nowOverride = friday.subtract(const Duration(hours: 9));
+      generateDriverSettlements(actorId: 'system', driverId: driverId);
+    } finally {
+      _nowOverride = null;
+    }
+  }
+
+  DateTime? _nowOverride;
 
   Truck? truck(String id) => _trucks[id];
 
@@ -1455,6 +1728,666 @@ class DemoBackend {
     _chatPrefsController.add(uid);
   }
 
+  /// Sets [insurerId]'s chofer share, as the office would on the company.
+  void setInsurerPayoutBps(String insurerId, int bps) =>
+      _insurerPayoutBps[insurerId] = bps;
+
+  // -------------------------------------------------------------------------
+  // Insurance companies — mirrors functions/src/callables/insurers.ts and
+  // pricing.ts
+  // -------------------------------------------------------------------------
+
+  final Map<String, Insurer> _insurers = {};
+  final Map<String, Map<String, InsurerMember>> _insurerMembers = {};
+  final List<PricingRule> _pricingRules = [];
+  var _insurerCounter = 0;
+  var _insurerUserCounter = 0;
+
+  List<Insurer> get allInsurers => List.unmodifiable(
+        _insurers.values.toList()..sort((a, b) => a.name.compareTo(b.name)),
+      );
+
+  Insurer? insurer(String id) => _insurers[id];
+
+  /// The company [uid] works for, or null.
+  String? insurerIdOf(String uid) {
+    for (final entry in _insurerMembers.entries) {
+      if (entry.value.containsKey(uid)) return entry.key;
+    }
+    return null;
+  }
+
+  InsurerMember? insurerMember(String insurerId, String uid) =>
+      _insurerMembers[insurerId]?[uid];
+
+  /// The backend's clock, which tests may set.
+  DateTime now() => _now();
+
+  /// `config/settlements.startAt`: jobs finished before it stay out of cortes.
+  DateTime? settlementsStartAt;
+
+  /// Mirrors `requireActiveInsurer`: why [uid] may not act for a company
+  /// right now, or null when they may.
+  Failure? insurerRefusal(String uid) {
+    final insurerId = insurerIdOf(uid);
+    final company = insurerId == null ? null : _insurers[insurerId];
+    final member = insurerId == null ? null : _insurerMembers[insurerId]?[uid];
+    if (company == null || member == null) {
+      return const Failure(
+        FailureCode.permissionDenied,
+        message: 'Esta cuenta no pertenece a una aseguradora.',
+      );
+    }
+    if (!company.isActive) {
+      return const Failure(
+        FailureCode.accountSuspended,
+        message: 'La cuenta de tu aseguradora está suspendida. Comunícate con la oficina.',
+      );
+    }
+    if (!member.active) {
+      return const Failure(
+        FailureCode.accountSuspended,
+        message: 'Tu usuario está desactivado. Pide acceso al administrador de tu empresa.',
+      );
+    }
+    return null;
+  }
+
+  /// Mirrors `canManageMembers` and `memberChangeRefusal`: the office may
+  /// change anyone; a company's manager, their own company's people, but not
+  /// demote or deactivate themselves. Null when the change may go ahead.
+  Failure? _memberChangeRefusal(
+    String? actorId,
+    String insurerId, {
+    String? targetUid,
+    InsurerRole? role,
+    bool? active,
+  }) {
+    if (actorId == null) return null;
+    final actorCompany = insurerIdOf(actorId);
+    // Not a company's person: the office.
+    if (actorCompany == null) return null;
+    final refused = insurerRefusal(actorId);
+    if (refused != null) return refused;
+    final actor = _insurerMembers[actorCompany]![actorId]!;
+    if (actorCompany != insurerId || actor.role != InsurerRole.manager) {
+      return const Failure(FailureCode.permissionDenied);
+    }
+    if (targetUid != actorId) return null;
+    if (active == false) {
+      return const Failure(_invalid, message: 'No puedes desactivar tu propio usuario.');
+    }
+    if (role != null && role != InsurerRole.manager) {
+      return const Failure(
+        _invalid,
+        message: 'No puedes quitarte el rol de administrador de tu empresa.',
+      );
+    }
+    return null;
+  }
+
+  /// The company person who signs in with [email], if any.
+  InsurerMember? insurerMemberByEmail(String email) {
+    final wanted = email.trim().toLowerCase();
+    if (wanted.isEmpty) return null;
+    for (final members in _insurerMembers.values) {
+      for (final member in members.values) {
+        if (member.email.toLowerCase() == wanted) return member;
+      }
+    }
+    return null;
+  }
+
+  /// Every tow [insurerId] ordered, newest first.
+  List<Service> insurerServices(String insurerId, {DateTime? since}) {
+    final list = [
+      for (final s in _services.values)
+        if (s.insurerId == insurerId &&
+            (since == null || !(s.createdAt ?? _now()).isBefore(since)))
+          s,
+    ]..sort((a, b) => (b.createdAt ?? _now()).compareTo(a.createdAt ?? _now()));
+    return List.unmodifiable(list);
+  }
+
+  /// Mirrors `quoteInsurerService`: priced on the company's table, with the
+  /// straight-line distance the demo uses everywhere.
+  Result<InsurerQuote> quoteInsurerService({
+    required String insurerId,
+    required ServiceLocation pickup,
+    required ServiceLocation dropoff,
+    required VehicleType vehicleType,
+  }) {
+    final vehicleClass = VehicleClass.of(vehicleType);
+    if (!VehicleClass.priced.contains(vehicleClass)) {
+      return const Err(Failure(FailureCode.invalidInput, message: 'Elige el tipo de vehículo.'));
+    }
+    final (rules, tariff) = zoneTableFor(insurerId, vehicleClass);
+    final zone = ZonePricing.quote(
+      rules: rules,
+      distanceKm: pickup.geo.distanceKmTo(dropoff.geo) * 1.3,
+      tariff: tariff,
+    );
+    final totals = ZonePricing.withItbis(zone.subtotalCents);
+    return Ok(
+      InsurerQuote(
+        subtotalCents: totals.subtotalCents,
+        itbisCents: totals.itbisCents,
+        totalCents: totals.totalCents,
+        vehicleClass: zone.vehicleClass,
+        zoneMinKm: zone.zoneMinKm,
+        zoneMaxKm: zone.zoneMaxKm,
+        baseCents: zone.baseCents,
+        extraKm: zone.extraKm,
+        extraCents: zone.extraCents,
+        negotiated: tariff == ZoneTariffSource.insurer,
+        distanceKm: zone.distanceKm,
+        durationSeconds: (zone.distanceKm / 28 * 3600).round(),
+        expiresAt: _now().toUtc().add(const Duration(minutes: 15)),
+        signature: 'demo',
+      ),
+    );
+  }
+
+  /// A person of a company ordering, with the refusals the callable gives.
+  Result<CreatedInsurerService> orderInsurerService(
+    String uid,
+    InsurerServiceRequest request,
+  ) {
+    final refused = insurerRefusal(uid);
+    if (refused != null) return Err(refused);
+    final insurerId = insurerIdOf(uid);
+    final company = _insurers[insurerId]!;
+    if (!VehicleClass.priced.contains(VehicleClass.of(request.vehicleType))) {
+      return const Err(Failure(_invalid, message: 'Elige el tipo de vehículo.'));
+    }
+    final key = request.claimNumber.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '');
+    if (key.isEmpty) {
+      return const Err(Failure(FailureCode.invalidInput, message: 'Escribe el número de siniestro.'));
+    }
+    final duplicate = _services.values.any(
+      (s) =>
+          s.insurerId == insurerId &&
+          s.isActive &&
+          s.insurance?.claimKey == key,
+    );
+    if (duplicate) {
+      return const Err(
+        Failure(
+          FailureCode.alreadyHasActiveService,
+          message: 'Ya hay un servicio en curso para ese número de siniestro.',
+        ),
+      );
+    }
+    final service = createInsurerService(
+      insurerId: insurerId!,
+      insurerName: company.name,
+      requestedBy: uid,
+      pickup: request.pickup,
+      dropoff: request.dropoff,
+      vehicle: ServiceVehicle(
+        type: request.vehicleType,
+        plate: request.plate.trim().toUpperCase(),
+        make: request.make.trim(),
+        model: request.model.trim(),
+        color: request.color.trim(),
+      ),
+      insurance: InsuranceClaim(
+        claimNumber: request.claimNumber.trim(),
+        policyNumber: request.policyNumber.trim(),
+        insuredName: request.insuredName.trim(),
+        insuredPhone: request.insuredPhone.trim(),
+      ),
+      notes: request.notes.trim(),
+    );
+    return Ok(
+      CreatedInsurerService(
+        serviceId: service.id,
+        code: service.code,
+        totalCents: service.quote.totalCents,
+      ),
+    );
+  }
+
+  /// The company that ordered a tow cancels it.
+  Result<void> cancelByInsurer(String uid, String serviceId) {
+    final refused = insurerRefusal(uid);
+    if (refused != null) return Err(refused);
+    final service = _services[serviceId];
+    if (service == null) return const Err(Failure(FailureCode.notFound));
+    if (service.insurerId.isEmpty || service.insurerId != insurerIdOf(uid)) {
+      return const Err(
+        Failure(FailureCode.invalidTransition, message: 'Este servicio no es tuyo.'),
+      );
+    }
+    if (!service.status.isCancellableByClient) {
+      return const Err(Failure(FailureCode.invalidTransition));
+    }
+    // Late, and the company pays the fee on its next invoice.
+    final fee = Pricing.cancellationFeeCents(
+      config: _pricing,
+      acceptedAt: service.timeline.acceptedAt,
+      now: _now(),
+    );
+    _services[serviceId] = service.copyWith(
+      cancellation: ServiceCancellation(
+        by: CancelledBy.insurer,
+        actorId: uid,
+        feeCents: fee,
+      ),
+      payment: fee > 0
+          ? service.payment.copyWith(status: PaymentStatus.toInvoice)
+          : service.payment,
+    );
+    _transition(serviceId, ServiceStatus.cancelled, ServiceEventName.cancelService,
+        uid, UserRole.insurer);
+    return const Ok(null);
+  }
+
+  Result<void> insurerPasswordChanged(String uid) {
+    final refused = insurerRefusal(uid);
+    if (refused != null) return Err(refused);
+    final insurerId = insurerIdOf(uid);
+    final member = insurerId == null ? null : _insurerMembers[insurerId]![uid];
+    if (member == null) return const Err(Failure(FailureCode.permissionDenied));
+    _insurerMembers[insurerId]![uid] = InsurerMember(
+      insurerId: member.insurerId,
+      uid: member.uid,
+      name: member.name,
+      email: member.email,
+      phone: member.phone,
+      role: member.role,
+      active: member.active,
+      createdBy: member.createdBy,
+      createdAt: member.createdAt,
+    );
+    _emitServices();
+    return const Ok(null);
+  }
+
+  /// Marks [uid] as needing a new password, the state a first sign-in is in.
+  void requirePasswordChange(String uid) {
+    final insurerId = insurerIdOf(uid);
+    final member = insurerId == null ? null : _insurerMembers[insurerId]![uid];
+    if (member == null) return;
+    _insurerMembers[insurerId]![uid] = InsurerMember(
+      insurerId: member.insurerId,
+      uid: member.uid,
+      name: member.name,
+      email: member.email,
+      phone: member.phone,
+      role: member.role,
+      active: member.active,
+      mustChangePassword: true,
+      createdBy: member.createdBy,
+      createdAt: member.createdAt,
+    );
+    _emitServices();
+  }
+
+  List<InsurerMember> insurerMembers(String insurerId) => List.unmodifiable(
+        (_insurerMembers[insurerId]?.values.toList() ?? <InsurerMember>[])
+          ..sort((a, b) => a.name.compareTo(b.name)),
+      );
+
+  /// The stored rows of one table owner; [insurerId] null is the default list.
+  List<PricingRule> pricingRules({String? insurerId}) => List.unmodifiable(
+        _pricingRules.where((r) => r.insurerId == insurerId),
+      );
+
+  /// The table [insurerId]'s [vehicleClass] is billed on, as `zoneTableFor`
+  /// resolves it.
+  (List<PricingRule>, ZoneTariffSource) zoneTableFor(
+    String insurerId,
+    VehicleClass vehicleClass,
+  ) {
+    List<PricingRule> rowsOf(String? owner) => [
+          for (final r in _pricingRules)
+            if (r.insurerId == owner && r.vehicleClass == vehicleClass) r,
+        ];
+    final own = rowsOf(insurerId);
+    if (own.isNotEmpty) return (own, ZoneTariffSource.insurer);
+    final stored = rowsOf(null);
+    if (stored.isNotEmpty) return (stored, ZoneTariffSource.standard);
+    return (ZonePricing.defaultRulesFor(vehicleClass), ZoneTariffSource.standard);
+  }
+
+  int _payoutBpsFor(String insurerId) =>
+      _insurers[insurerId]?.driverPayoutBps ??
+      _insurerPayoutBps[insurerId] ??
+      ZonePricing.defaultDriverPayoutBps;
+
+  static const FailureCode _invalid = FailureCode.invalidInput;
+
+  String? _detailsProblem(InsurerDetails d, {String? exceptId}) {
+    if (d.name.trim().length < 2) return 'Escribe el nombre completo.';
+    final rnc = DoValidators.companyRnc(d.rnc);
+    if (rnc != null) return rnc;
+    if (DoValidators.email(d.billingEmail) != null) {
+      return 'El correo de facturación no es válido.';
+    }
+    if (d.contactEmail.trim().isNotEmpty &&
+        DoValidators.email(d.contactEmail) != null) {
+      return 'El correo de contacto no es válido.';
+    }
+    final digits = DoValidators.digits(d.rnc);
+    if (_insurers.values.any((i) => i.rnc == digits && i.id != exceptId)) {
+      return 'Ya existe una aseguradora con ese RNC.';
+    }
+    return null;
+  }
+
+  Result<String> createInsurer(InsurerDetails details, {int? driverPayoutBps}) {
+    final problem = _detailsProblem(details);
+    if (problem != null) return Err(Failure(_invalid, message: problem));
+    if (driverPayoutBps != null && (driverPayoutBps < 0 || driverPayoutBps > 10000)) {
+      return const Err(
+        Failure(_invalid, message: 'El porcentaje del chofer debe estar entre 0% y 100%.'),
+      );
+    }
+    _insurerCounter++;
+    final id = 'ins-$_insurerCounter';
+    _insurers[id] = Insurer(
+      id: id,
+      name: details.name.trim(),
+      rnc: DoValidators.digits(details.rnc),
+      contactName: details.contactName.trim(),
+      contactEmail: details.contactEmail.trim(),
+      contactPhone: details.contactPhone.trim(),
+      billingEmail: details.billingEmail.trim(),
+      status: InsurerStatus.active,
+      driverPayoutBps: driverPayoutBps,
+      createdAt: _now().toUtc(),
+    );
+    _insurerMembers[id] = {};
+    _emitServices();
+    return Ok(id);
+  }
+
+  Result<void> updateInsurer(
+    String insurerId, {
+    InsurerDetails? details,
+    InsurerStatus? status,
+    String? statusReason,
+    int? driverPayoutBps,
+    bool clearDriverPayout = false,
+  }) {
+    final current = _insurers[insurerId];
+    if (current == null) return const Err(Failure(FailureCode.notFound));
+    if (details != null) {
+      final problem = _detailsProblem(details, exceptId: insurerId);
+      if (problem != null) return Err(Failure(_invalid, message: problem));
+    }
+    if (driverPayoutBps != null && (driverPayoutBps < 0 || driverPayoutBps > 10000)) {
+      return const Err(
+        Failure(_invalid, message: 'El porcentaje del chofer debe estar entre 0% y 100%.'),
+      );
+    }
+    final nextStatus = status ?? current.status;
+    _insurers[insurerId] = Insurer(
+      id: insurerId,
+      name: details?.name.trim() ?? current.name,
+      rnc: details == null ? current.rnc : DoValidators.digits(details.rnc),
+      contactName: details?.contactName.trim() ?? current.contactName,
+      contactEmail: details?.contactEmail.trim() ?? current.contactEmail,
+      contactPhone: details?.contactPhone.trim() ?? current.contactPhone,
+      billingEmail: details?.billingEmail.trim() ?? current.billingEmail,
+      status: nextStatus,
+      statusReason: statusReason ??
+          (nextStatus == InsurerStatus.active ? '' : current.statusReason),
+      driverPayoutBps:
+          clearDriverPayout ? null : driverPayoutBps ?? current.driverPayoutBps,
+      createdAt: current.createdAt,
+      updatedAt: _now().toUtc(),
+    );
+    _emitServices();
+    return const Ok(null);
+  }
+
+  Result<NewInsurerUser> createInsurerUser({
+    required String insurerId,
+    required String name,
+    required String email,
+    required InsurerRole role,
+    String phone = '',
+    String? actorId,
+  }) {
+    final refused = _memberChangeRefusal(actorId, insurerId);
+    if (refused != null) return Err(refused);
+    if (!_insurers.containsKey(insurerId)) {
+      return const Err(Failure(FailureCode.notFound, message: 'No encontramos esa aseguradora.'));
+    }
+    if (name.trim().length < 2) {
+      return const Err(Failure(_invalid, message: 'Escribe el nombre completo.'));
+    }
+    final address = email.trim().toLowerCase();
+    if (DoValidators.email(address) != null) {
+      return const Err(Failure(_invalid, message: 'El correo no es válido.'));
+    }
+    final taken = _insurerMembers.values
+        .expand((members) => members.values)
+        .any((m) => m.email == address);
+    if (taken) {
+      return const Err(Failure(_invalid, message: 'Ya existe una cuenta con ese correo.'));
+    }
+    _insurerUserCounter++;
+    final uid = 'insurer-user-$_insurerUserCounter';
+    (_insurerMembers[insurerId] ??= {})[uid] = InsurerMember(
+      insurerId: insurerId,
+      uid: uid,
+      name: name.trim(),
+      email: address,
+      phone: phone.trim(),
+      role: role,
+      active: true,
+      mustChangePassword: true,
+      createdBy: currentUserId,
+      createdAt: _now().toUtc(),
+    );
+    _emitServices();
+    return Ok(
+      NewInsurerUser(uid: uid, temporaryPassword: 'Demo-$_insurerUserCounter-Clave!'),
+    );
+  }
+
+  Result<void> updateInsurerUser({
+    required String insurerId,
+    required String uid,
+    String? name,
+    String? phone,
+    InsurerRole? role,
+    bool? active,
+    String? actorId,
+  }) {
+    final refused = _memberChangeRefusal(
+      actorId,
+      insurerId,
+      targetUid: uid,
+      role: role,
+      active: active,
+    );
+    if (refused != null) return Err(refused);
+    final member = _insurerMembers[insurerId]?[uid];
+    if (member == null) {
+      return const Err(
+        Failure(FailureCode.notFound, message: 'Ese usuario no pertenece a esta aseguradora.'),
+      );
+    }
+    _insurerMembers[insurerId]![uid] = InsurerMember(
+      insurerId: insurerId,
+      uid: uid,
+      name: name?.trim() ?? member.name,
+      email: member.email,
+      phone: phone?.trim() ?? member.phone,
+      role: role ?? member.role,
+      active: active ?? member.active,
+      mustChangePassword: member.mustChangePassword,
+      createdBy: member.createdBy,
+      createdAt: member.createdAt,
+    );
+    _emitServices();
+    return const Ok(null);
+  }
+
+  Result<void> savePricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+    required List<PricingRule> rows,
+  }) {
+    if (insurerId != null && !_insurers.containsKey(insurerId)) {
+      return const Err(Failure(FailureCode.notFound, message: 'No encontramos esa aseguradora.'));
+    }
+    final rules = [
+      for (final r in rows)
+        PricingRule(
+          vehicleClass: vehicleClass,
+          zoneMinKm: r.zoneMinKm,
+          zoneMaxKm: r.zoneMaxKm,
+          baseCents: r.baseCents,
+          extraKmCents: r.extraKmCents,
+          insurerId: insurerId,
+        ),
+    ];
+    if (rules.any((r) => r.baseCents < 0 || r.extraKmCents < 0)) {
+      return const Err(
+        Failure(_invalid, message: 'Revisa los precios: deben ser montos enteros y positivos.'),
+      );
+    }
+    final problem = ZonePricing.tableProblem(rules);
+    if (problem != null) return Err(Failure(_invalid, message: problem));
+    _pricingRules
+      ..removeWhere((r) => r.insurerId == insurerId && r.vehicleClass == vehicleClass)
+      ..addAll(rules);
+    _emitServices();
+    return const Ok(null);
+  }
+
+  Result<void> resetPricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+  }) {
+    if (insurerId != null && !_insurers.containsKey(insurerId)) {
+      return const Err(Failure(FailureCode.notFound, message: 'No encontramos esa aseguradora.'));
+    }
+    _pricingRules.removeWhere(
+      (r) => r.insurerId == insurerId && r.vehicleClass == vehicleClass,
+    );
+    _emitServices();
+    return const Ok(null);
+  }
+
+  /// The chofer's share of each insurer tow, fixed when it was ordered, as
+  /// `services/{id}/internal/billing` keeps it.
+  final Map<String, int> _payoutBpsByService = {};
+
+  /// What the chofer takes home on [service], and what the company keeps.
+  ({int gross, int net, int commission}) _takeHome(Service service) {
+    if (service.isInsurerJob) {
+      final subtotal = service.billedSubtotalCents;
+      final bps = _payoutBpsByService[service.id] ?? _payoutBpsFor(service.insurerId);
+      final net = ZonePricing.driverPayoutCents(subtotal, bps);
+      return (gross: subtotal, net: net, commission: subtotal - net);
+    }
+    final gross = service.effectiveQuote.totalCents;
+    final commission = Money.bps(gross, _pricing.commissionBps);
+    return (gross: gross, net: gross - commission, commission: commission);
+  }
+
+  /// The offer [driverId] holds on [serviceId], as it changes.
+  Stream<Offer?> offerUpdates(String serviceId, String driverId) async* {
+    final key = '$serviceId/$driverId';
+    yield _offers[key];
+    await for (final _ in _servicesController.stream) {
+      yield _offers[key];
+    }
+  }
+
+  /// Mirrors `createInsurerService`: priced on the zone tariff, nobody to
+  /// charge at the roadside, and no operator hold for a heavy vehicle.
+  Service createInsurerService({
+    required String insurerId,
+    required String insurerName,
+    required String requestedBy,
+    required ServiceLocation pickup,
+    required ServiceLocation dropoff,
+    required ServiceVehicle vehicle,
+    required InsuranceClaim insurance,
+    String notes = '',
+    String? preferredDriverId,
+  }) {
+    final now = _now();
+    final id = 'svc-ins-${now.microsecondsSinceEpoch}';
+    _serviceCounter++;
+
+    // The straight line with the same detour allowance the server uses when
+    // the Routes API does not answer.
+    final distanceKm = pickup.geo.distanceKmTo(dropoff.geo) * 1.3;
+    final (rules, tariff) = zoneTableFor(insurerId, VehicleClass.of(vehicle.type));
+    final zone = ZonePricing.quote(
+      rules: rules,
+      distanceKm: distanceKm,
+      tariff: tariff,
+    );
+    final totals = ZonePricing.withItbis(zone.subtotalCents);
+    final claimKey =
+        insurance.claimNumber.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '');
+
+    _payoutBpsByService[id] = _payoutBpsFor(insurerId);
+    final service = Service(
+      id: id,
+      clientId: '',
+      clientName: insurance.insuredName,
+      clientPhone: insurance.insuredPhone,
+      code: 'GR-${_dateCode(now)}-0$_serviceCounter',
+      insurerId: insurerId,
+      insurerName: insurerName,
+      insurance: insurance.copyWith(claimKey: claimKey),
+      billing: InsurerBilling(
+        insurerId: insurerId,
+        tariff: zone.tariff.wire,
+        vehicleClass: zone.vehicleClass,
+        zoneMinKm: zone.zoneMinKm,
+        zoneMaxKm: zone.zoneMaxKm,
+        distanceKm: zone.distanceKm,
+        baseCents: zone.baseCents,
+        extraKm: zone.extraKm,
+        extraKmCents: zone.extraKmCents,
+        extraCents: zone.extraCents,
+        subtotalCents: zone.subtotalCents,
+      ),
+      vehicle: vehicle,
+      truckTypeRequired: vehicle.type.isHeavy ? TruckType.pesada : TruckType.gancho,
+      pickup: pickup,
+      dropoff: dropoff,
+      route: ServiceRoute(
+        distanceMeters: (zone.distanceKm * 1000).round(),
+        provider: 'estimate',
+      ),
+      quote: Quote(
+        pricingVersion: 0,
+        vehicleType: vehicle.type,
+        heavy: vehicle.type.isHeavy,
+        baseCents: zone.baseCents,
+        distanceKm: zone.distanceKm,
+        perKmCents: zone.extraKmCents,
+        distanceCents: zone.extraCents,
+        subtotalCents: totals.subtotalCents,
+        itbisCents: totals.itbisCents,
+        totalCents: totals.totalCents,
+      ),
+      payment: const ServicePayment(method: PaymentMethod.insurer),
+      driverNotes: notes,
+      timeline: ServiceTimeline(createdAt: now),
+      createdAt: now,
+    );
+
+    _services[id] = service;
+    _appendEvent(id, ServiceEventName.requestService, ServiceStatus.unknown,
+        ServiceStatus.pendingDispatch, requestedBy, UserRole.insurer);
+    _emitServices();
+    _scheduleDispatch(id, preferredDriverId: preferredDriverId);
+    return service;
+  }
+
   /// Creates a service and starts the simulated dispatch cascade.
   Service createService({
     required String clientId,
@@ -1626,6 +2559,27 @@ class DemoBackend {
       ),
     );
     _drivers[driver.id] = driver.copyWith(currentServiceId: serviceId);
+    // The cascade's offer, accepted. A job the office assigns by hand has no
+    // offer, on the real backend as here.
+    if (actorRole == UserRole.driver) {
+      final earnings = _takeHome(service);
+      _offers['$serviceId/${driver.id}'] = Offer(
+        serviceId: serviceId,
+        driverId: driver.id,
+        state: OfferState.accepted,
+        serviceCode: service.code,
+        pickupAddress: service.pickup.address,
+        dropoffAddress: service.dropoff?.address ?? '',
+        pickupGeo: service.pickup.geo,
+        dropoffGeo: service.dropoff?.geo,
+        truckType: service.truckTypeRequired,
+        paymentMethod: service.payment.method,
+        grossCents: earnings.gross,
+        netEarningsCents: earnings.net,
+        sentAt: _now(),
+        respondedAt: _now(),
+      );
+    }
     if (live != null) {
       _live[driver.id] = live.copyWith(
         state: DriverLiveState.onService,
@@ -1818,7 +2772,11 @@ class DemoBackend {
     if (to == ServiceStatus.completed) {
       updated = updated.copyWith(
         finalQuote: service.quote,
-        payment: service.payment.copyWith(status: PaymentStatus.cashPending),
+        payment: service.payment.copyWith(
+          status: service.isInsurerJob
+              ? PaymentStatus.toInvoice
+              : PaymentStatus.cashPending,
+        ),
       );
       _recordEarnings(updated);
     }
@@ -1848,6 +2806,13 @@ class DemoBackend {
     _emitDrivers();
     _emitLive();
 
+    // Nothing to collect on an insurer's tow: it closes as soon as it is done.
+    if (to == ServiceStatus.completed && updated.isInsurerJob) {
+      _transition(serviceId, ServiceStatus.closed, ServiceEventName.closeService,
+          'system', UserRole.unknown);
+      return;
+    }
+
     // On start, run the second leg to the destination so the client's map keeps
     // moving all the way through the tow.
     if (to == ServiceStatus.inProgress) {
@@ -1876,7 +2841,8 @@ class DemoBackend {
           if (s.driverId == driverId &&
               s.payment.isCash &&
               s.payment.status == PaymentStatus.cashCollected &&
-              s.payment.cashSettlementId == null)
+              s.payment.cashSettlementId == null &&
+              s.payment.weeklySettlementId == null)
             s,
       ];
 
@@ -1902,6 +2868,687 @@ class DemoBackend {
     return const Ok(null);
   }
 
+  // -------------------------------------------------------------------------
+  // Monthly insurer invoices — mirrors functions/src/callables/insurerInvoices.ts
+  // -------------------------------------------------------------------------
+
+  final Map<String, InsurerInvoice> _insurerInvoices = {};
+  var _insurerInvoiceCounter = 0;
+  FiscalIssuer _fiscalIssuer = const FiscalIssuer();
+  final Map<String, NcfSequence> _ncfSequences = {};
+
+  /// Every NCF issued, by registry key, with the invoice that took it.
+  final Map<String, String> _ncfRegistry = {};
+
+  FiscalIssuer get fiscalIssuer => _fiscalIssuer;
+
+  NcfSequence ncfSequence(String prefix) =>
+      _ncfSequences[prefix] ?? NcfSequence.test(prefix);
+
+  /// Newest first.
+  List<InsurerInvoice> insurerInvoices({String? insurerId}) {
+    final all = _insurerInvoices.values
+        .where((i) => insurerId == null || i.insurerId == insurerId)
+        .toList()
+      ..sort((a, b) => b.createdAt!.compareTo(a.createdAt!));
+    return List.unmodifiable(all);
+  }
+
+  InsurerInvoice? insurerInvoice(String id) => _insurerInvoices[id];
+
+  static DateTime? _finishedAt(Service s) => s.status == ServiceStatus.cancelled
+      ? s.timeline.cancelledAt
+      : s.timeline.completedAt ?? s.timeline.closedAt;
+
+  /// Insurer services waiting for an invoice, oldest first.
+  List<Service> servicesToInvoice({String? insurerId}) {
+    final list = [
+      for (final s in _services.values)
+        if (s.isInsurerJob &&
+            s.payment.status == PaymentStatus.toInvoice &&
+            (insurerId == null || s.insurerId == insurerId))
+          s,
+    ]..sort((a, b) {
+        final at = _finishedAt(a) ?? _now();
+        final bt = _finishedAt(b) ?? _now();
+        return at.compareTo(bt);
+      });
+    return List.unmodifiable(list);
+  }
+
+  static const FailureCode _invalidInvoiceInput = FailureCode.invalidInput;
+
+  Result<InvoiceRun> generateInsurerInvoices({
+    required String actorId,
+    String? insurerId,
+    String? periodKey,
+  }) {
+    final now = _now().toUtc();
+    if (periodKey != null && !InvoicePeriod.isKey(periodKey)) {
+      return const Err(Failure(_invalidInvoiceInput, message: 'Mes inválido.'));
+    }
+    final period =
+        periodKey == null ? InvoicePeriod.of(now).previous : InvoicePeriod.parse(periodKey);
+    if (period.start.isAfter(now)) {
+      return const Err(
+        Failure(_invalidInvoiceInput, message: 'No se puede facturar un mes que no ha empezado.'),
+      );
+    }
+    if (insurerId != null && !_insurers.containsKey(insurerId)) {
+      return const Err(Failure(FailureCode.notFound, message: 'No encontramos esa aseguradora.'));
+    }
+    final cutoff = period.end.isBefore(now) ? period.end : now;
+    final companies = insurerId == null ? (_insurers.keys.toList()..sort()) : [insurerId];
+
+    final created = <IssuedInvoiceRef>[];
+    final failed = <({String insurerId, String message})>[];
+    outer:
+    for (final id in companies) {
+      for (var round = 0; round < 20; round++) {
+        switch (_issueInvoice(id, period, cutoff, actorId, now)) {
+          case Err(:final failure):
+            if (insurerId != null) {
+              _emitServices();
+              return Err(failure);
+            }
+            failed.add((insurerId: id, message: failure.userMessage));
+            if (failure.code == FailureCode.ncfUnavailable) break outer;
+          case Ok(:final value?):
+            created.add(value.$1);
+            if (value.$2 > 0) continue;
+          case Ok():
+        }
+        break;
+      }
+    }
+    _emitServices();
+    return Ok(InvoiceRun(periodKey: period.key, created: created, failed: failed));
+  }
+
+  /// One invoice for [insurerId], with how many services it left over; null
+  /// when nothing was waiting.
+  Result<(IssuedInvoiceRef, int)?> _issueInvoice(
+    String insurerId,
+    InvoicePeriod period,
+    DateTime cutoff,
+    String actorId,
+    DateTime now,
+  ) {
+    final insurer = _insurers[insurerId]!;
+    final waiting = servicesToInvoice(insurerId: insurerId);
+    final byId = {for (final s in waiting) s.id: s};
+    final draft = InsurerInvoiceMath.draft(
+      [
+        for (final s in waiting)
+          InvoiceableService(
+            serviceId: s.id,
+            status: s.status,
+            finishedAt: _finishedAt(s),
+            subtotalCents: s.billedSubtotalCents,
+            feeCents: s.cancellation?.feeCents ?? 0,
+          ),
+      ],
+      cutoff: cutoff,
+    );
+    if (draft == null) return const Ok(null);
+
+    final sequence = ncfSequence(Ncf.creditoFiscal);
+    final problem = Ncf.problem(sequence, now);
+    if (problem != null) {
+      return Err(Failure(FailureCode.ncfUnavailable, message: problem));
+    }
+    final ncf = Ncf.format(sequence.prefix, sequence.nextNumber);
+    final key = Ncf.registryKey(ncf, isTest: sequence.isTest);
+    if (_ncfRegistry.containsKey(key)) {
+      return Err(
+        Failure(
+          FailureCode.ncfUnavailable,
+          message: 'El NCF $ncf ya fue emitido. Revisa el número siguiente de la secuencia.',
+        ),
+      );
+    }
+
+    final id = 'fac-${++_insurerInvoiceCounter}';
+    final lines = [
+      for (final (i, serviceId) in draft.serviceIds.indexed)
+        _invoiceLine(byId[serviceId]!, draft.kinds[i], draft.amounts[i]),
+    ];
+    _insurerInvoices[id] = InsurerInvoice(
+      id: id,
+      insurerId: insurerId,
+      insurerName: insurer.name,
+      insurerRnc: insurer.rnc,
+      billingEmail: insurer.billingEmail,
+      periodKey: period.key,
+      periodLabel: period.label,
+      periodStart: period.start,
+      periodEnd: period.end,
+      cutoff: cutoff,
+      ncf: ncf,
+      isTestNcf: sequence.isTest,
+      ncfExpiresOn: sequence.expiresOn,
+      issuer: InvoiceIssuer(
+        name: _fiscalIssuer.name,
+        rnc: _fiscalIssuer.rnc,
+        address: _fiscalIssuer.address,
+        phone: _fiscalIssuer.phone,
+        email: _fiscalIssuer.email,
+      ),
+      lines: List.unmodifiable(lines),
+      tariffTable: _tariffSnapshot(insurerId),
+      towCount: draft.towCount,
+      cancellationCount: draft.cancellationCount,
+      subtotalCents: draft.totals.subtotalCents,
+      itbisCents: draft.totals.itbisCents,
+      totalCents: draft.totals.totalCents,
+      status: InsurerInvoiceStatus.issued,
+      paymentTermsDays: _fiscalIssuer.paymentTermsDays,
+      dueAt: InsurerInvoiceMath.dueDate(now, _fiscalIssuer.paymentTermsDays),
+      issuedAt: now,
+      createdAt: now.add(Duration(microseconds: _insurerInvoiceCounter)),
+    );
+    _ncfRegistry[key] = id;
+    _ncfSequences[sequence.prefix] = NcfSequence(
+      prefix: sequence.prefix,
+      nextNumber: sequence.nextNumber + 1,
+      lastNumber: sequence.lastNumber,
+      expiresOn: sequence.expiresOn,
+      isTest: sequence.isTest,
+      lastIssued: ncf,
+      lastIssuedAt: now,
+      updatedAt: now,
+    );
+    for (final serviceId in draft.serviceIds) {
+      final s = _services[serviceId]!;
+      _services[serviceId] = s.copyWith(
+        invoiceId: id,
+        payment: s.payment.copyWith(status: PaymentStatus.invoiced),
+      );
+    }
+    return Ok((
+      IssuedInvoiceRef(
+        invoiceId: id,
+        insurerId: insurerId,
+        ncf: ncf,
+        isTestNcf: sequence.isTest,
+        totalCents: draft.totals.totalCents,
+        lineCount: lines.length,
+      ),
+      draft.leftover,
+    ));
+  }
+
+  /// Every class's zone prices for [insurerId], as `tariffSnapshot` keeps them.
+  List<InvoiceTariffRow> _tariffSnapshot(String insurerId) => [
+        for (final vehicleClass in VehicleClass.priced)
+          if (zoneTableFor(insurerId, vehicleClass) case (final rules, final tariff))
+            for (final rule in [...rules]..sort((a, b) => a.zoneMinKm.compareTo(b.zoneMinKm)))
+              InvoiceTariffRow(
+                vehicleClass: vehicleClass,
+                zoneMinKm: rule.zoneMinKm,
+                zoneMaxKm: rule.zoneMaxKm,
+                baseCents: rule.baseCents,
+                extraKmCents: rule.extraKmCents,
+                source: tariff.wire,
+              ),
+      ];
+
+  InsurerInvoiceLine _invoiceLine(Service s, InsurerInvoiceLineKind kind, int amount) {
+    final billing = s.billing;
+    final makeModel =
+        [s.vehicle.make, s.vehicle.model].where((p) => p.isNotEmpty).join(' ');
+    return InsurerInvoiceLine(
+      serviceId: s.id,
+      kind: kind,
+      amountCents: amount,
+      serviceCode: s.code,
+      finishedAt: _finishedAt(s),
+      claimNumber: s.insurance?.claimNumber ?? '',
+      policyNumber: s.insurance?.policyNumber ?? '',
+      insuredName: s.insurance?.insuredName ?? '',
+      plate: s.vehicle.plate,
+      vehicle: makeModel.isEmpty ? s.vehicle.type.label : makeModel,
+      pickupAddress: s.pickup.address,
+      dropoffAddress: s.dropoff?.address ?? '',
+      distanceKm: billing?.distanceKm ?? s.quote.distanceKm,
+      zoneLabel: billing?.zoneLabel ?? '',
+      vehicleClass: billing == null || billing.vehicleClass == VehicleClass.unknown
+          ? ''
+          : billing.vehicleClass.label,
+      tariff: billing?.tariff ?? '',
+      baseCents: kind == InsurerInvoiceLineKind.tow ? billing?.baseCents ?? 0 : 0,
+      extraKm: kind == InsurerInvoiceLineKind.tow ? billing?.extraKm ?? 0 : 0,
+      extraCents: kind == InsurerInvoiceLineKind.tow ? billing?.extraCents ?? 0 : 0,
+    );
+  }
+
+  InsurerInvoice _withStatus(
+    InsurerInvoice i, {
+    required InsurerInvoiceStatus status,
+    String? paymentReference,
+    String? note,
+    String? voidReason,
+    DateTime? paidAt,
+    DateTime? voidedAt,
+  }) =>
+      InsurerInvoice(
+        id: i.id,
+        insurerId: i.insurerId,
+        ncf: i.ncf,
+        insurerName: i.insurerName,
+        insurerRnc: i.insurerRnc,
+        billingEmail: i.billingEmail,
+        periodKey: i.periodKey,
+        periodLabel: i.periodLabel,
+        periodStart: i.periodStart,
+        periodEnd: i.periodEnd,
+        cutoff: i.cutoff,
+        ncfType: i.ncfType,
+        isTestNcf: i.isTestNcf,
+        ncfExpiresOn: i.ncfExpiresOn,
+        issuer: i.issuer,
+        lines: i.lines,
+        tariffTable: i.tariffTable,
+        towCount: i.towCount,
+        cancellationCount: i.cancellationCount,
+        subtotalCents: i.subtotalCents,
+        itbisCents: i.itbisCents,
+        totalCents: i.totalCents,
+        status: status,
+        paymentTermsDays: i.paymentTermsDays,
+        dueAt: i.dueAt,
+        paymentReference: paymentReference ?? i.paymentReference,
+        note: note ?? i.note,
+        voidReason: voidReason ?? i.voidReason,
+        issuedAt: i.issuedAt,
+        paidAt: paidAt ?? i.paidAt,
+        voidedAt: voidedAt ?? i.voidedAt,
+        createdAt: i.createdAt,
+      );
+
+  Result<void> markInsurerInvoicePaid(
+    String invoiceId, {
+    required String reference,
+    String note = '',
+  }) {
+    if (reference.trim().length < 3) {
+      return const Err(
+        Failure(_invalidInvoiceInput, message: 'Escribe el número de la transferencia.'),
+      );
+    }
+    final invoice = _insurerInvoices[invoiceId];
+    if (invoice == null) {
+      return const Err(Failure(FailureCode.notFound, message: 'No encontramos esa factura.'));
+    }
+    if (!invoice.isIssued) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Solo se puede cobrar una factura pendiente.',
+        ),
+      );
+    }
+    _insurerInvoices[invoiceId] = _withStatus(
+      invoice,
+      status: InsurerInvoiceStatus.paid,
+      paymentReference: reference.trim(),
+      note: note.trim(),
+      paidAt: _now().toUtc(),
+    );
+    _emitServices();
+    return const Ok(null);
+  }
+
+  Result<void> voidInsurerInvoice(String invoiceId, {required String reason}) {
+    if (reason.trim().length < 3) {
+      return const Err(
+        Failure(_invalidInvoiceInput, message: 'Escribe por qué se anula la factura.'),
+      );
+    }
+    final invoice = _insurerInvoices[invoiceId];
+    if (invoice == null) {
+      return const Err(Failure(FailureCode.notFound, message: 'No encontramos esa factura.'));
+    }
+    if (!invoice.isIssued) {
+      return Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: invoice.isPaid
+              ? 'Una factura cobrada no se anula: emite una nota de crédito.'
+              : 'Esta factura ya está anulada.',
+        ),
+      );
+    }
+    _insurerInvoices[invoiceId] = _withStatus(
+      invoice,
+      status: InsurerInvoiceStatus.voided,
+      voidReason: reason.trim(),
+      voidedAt: _now().toUtc(),
+    );
+    for (final entry in _services.entries.toList()) {
+      final s = entry.value;
+      if (s.invoiceId != invoiceId) continue;
+      _services[entry.key] = s.copyWith(
+        invoiceId: null,
+        payment: s.payment.copyWith(status: PaymentStatus.toInvoice),
+      );
+    }
+    _emitServices();
+    return const Ok(null);
+  }
+
+  Result<void> saveFiscalIssuer(FiscalIssuer issuer) {
+    if (issuer.name.trim().length < 2) {
+      return const Err(Failure(_invalidInvoiceInput, message: 'Escribe la razón social.'));
+    }
+    final rnc = DoValidators.digits(issuer.rnc);
+    if (rnc.isNotEmpty && DoValidators.companyRnc(rnc) != null) {
+      return const Err(Failure(_invalidInvoiceInput, message: 'Ese RNC no es válido.'));
+    }
+    if (issuer.paymentTermsDays < 0 || issuer.paymentTermsDays > 180) {
+      return const Err(
+        Failure(_invalidInvoiceInput, message: 'Los días de crédito van de 0 a 180.'),
+      );
+    }
+    _fiscalIssuer = FiscalIssuer(
+      name: issuer.name.trim(),
+      rnc: rnc,
+      address: issuer.address.trim(),
+      phone: issuer.phone.trim(),
+      email: issuer.email.trim(),
+      paymentTermsDays: issuer.paymentTermsDays,
+      updatedAt: _now().toUtc(),
+    );
+    _emitServices();
+    return const Ok(null);
+  }
+
+  Result<String> saveNcfSequence(NcfSequence sequence) {
+    Err<String> invalid(String message) =>
+        Err(Failure(_invalidInvoiceInput, message: message));
+    if (!Ncf.prefixes.contains(sequence.prefix)) return invalid('Tipo de comprobante inválido.');
+    if (sequence.nextNumber < 1 || sequence.lastNumber > NcfSequence.maxNumber) {
+      return invalid('Los números van de 1 a 99,999,999.');
+    }
+    if (sequence.lastNumber < sequence.nextNumber) {
+      return invalid('El número final debe ser mayor o igual al inicial.');
+    }
+    final expiresOn = sequence.expiresOn;
+    if (expiresOn != null && !Ncf.isIsoDay(expiresOn)) return invalid('Fecha inválida');
+    if (!sequence.isTest && expiresOn == null) {
+      return invalid('Una secuencia real necesita su fecha de vencimiento.');
+    }
+    if (expiresOn != null && !Ncf.expiryInstant(expiresOn)!.isAfter(_now().toUtc())) {
+      return invalid('Esa fecha de vencimiento ya pasó.');
+    }
+    final first = Ncf.format(sequence.prefix, sequence.nextNumber);
+    if (_ncfRegistry.containsKey(Ncf.registryKey(first, isTest: sequence.isTest))) {
+      return Err(
+        Failure(
+          FailureCode.ncfUnavailable,
+          message: 'El NCF $first ya fue emitido${sequence.isTest ? ' como prueba' : ''}. '
+              'La secuencia debe empezar en un número sin usar.',
+        ),
+      );
+    }
+    final current = ncfSequence(sequence.prefix);
+    _ncfSequences[sequence.prefix] = NcfSequence(
+      prefix: sequence.prefix,
+      nextNumber: sequence.nextNumber,
+      lastNumber: sequence.lastNumber,
+      expiresOn: expiresOn,
+      isTest: sequence.isTest,
+      lastIssued: current.lastIssued,
+      lastIssuedAt: current.lastIssuedAt,
+      updatedAt: _now().toUtc(),
+    );
+    _emitServices();
+    return Ok(first);
+  }
+
+  // -------------------------------------------------------------------------
+  // Weekly cortes — mirrors functions/src/callables/settlements.ts
+  // -------------------------------------------------------------------------
+
+  final Map<String, DriverSettlement> _driverSettlements = {};
+  final Map<String, List<String>> _settlementEntryIds = {};
+  var _driverSettlementCounter = 0;
+
+  /// Newest first.
+  List<DriverSettlement> driverSettlements({String? driverId}) {
+    final all = _driverSettlements.values
+        .where((s) => driverId == null || s.driverId == driverId)
+        .toList()
+      ..sort((a, b) => b.createdAt!.compareTo(a.createdAt!));
+    return List.unmodifiable(all);
+  }
+
+  DriverSettlement? driverSettlement(String id) => _driverSettlements[id];
+
+  /// Cortes for everything finished so far, for [driverId] or every chofer.
+  Result<List<String>> generateDriverSettlements({
+    required String actorId,
+    String? driverId,
+  }) {
+    final now = _now().toUtc();
+    final ids = <String>[];
+    final drivers = driverId == null
+        ? _drivers.keys.toList()
+        : [if (_drivers.containsKey(driverId)) driverId];
+    if (driverId != null && drivers.isEmpty) {
+      return const Err(Failure(FailureCode.notFound));
+    }
+
+    for (final id in drivers) {
+      final startAt = settlementsStartAt;
+      final entries = [
+        for (final e in _earningEntries[id] ?? const <EarningEntry>[])
+          if (!e.settled &&
+              e.completedAt != null &&
+              (startAt == null || !e.completedAt!.isBefore(startAt)))
+            e,
+      ];
+      final counted = {
+        for (final e in entries)
+          if (_services[e.serviceId]?.payment.cashSettlementId != null)
+            e.serviceId,
+      };
+      final draft = SettlementMath.draft(
+        entries,
+        cutoff: now,
+        startAt: startAt,
+        countedInCashCorte: counted,
+      );
+      // Card jobs have nothing to settle: retired, so they stop coming back.
+      final ignored = draft?.ignoredServiceIds ??
+          [
+            for (final e in entries)
+              if (e.method != PaymentMethod.insurer &&
+                  e.method != PaymentMethod.cash &&
+                  !e.completedAt!.isAfter(now))
+                e.serviceId,
+          ];
+      _markEntries(id, ignored, null);
+      if (draft == null ||
+          (draft.lines.isEmpty && draft.retiredServiceIds.isEmpty)) {
+        continue;
+      }
+
+      _driverSettlementCounter++;
+      final settlementId = 'corte-$_driverSettlementCounter';
+      final driver = _drivers[id]!;
+      final nothingToPay = draft.direction == SettlementDirection.none;
+      _driverSettlements[settlementId] = DriverSettlement(
+        id: settlementId,
+        driverId: id,
+        driverName: driver.name,
+        truckPlate: _trucks[driver.assignedTruckId ?? '']?.displayPlate ?? '',
+        periodStart: draft.periodStart,
+        periodEnd: draft.periodEnd,
+        lines: draft.lines,
+        insuranceOwedCents: draft.insuranceOwedCents,
+        commissionOwedCents: draft.commissionOwedCents,
+        finalBalanceCents: draft.finalBalanceCents,
+        direction: draft.direction,
+        status: nothingToPay ? SettlementStatus.settled : SettlementStatus.pending,
+        payBy: SettlementMath.payBy(now),
+        settledAt: nothingToPay ? now : null,
+        createdAt: now.add(Duration(microseconds: _driverSettlementCounter)),
+      );
+
+      final taken = [
+        ...draft.lines.map((l) => l.serviceId),
+        ...draft.retiredServiceIds,
+      ];
+      _settlementEntryIds[settlementId] = taken;
+      _markEntries(id, taken, settlementId);
+      for (final line in draft.lines) {
+        final s = _services[line.serviceId];
+        if (line.kind != SettlementLineKind.cash || s == null) continue;
+        _services[line.serviceId] = s.copyWith(
+          payment: s.payment.copyWith(weeklySettlementId: settlementId),
+        );
+      }
+      if (nothingToPay) _clearCommission(id, draft.commissionOwedCents);
+      ids.add(settlementId);
+    }
+
+    _emitServices();
+    _emitDrivers();
+    return Ok(ids);
+  }
+
+  /// Closes a pending corte, clearing the commission it netted.
+  Result<void> settleDriverSettlement(
+    String settlementId, {
+    required String reference,
+    String note = '',
+  }) {
+    final corte = _driverSettlements[settlementId];
+    if (corte == null) return const Err(Failure(FailureCode.notFound));
+    if (!corte.isPending) {
+      return const Err(
+        Failure(FailureCode.invalidTransition, message: 'Este corte ya no está pendiente.'),
+      );
+    }
+    if (corte.finalBalanceCents != 0 && reference.trim().length < 3) {
+      return const Err(
+        Failure(
+          FailureCode.invalidInput,
+          message: 'Escribe el número de la transferencia o del depósito.',
+        ),
+      );
+    }
+    _driverSettlements[settlementId] = DriverSettlement(
+      id: corte.id,
+      driverId: corte.driverId,
+      driverName: corte.driverName,
+      truckPlate: corte.truckPlate,
+      periodStart: corte.periodStart,
+      periodEnd: corte.periodEnd,
+      lines: corte.lines,
+      insuranceOwedCents: corte.insuranceOwedCents,
+      commissionOwedCents: corte.commissionOwedCents,
+      finalBalanceCents: corte.finalBalanceCents,
+      direction: corte.direction,
+      status: SettlementStatus.settled,
+      payBy: corte.payBy,
+      reference: reference.trim(),
+      note: note.trim(),
+      settledAt: _now().toUtc(),
+      createdAt: corte.createdAt,
+    );
+    _clearCommission(corte.driverId, corte.commissionOwedCents);
+    _emitServices();
+    _emitDrivers();
+    return const Ok(null);
+  }
+
+  /// Cancels a pending corte and gives its jobs back.
+  Result<void> voidDriverSettlement(String settlementId, {required String reason}) {
+    final corte = _driverSettlements[settlementId];
+    if (corte == null) return const Err(Failure(FailureCode.notFound));
+    if (!corte.isPending) {
+      return const Err(
+        Failure(
+          FailureCode.invalidTransition,
+          message: 'Solo se puede anular un corte pendiente.',
+        ),
+      );
+    }
+    if (reason.trim().length < 3) {
+      return const Err(
+        Failure(FailureCode.invalidInput, message: 'Escribe por qué se anula el corte.'),
+      );
+    }
+    _driverSettlements[settlementId] = DriverSettlement(
+      id: corte.id,
+      driverId: corte.driverId,
+      driverName: corte.driverName,
+      truckPlate: corte.truckPlate,
+      periodStart: corte.periodStart,
+      periodEnd: corte.periodEnd,
+      lines: corte.lines,
+      insuranceOwedCents: corte.insuranceOwedCents,
+      commissionOwedCents: corte.commissionOwedCents,
+      finalBalanceCents: corte.finalBalanceCents,
+      direction: corte.direction,
+      status: SettlementStatus.voided,
+      payBy: corte.payBy,
+      voidReason: reason.trim(),
+      createdAt: corte.createdAt,
+    );
+    final ids = _settlementEntryIds[settlementId] ?? const [];
+    for (final line in corte.cashLines) {
+      final s = _services[line.serviceId];
+      if (s == null || s.payment.weeklySettlementId != settlementId) continue;
+      _services[line.serviceId] = s.copyWith(
+        payment: s.payment.copyWith(weeklySettlementId: null),
+      );
+    }
+    final entries = _earningEntries[corte.driverId];
+    if (entries != null) {
+      for (var i = 0; i < entries.length; i++) {
+        final e = entries[i];
+        if (ids.contains(e.serviceId) && e.settlementId == settlementId) {
+          entries[i] = e.copyWith(settled: false, settlementId: null, settledAt: null);
+        }
+      }
+    }
+    _emitServices();
+    return const Ok(null);
+  }
+
+  void _markEntries(String driverId, List<String> serviceIds, String? settlementId) {
+    final entries = _earningEntries[driverId];
+    if (entries == null) return;
+    for (var i = 0; i < entries.length; i++) {
+      if (serviceIds.contains(entries[i].serviceId)) {
+        entries[i] = entries[i].copyWith(
+          settled: true,
+          settlementId: settlementId,
+          settledAt: _now().toUtc(),
+        );
+      }
+    }
+  }
+
+  void _clearCommission(String driverId, int commissionCents) {
+    if (commissionCents <= 0) return;
+    final driver = _drivers[driverId];
+    if (driver != null) {
+      _drivers[driverId] = driver.copyWith(
+        cashOwedCents: math.max(0, driver.cashOwedCents - commissionCents),
+      );
+    }
+    final summary = _earnings[driverId];
+    if (summary != null) {
+      _earnings[driverId] = summary.copyWith(
+        cashOwedCents: math.max(0, summary.cashOwedCents - commissionCents),
+      );
+    }
+  }
+
   /// The corte: the office receives the cash [driverId] holds.
   Result<int> settleDriverCash(String driverId, String staffId, {String note = ''}) {
     final driver = _drivers[driverId];
@@ -1918,6 +3565,20 @@ class DemoBackend {
     final total = jobs.fold(0, (sum, s) => sum + s.payment.capturedCents);
     final id = 'corte-${++_settlementCounter}';
     final now = _now();
+    // Their commission is paid with the cash: settled, so Friday's corte does
+    // not charge it again.
+    final jobIds = {for (final j in jobs) j.id};
+    var commission = 0;
+    final driverEntries = _earningEntries[driverId];
+    if (driverEntries != null) {
+      for (var i = 0; i < driverEntries.length; i++) {
+        final e = driverEntries[i];
+        if (!jobIds.contains(e.serviceId) || e.settled) continue;
+        commission += e.commissionCents;
+        driverEntries[i] = e.copyWith(settled: true, settledAt: now.toUtc());
+      }
+    }
+    final owedLeft = math.max(0, driver.cashOwedCents - commission);
     for (final job in jobs) {
       _services[job.id] = job.copyWith(
         payment: job.payment.copyWith(cashSettlementId: id, cashSettledAt: now),
@@ -1937,11 +3598,11 @@ class DemoBackend {
     );
     _drivers[driverId] = driver.copyWith(
       cashOnHandCents: math.max(0, driver.cashOnHandCents - total),
-      cashOwedCents: 0,
+      cashOwedCents: owedLeft,
       lastCashSettlementAt: now,
     );
     final summary = _earnings[driverId];
-    if (summary != null) _earnings[driverId] = summary.copyWith(cashOwedCents: 0);
+    if (summary != null) _earnings[driverId] = summary.copyWith(cashOwedCents: owedLeft);
     _emitServices();
     _emitDrivers();
     return Ok(total);
@@ -1950,8 +3611,7 @@ class DemoBackend {
   void _recordEarnings(Service service) {
     final driverId = service.driverId;
     if (driverId == null) return;
-    final gross = service.effectiveQuote.totalCents;
-    final commission = Money.bps(gross, _pricing.commissionBps);
+    final (:gross, :net, :commission) = _takeHome(service);
 
     final entry = EarningEntry(
       serviceId: service.id,
@@ -1959,7 +3619,7 @@ class DemoBackend {
       serviceCode: service.code,
       grossCents: gross,
       commissionCents: commission,
-      netCents: gross - commission,
+      netCents: net,
       method: service.payment.method,
       pickupAddress: service.pickup.address,
       dropoffAddress: service.dropoff?.address ?? '',

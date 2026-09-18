@@ -8,6 +8,10 @@ import 'package:flutter/foundation.dart';
 import '../../calls/voice_call.dart';
 import '../../domain/enums.dart';
 import '../../domain/failures.dart';
+import '../../domain/models/insurer.dart';
+import '../../domain/models/insurer_invoice.dart';
+import '../../domain/models/insurer_service.dart';
+import '../../domain/models/pricing_rule.dart';
 import '../../domain/models/service.dart';
 import '../../domain/repositories.dart';
 import '../../domain/value_objects.dart';
@@ -383,6 +387,219 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         'settleDriverCash',
         {'driverId': driverId, 'note': note},
         (data) => (data['totalCents'] as num? ?? 0).round(),
+      );
+
+  @override
+  Future<Result<InsurerQuote>> quoteInsurerService({
+    required ServiceLocation pickup,
+    required ServiceLocation dropoff,
+    required VehicleType vehicleType,
+  }) =>
+      _call(
+        'quoteInsurerService',
+        {
+          'pickup': pickup.toJson(),
+          'dropoff': dropoff.toJson(),
+          'vehicleType': vehicleType.wire,
+        },
+        InsurerQuote.fromJson,
+      );
+
+  @override
+  Future<Result<CreatedInsurerService>> createInsurerService(
+    InsurerServiceRequest request, {
+    InsurerQuote? priced,
+  }) =>
+      _call(
+        'createInsurerService',
+        request.toJson(priced: priced),
+        (data) => CreatedInsurerService(
+          serviceId: data['serviceId'] as String,
+          code: data['code'] as String? ?? '',
+          totalCents: ((data['price'] as Map?)?['totalCents'] as num? ?? 0).round(),
+        ),
+      );
+
+  @override
+  Future<Result<void>> insurerPasswordChanged() =>
+      _callVoid('insurerPasswordChanged', const {});
+
+  @override
+  Future<Result<String>> createInsurer({
+    required InsurerDetails details,
+    int? driverPayoutBps,
+  }) =>
+      _call(
+        'createInsurer',
+        {
+          ...details.toJson(),
+          'driverPayoutBps': ?driverPayoutBps,
+        },
+        (data) => data['insurerId'] as String,
+      );
+
+  @override
+  Future<Result<void>> updateInsurer({
+    required String insurerId,
+    InsurerDetails? details,
+    InsurerStatus? status,
+    String? statusReason,
+    int? driverPayoutBps,
+    bool clearDriverPayout = false,
+  }) =>
+      _callVoid('updateInsurer', {
+        'insurerId': insurerId,
+        ...?details?.toJson(),
+        if (status != null) 'status': status.wire,
+        'statusReason': ?statusReason,
+        if (clearDriverPayout)
+          'driverPayoutBps': null
+        else 'driverPayoutBps': ?driverPayoutBps,
+      });
+
+  @override
+  Future<Result<NewInsurerUser>> createInsurerUser({
+    required String insurerId,
+    required String name,
+    required String email,
+    required InsurerRole role,
+    String phone = '',
+  }) =>
+      _call(
+        'createInsurerUser',
+        {
+          'insurerId': insurerId,
+          'name': name,
+          'email': email,
+          'phone': phone,
+          'insurerRole': role.wire,
+        },
+        (data) => NewInsurerUser(
+          uid: data['uid'] as String,
+          temporaryPassword: data['temporaryPassword'] as String,
+        ),
+      );
+
+  @override
+  Future<Result<void>> updateInsurerUser({
+    required String insurerId,
+    required String uid,
+    String? name,
+    String? phone,
+    InsurerRole? role,
+    bool? active,
+  }) =>
+      _callVoid('updateInsurerUser', {
+        'insurerId': insurerId,
+        'uid': uid,
+        'name': ?name,
+        'phone': ?phone,
+        if (role != null) 'insurerRole': role.wire,
+        'active': ?active,
+      });
+
+  @override
+  Future<Result<void>> savePricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+    required List<PricingRule> rows,
+  }) =>
+      _callVoid('savePricingTable', {
+        'insurerId': insurerId,
+        'vehicleClass': vehicleClass.wire,
+        'rows': [
+          for (final row in rows)
+            {
+              'zoneMinKm': row.zoneMinKm,
+              'zoneMaxKm': row.zoneMaxKm,
+              'baseCents': row.baseCents,
+              'extraKmCents': row.extraKmCents,
+            },
+        ],
+      });
+
+  @override
+  Future<Result<void>> resetPricingTable({
+    required String? insurerId,
+    required VehicleClass vehicleClass,
+  }) =>
+      _callVoid('resetPricingTable', {
+        'insurerId': insurerId,
+        'vehicleClass': vehicleClass.wire,
+      });
+
+  @override
+  Future<Result<List<String>>> generateDriverSettlements({String? driverId}) =>
+      _call(
+        'generateDriverSettlements',
+        {'driverId': driverId},
+        (data) => [
+          for (final created in data['created'] as List<dynamic>? ?? const [])
+            (created as Map<String, dynamic>)['settlementId'] as String,
+        ],
+      );
+
+  @override
+  Future<Result<void>> settleDriverSettlement({
+    required String settlementId,
+    required String reference,
+    String note = '',
+  }) =>
+      _callVoid('settleDriverSettlement', {
+        'settlementId': settlementId,
+        'reference': reference,
+        'note': note,
+      });
+
+  @override
+  Future<Result<void>> voidDriverSettlement({
+    required String settlementId,
+    required String reason,
+  }) =>
+      _callVoid('voidDriverSettlement', {
+        'settlementId': settlementId,
+        'reason': reason,
+      });
+
+  @override
+  Future<Result<InvoiceRun>> generateInsurerInvoices({
+    String? insurerId,
+    String? periodKey,
+  }) =>
+      _call(
+        'generateInsurerInvoices',
+        {'insurerId': insurerId, 'periodKey': periodKey},
+        InvoiceRun.fromJson,
+      );
+
+  @override
+  Future<Result<void>> markInsurerInvoicePaid({
+    required String invoiceId,
+    required String reference,
+    String note = '',
+  }) =>
+      _callVoid('markInsurerInvoicePaid', {
+        'invoiceId': invoiceId,
+        'reference': reference,
+        'note': note,
+      });
+
+  @override
+  Future<Result<void>> voidInsurerInvoice({
+    required String invoiceId,
+    required String reason,
+  }) =>
+      _callVoid('voidInsurerInvoice', {'invoiceId': invoiceId, 'reason': reason});
+
+  @override
+  Future<Result<void>> saveFiscalIssuer(FiscalIssuer issuer) =>
+      _callVoid('saveFiscalIssuer', issuer.toJson());
+
+  @override
+  Future<Result<String>> saveNcfSequence(NcfSequence sequence) => _call(
+        'saveNcfSequence',
+        sequence.toJson(),
+        (data) => data['next'] as String? ?? '',
       );
 
   @override

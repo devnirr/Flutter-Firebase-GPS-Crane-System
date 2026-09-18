@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import 'theme_toggle.dart';
 
 /// The panel chrome: dark sidebar, top bar, content.
 ///
@@ -62,6 +63,21 @@ class _Sidebar extends ConsumerWidget {
     (label: 'Choferes', icon: Icons.badge_outlined, route: Routes.drivers),
     (label: 'Grúas', icon: Icons.local_shipping_outlined, route: Routes.trucks),
     (label: 'Efectivo', icon: Icons.payments_outlined, route: Routes.cash),
+    (
+      label: 'Aseguradoras',
+      icon: Icons.shield_outlined,
+      route: Routes.insurers,
+    ),
+    (
+      label: 'Cortes',
+      icon: Icons.receipt_long_outlined,
+      route: Routes.settlements,
+    ),
+    (
+      label: 'Facturación',
+      icon: Icons.request_quote_outlined,
+      route: Routes.invoices,
+    ),
     (label: 'Reportes', icon: Icons.insights_outlined, route: Routes.reports),
   ];
 
@@ -69,7 +85,7 @@ class _Sidebar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       width: 232,
-      color: BrandColors.sidebar,
+      color: context.palette.sidebar,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -105,7 +121,7 @@ class _Sidebar extends ConsumerWidget {
               onTap: () => context.go(item.route),
             ),
           const Spacer(),
-          const Divider(color: BrandColors.sidebarHover, height: 1),
+          Divider(color: context.palette.sidebarHover, height: 1),
           _NavItem(
             label: 'Cerrar sesión',
             icon: Icons.logout,
@@ -139,11 +155,13 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+
     return Material(
-      color: selected ? BrandColors.red : Colors.transparent,
+      color: selected ? palette.brand : Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        hoverColor: BrandColors.sidebarHover,
+        hoverColor: palette.sidebarHover,
         child: Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: Insets.lg,
@@ -185,6 +203,7 @@ class _TopBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final services = ref.watch(activeServicesProvider).value ?? const [];
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     // The one thing a dispatcher must never miss: the cascade gave up and a
     // customer is waiting on a human.
@@ -193,9 +212,9 @@ class _TopBar extends ConsumerWidget {
 
     return Container(
       height: 60,
-      decoration: const BoxDecoration(
-        color: BrandColors.white,
-        border: Border(bottom: BorderSide(color: BrandColors.grey200)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(bottom: BorderSide(color: palette.border)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
       child: Row(
@@ -214,7 +233,7 @@ class _TopBar extends ConsumerWidget {
               decoration: InputDecoration(
                 hintText: 'Buscar código, teléfono, chofer o placa…',
                 prefixIcon: const Icon(Icons.search, size: 18),
-                fillColor: BrandColors.offWhite,
+                fillColor: palette.canvas,
                 contentPadding: EdgeInsets.zero,
                 border: const OutlineInputBorder(
                   borderRadius: Corners.brSm,
@@ -224,7 +243,7 @@ class _TopBar extends ConsumerWidget {
                   borderRadius: Corners.brSm,
                   borderSide: BorderSide.none,
                 ),
-                hintStyle: text.bodySmall?.copyWith(color: BrandColors.grey400),
+                hintStyle: text.bodySmall?.copyWith(color: palette.textFaint),
               ),
             ),
           ),
@@ -232,7 +251,7 @@ class _TopBar extends ConsumerWidget {
           Badge(
             isLabelVisible: needsManual > 0,
             label: Text('$needsManual'),
-            backgroundColor: BrandColors.danger,
+            backgroundColor: palette.danger,
             child: IconButton(
               onPressed: () => context.go(Routes.operations),
               tooltip: needsManual > 0
@@ -241,11 +260,13 @@ class _TopBar extends ConsumerWidget {
               icon: const Icon(Icons.notifications_none),
             ),
           ),
-          const SizedBox(width: Insets.md),
-          const CircleAvatar(
+          const SizedBox(width: Insets.xs),
+          const ThemeModeButton(),
+          const SizedBox(width: Insets.sm),
+          CircleAvatar(
             radius: 15,
-            backgroundColor: BrandColors.redTint,
-            child: Icon(Icons.person, size: 17, color: BrandColors.red),
+            backgroundColor: palette.brandTint,
+            child: Icon(Icons.person, size: 17, color: palette.brand),
           ),
         ],
       ),

@@ -33,6 +33,7 @@ setGlobalOptions({
 // ---------------------------------------------------------------------------
 
 export { quoteService, requestService } from './callables/request.js';
+export { quoteInsurerService, createInsurerService } from './callables/insurerServices.js';
 export { nearbyTrucks } from './callables/nearby.js';
 export {
   requestChat,
@@ -68,7 +69,28 @@ export {
   whoAmI,
 } from './callables/admin.js';
 export { createTruck, updateTruck, archiveTruck } from './callables/trucks.js';
+export {
+  createInsurer,
+  updateInsurer,
+  createInsurerUser,
+  updateInsurerUser,
+  insurerPasswordChanged,
+} from './callables/insurers.js';
+export { savePricingTable, resetPricingTable } from './callables/pricing.js';
 export { settleDriverCash } from './callables/payments.js';
+export {
+  generateDriverSettlements,
+  settleDriverSettlement,
+  voidDriverSettlement,
+  weeklyDriverSettlements,
+} from './callables/settlements.js';
+export {
+  generateInsurerInvoices,
+  markInsurerInvoicePaid,
+  monthlyInsurerInvoices,
+  voidInsurerInvoice,
+} from './callables/insurerInvoices.js';
+export { saveFiscalIssuer, saveNcfSequence } from './callables/fiscal.js';
 
 // ---------------------------------------------------------------------------
 // Triggers and scheduled work
@@ -90,6 +112,7 @@ export {
   releaseFinishedDrivers,
   expireAbandonedServices,
   tidyOrphanedOffers,
+  closeFinishedInsurerTows,
 } from './scheduled/index.js';
 
 // ---------------------------------------------------------------------------

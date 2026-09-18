@@ -85,7 +85,7 @@ Future<void> main() async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Panel de operaciones'), findsOneWidget);
+    expect(find.text('Panel de operaciones y aseguradoras'), findsOneWidget);
   });
 
   testWidgets('signing in lands on operations with the sidebar',
@@ -764,12 +764,20 @@ Future<void> main() async {
     await tester.pumpWidget(harness(backend));
     await tester.pumpAndSettle();
     await openRosterFor(tester, 'Wilfredo');
-
     await tester.tap(find.byTooltip('Editar'));
     await tester.pumpAndSettle();
     expect(find.text('Editar chofer'), findsOneWidget);
     // Pre-filled the way it was typed, not the way it is stored.
     expect(find.text('(829) 555-7788'), findsOneWidget);
+    // The cédula is on file and stays there; the form says as much.
+    expect(find.text('Identifica al chofer: no se cambia.'), findsOneWidget);
+
+    // The form has to hold together on the narrowest window the panel allows.
+    tester.view.physicalSize = const Size(1024, 768);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    setDesktopSize(tester);
+    await tester.pumpAndSettle();
 
     await tester.enterText(
       find.widgetWithText(TextFormField, 'wilfredo@gruasrd.do'),
@@ -965,7 +973,8 @@ Future<void> main() async {
   /// Fills every required field of the grúa form.
   Future<void> fillTruckForm(WidgetTester tester, {required String plate}) async {
     await tester.enterText(find.widgetWithText(TextFormField, 'L123456'), plate);
-    await tester.tap(find.text('Escoge el tipo'));
+    // The field, not its hint: the hint's own box does not take the tap.
+    await tester.tap(find.byType(DropdownButtonFormField<TruckType>));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Plataforma').last);
     await tester.pumpAndSettle();
@@ -1039,10 +1048,8 @@ Future<void> main() async {
       findsOneWidget,
     );
     expect(find.text('Escoge el tipo de grúa.'), findsOneWidget);
-    expect(
-      find.text('Escoge la fecha de vencimiento del seguro y del marbete.'),
-      findsOneWidget,
-    );
+    // One under each empty date field: seguro and marbete.
+    expect(find.text('Escoge la fecha.'), findsNWidgets(2));
     expect(backend.allTrucks, hasLength(5));
   });
 
@@ -1198,6 +1205,50 @@ Future<void> main() async {
       );
     }
     expect(find.text(newest.totalCents.formatDOP), findsWidgets);
+    // The strip across the top answers the four everyday questions before
+    // anybody scrolls into the record itself.
+    final tiles = <Rect>[];
+    for (final tile in [
+      'TOTAL',
+      'FORMA DE PAGO',
+      'DISTANCIA Y TIEMPO',
+      'CHOFER ASIGNADO',
+    ]) {
+      final label = find.descendant(of: dialog, matching: find.text(tile));
+      expect(label, findsOneWidget, reason: 'missing $tile');
+      tiles.add(
+        tester.getRect(
+          find.ancestor(of: label, matching: find.byType(Container)).first,
+        ),
+      );
+    }
+    // One band, not four cards of different heights: a tile with no second
+    // line under its figure is the same box as the ones that have one.
+    expect(tiles.map((t) => t.height).toSet(), hasLength(1));
+    expect(tiles.map((t) => t.top).toSet(), hasLength(1));
+    expect(find.byKey(const Key('copy-service-code')), findsOneWidget);
+
+    // Copying says so at the top middle of the window, not in a black bar
+    // across the bottom corner.
+    await tester.tap(find.byKey(const Key('copy-service-code')));
+    await tester.pumpAndSettle();
+    expect(find.text('Código copiado'), findsOneWidget);
+    final card = tester.getRect(
+      find
+          .ancestor(
+            of: find.byIcon(Icons.check_circle_outline),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final window = tester.view.physicalSize / tester.view.devicePixelRatio;
+    expect(card.top, lessThan(window.height / 3));
+    expect(
+      (card.center.dx - window.width / 2).abs(),
+      lessThan(2),
+      reason: 'the toast should be centred',
+    );
+    expect(card.width, lessThan(window.width / 2));
     // A finished job has nothing to act on in Operaciones.
     expect(find.text('Ver en Operaciones'), findsNothing);
   });
@@ -1326,5 +1377,35 @@ Future<void> main() async {
     await signIn(tester);
 
     expect(find.text('Pantalla muy pequeña'), findsOneWidget);
+  });
+
+  testWidgets('every office page fits the narrowest window the panel allows',
+      (tester) async {
+    setWindow(tester, const Size(1024, 768));
+    final backend = DemoBackend()
+      ..seed()
+      ..seedInsurerHistory();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    for (final page in [
+      'Operaciones',
+      'Servicios',
+      'Clientes',
+      'Choferes',
+      'Grúas',
+      'Efectivo',
+      'Aseguradoras',
+      'Cortes',
+      'Facturación',
+      'Reportes',
+    ]) {
+      await tester.tap(find.text(page).last);
+      await tester.pumpAndSettle(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull, reason: page);
+    }
+    backend.dispose();
+    await tester.pump();
   });
 }

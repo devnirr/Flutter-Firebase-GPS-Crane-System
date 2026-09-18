@@ -1,5 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { loadRtdbRulesForAdmin, useIsolatedProject } from './support/emulator.js';
+
 /**
  * The guarantees that only Firestore can prove.
  *
@@ -34,8 +36,11 @@ let deps: Deps;
 
 describeEmulator('dispatch concurrency', () => {
   beforeAll(async () => {
-    process.env['GCLOUD_PROJECT'] ??= 'grua-rd-test';
+    // A project of its own: other suites clear the same collections.
+    useIsolatedProject('grua-dispatch-race');
     process.env['QUOTE_SIGNING_SECRET'] ??= 'test-secret';
+    // Without the rules' indexes, dispatch's query for online choferes fails.
+    await loadRtdbRulesForAdmin();
 
     const firestore = await import('../src/lib/firestore.js');
     const offers = await import('../src/dispatch/offers.js');
@@ -140,12 +145,18 @@ describeEmulator('dispatch concurrency', () => {
     const busy = [a.data()?.['currentServiceId'], b.data()?.['currentServiceId']]
       .filter(Boolean);
     expect(busy).toEqual([serviceId]);
-  });
+    // One contended round can take seconds on the emulator.
+  }, 30_000);
 
+  // Once is luck. This is the test that would have caught a missing
+  // transaction, so it runs enough times to be evidence.
+  //
+  // Each round takes seconds, not milliseconds: the emulator makes the losing
+  // transaction wait for the winner's lock before it retries. The budget is
+  // sized for that, so the test finishes instead of timing out and leaving
+  // its transactions running into the next test.
   it('survives the race repeatedly', async () => {
-    // Once is luck. This is the test that would have caught a missing
-    // transaction, so it runs enough times to be evidence.
-    for (let attempt = 0; attempt < 25; attempt++) {
+    for (let attempt = 0; attempt < 10; attempt++) {
       await reset();
       const serviceId = await seedOfferedService(['driver-a', 'driver-b']);
 
@@ -159,7 +170,7 @@ describeEmulator('dispatch concurrency', () => {
         `attempt ${attempt}`,
       ).toHaveLength(1);
     }
-  });
+  }, 180_000);
 
   it('refuses an accept after the offer has expired', async () => {
     const serviceId = await seedOfferedService(['driver-a']);

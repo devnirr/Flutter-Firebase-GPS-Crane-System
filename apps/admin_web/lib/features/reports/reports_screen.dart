@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import '../shared/toast.dart';
+
 /// Operational reporting.
 ///
 /// In production every figure here comes from `reports/daily/{date}`, written
@@ -82,29 +84,40 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         Row(
           children: [
             Text('Reportes', style: text.headlineSmall),
-            const Spacer(),
-            SegmentedButton<_Range>(
-              segments: [
-                for (final range in _Range.values)
-                  ButtonSegment(value: range, label: Text(range.label)),
-              ],
-              selected: {_range},
-              showSelectedIcon: false,
-              onSelectionChanged: (s) => setState(() => _range = s.first),
-            ),
             const SizedBox(width: Insets.md),
-            OutlinedButton.icon(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'La exportación se genera en una Cloud Function y se '
-                    'entrega como URL firmada.',
+            // The controls keep the right edge they had under a Spacer, but
+            // on a 1024-px screen the export drops below the range picker
+            // instead of running off it.
+            Expanded(
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: Insets.md,
+                runSpacing: Insets.md,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SegmentedButton<_Range>(
+                    segments: [
+                      for (final range in _Range.values)
+                        ButtonSegment(value: range, label: Text(range.label)),
+                    ],
+                    selected: {_range},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (s) => setState(() => _range = s.first),
                   ),
-                ),
+                  OutlinedButton.icon(
+                    onPressed: () => showToast(
+                      context,
+                      'La exportación se genera en una Cloud Function y se '
+                      'entrega como URL firmada.',
+                      tone: ToastTone.info,
+                    ),
+                    style:
+                        OutlinedButton.styleFrom(minimumSize: const Size(0, 40)),
+                    icon: const Icon(Icons.download_outlined, size: 18),
+                    label: const Text('Exportar CSV'),
+                  ),
+                ],
               ),
-              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 40)),
-              icon: const Icon(Icons.download_outlined, size: 18),
-              label: const Text('Exportar CSV'),
             ),
           ],
         ),
@@ -187,11 +200,12 @@ class _Kpi extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final color = warn
-        ? BrandColors.danger
+        ? palette.danger
         : accent
-            ? BrandColors.red
-            : BrandColors.ink;
+            ? palette.brand
+            : palette.text;
 
     return SizedBox(
       width: 236,
@@ -201,7 +215,7 @@ class _Kpi extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, size: 16, color: BrandColors.grey400),
+                Icon(icon, size: 16, color: palette.textFaint),
                 const SizedBox(width: Insets.sm),
                 Expanded(child: FieldLabel(label)),
               ],
@@ -230,6 +244,7 @@ class _DriverLeaderboard extends StatelessWidget {
   Widget build(BuildContext context) {
     final backend = ref.watch(demoBackendProvider);
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
 
     final rows = drivers
         .map((d) => (driver: d, summary: backend.earnings(d.id)))
@@ -241,7 +256,7 @@ class _DriverLeaderboard extends StatelessWidget {
     if (rows.isEmpty) {
       return Text(
         'Sin datos en el rango seleccionado.',
-        style: text.bodyMedium?.copyWith(color: BrandColors.grey600),
+        style: text.bodyMedium?.copyWith(color: palette.textMuted),
       );
     }
 
@@ -264,7 +279,7 @@ class _DriverLeaderboard extends StatelessWidget {
                     child: LinearProgressIndicator(
                       value: max == 0 ? 0 : row.summary!.monthNetCents / max,
                       minHeight: 8,
-                      backgroundColor: BrandColors.grey100,
+                      backgroundColor: palette.surfaceSubtle,
                     ),
                   ),
                 ),
@@ -283,7 +298,7 @@ class _DriverLeaderboard extends StatelessWidget {
                     '${row.summary!.monthServices} serv.',
                     textAlign: TextAlign.end,
                     style: text.bodySmall
-                        ?.copyWith(color: BrandColors.grey600),
+                        ?.copyWith(color: palette.textMuted),
                   ),
                 ),
               ],

@@ -83,9 +83,32 @@ export const UserRole = {
   driver: 'driver',
   admin: 'admin',
   ops: 'ops',
+  /** A person working for an insurance company that is billed monthly. */
+  insurer: 'insurer',
 } as const;
 
 export type UserRole = (typeof UserRole)[keyof typeof UserRole];
+
+/**
+ * What a person can do inside their insurance company.
+ *
+ * Both create and follow tows. Only a manager adds or removes the company's
+ * people, and only a manager sees its invoices.
+ */
+export const InsurerRole = {
+  manager: 'manager',
+  operator: 'operator',
+} as const;
+
+export type InsurerRole = (typeof InsurerRole)[keyof typeof InsurerRole];
+
+/** Whether an insurance company may use the platform at all. */
+export const InsurerStatus = {
+  active: 'active',
+  suspended: 'suspended',
+} as const;
+
+export type InsurerStatus = (typeof InsurerStatus)[keyof typeof InsurerStatus];
 
 export const DriverStatus = {
   inactive: 'inactive',
@@ -207,7 +230,13 @@ export type OfferState = (typeof OfferState)[keyof typeof OfferState];
  * confirmation, a longer wait), and a card is only held once there is a truck
  * at the curb.
  */
-export const PaymentMethod = { card: 'card', cash: 'cash', pending: 'pending' } as const;
+export const PaymentMethod = {
+  card: 'card',
+  cash: 'cash',
+  pending: 'pending',
+  /** Nobody pays at the roadside: the insurance company is billed monthly. */
+  insurer: 'insurer',
+} as const;
 export type PaymentMethod = (typeof PaymentMethod)[keyof typeof PaymentMethod];
 
 export const PaymentStatus = {
@@ -222,6 +251,10 @@ export const PaymentStatus = {
   voided: 'voided',
   cashPending: 'cash_pending',
   cashCollected: 'cash_collected',
+  /** An insurer's tow, done, waiting for the month's invoice. */
+  toInvoice: 'to_invoice',
+  /** An insurer's tow on a monthly invoice, whose id is in `invoiceId`. */
+  invoiced: 'invoiced',
 } as const;
 
 export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];
@@ -232,6 +265,8 @@ export type AssignmentMode =
 
 export const CancelledBy = {
   client: 'client',
+  /** A person of the insurance company that ordered the tow. */
+  insurer: 'insurer',
   driver: 'driver',
   admin: 'admin',
   system: 'system',
