@@ -23,9 +23,17 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
 
   Future<void> _generate() async {
     setState(() => _generating = true);
-    final result = await ref.read(functionsGatewayProvider).generateDriverSettlements();
+    final Result<List<String>> result;
+    try {
+      result = await ref
+          .read(functionsGatewayProvider)
+          .generateDriverSettlements();
+    } finally {
+      // Off whatever happened: a spinner left turning after a thrown error
+      // says "still working" about something that has already stopped.
+      if (mounted) setState(() => _generating = false);
+    }
     if (!mounted) return;
-    setState(() => _generating = false);
     switch (result) {
       case Ok(:final value):
         showToast(
@@ -33,8 +41,8 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
           value.isEmpty
               ? 'No hay servicios nuevos para cortar.'
               : value.length == 1
-                  ? 'Se generó 1 corte.'
-                  : 'Se generaron ${value.length} cortes.',
+              ? 'Se generó 1 corte.'
+              : 'Se generaron ${value.length} cortes.',
           tone: value.isEmpty ? ToastTone.info : ToastTone.success,
         );
       case Err(:final failure):
@@ -46,12 +54,15 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
-    final all = ref.watch(allDriverSettlementsProvider).value ?? const <DriverSettlement>[];
+    final all =
+        ref.watch(allDriverSettlementsProvider).value ??
+        const <DriverSettlement>[];
     final isAdmin = ref.watch(currentRoleProvider).value == UserRole.admin;
 
     // Its own query: an old unpaid corte must never fall off the newest 200.
     final pending =
-        ref.watch(pendingDriverSettlementsProvider).value ?? const <DriverSettlement>[];
+        ref.watch(pendingDriverSettlementsProvider).value ??
+        const <DriverSettlement>[];
     final toPay = pending
         .where((s) => s.titanPays)
         .fold(0, (sum, s) => sum + s.amountCents);
@@ -85,9 +96,31 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
                 key: const Key('generate-settlements'),
                 onPressed: _generating ? null : _generate,
                 // The theme's buttons fill their width; this one sits in a row.
-                style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
-                icon: const Icon(Icons.playlist_add_check),
-                label: const Text('Generar cortes ahora'),
+                // Disabled only while it works, so it stays red: the theme's
+                // disabled grey washed the label and spinner out to nothing.
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(0, 44),
+                  disabledBackgroundColor: palette.brand.withValues(
+                    alpha: 0.75,
+                  ),
+                  disabledForegroundColor: BrandColors.white,
+                  disabledIconColor: BrandColors.white,
+                ),
+                // The spinner in place of the icon, and the label saying what
+                // is happening: a greyed-out button alone reads as "not
+                // allowed", not as "working on it".
+                icon: _generating
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: BrandColors.white,
+                        ),
+                      )
+                    : const Icon(Icons.playlist_add_check),
+                label: Text(
+                  _generating ? 'Generando cortes…' : 'Generar cortes ahora',
+                ),
               ),
           ],
         ),
@@ -130,7 +163,12 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
         ),
         const SizedBox(height: Insets.md),
         FloatingCard(
-          child: shown.isEmpty
+          // While the run is going, the list is about to change under the
+          // dispatcher's eyes: it says so, rather than showing a list that
+          // is about to be wrong.
+          child: _generating
+              ? const _GeneratingNotice()
+              : shown.isEmpty
               ? Text(
                   _pendingOnly
                       ? 'No hay cortes pendientes.'
@@ -145,6 +183,37 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
                 ),
         ),
       ],
+    );
+  }
+}
+
+/// Stands in for the list while the cortes are being made.
+class _GeneratingNotice extends StatelessWidget {
+  const _GeneratingNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+
+    return Padding(
+      key: const Key('settlements-generating'),
+      padding: const EdgeInsets.symmetric(vertical: Insets.xxxl),
+      child: Column(
+        children: [
+          const SizedBox.square(
+            dimension: 32,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+          const SizedBox(height: Insets.lg),
+          Text('Generando cortes…', style: text.titleMedium),
+          const SizedBox(height: Insets.xs),
+          Text(
+            'Se cuenta la semana de cada chofer. Puede tardar un momento.',
+            style: text.bodySmall?.copyWith(color: palette.textMuted),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -214,7 +283,10 @@ class _SettlementRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(s.amountCents.formatDOP, style: text.titleMedium?.copyWith(color: color)),
+          Text(
+            s.amountCents.formatDOP,
+            style: text.titleMedium?.copyWith(color: color),
+          ),
           Text(label, style: text.bodySmall?.copyWith(color: color)),
         ],
       ),
@@ -275,7 +347,9 @@ class _SettlementDialogState extends ConsumerState<_SettlementDialog> {
     switch (result) {
       case Ok():
         final toast = Toaster.of(context);
-        final done = _mode == _Mode.pay ? 'Corte marcado como pagado.' : 'Corte anulado.';
+        final done = _mode == _Mode.pay
+            ? 'Corte marcado como pagado.'
+            : 'Corte anulado.';
         Navigator.of(context).pop();
         toast.show(done);
       case Err(:final failure):
@@ -337,7 +411,9 @@ class _SettlementDialogState extends ConsumerState<_SettlementDialog> {
                 TextField(
                   key: const Key('settlement-note'),
                   controller: _note,
-                  decoration: const InputDecoration(labelText: 'Nota (opcional)'),
+                  decoration: const InputDecoration(
+                    labelText: 'Nota (opcional)',
+                  ),
                 ),
               ],
               if (_mode == _Mode.cancel) ...[
@@ -369,11 +445,11 @@ class _SettlementDialogState extends ConsumerState<_SettlementDialog> {
           onPressed: _saving
               ? null
               : () => _mode == _Mode.view
-                  ? Navigator.of(context).pop()
-                  : setState(() {
-                      _mode = _Mode.view;
-                      _error = null;
-                    }),
+                    ? Navigator.of(context).pop()
+                    : setState(() {
+                        _mode = _Mode.view;
+                        _error = null;
+                      }),
           child: Text(_mode == _Mode.view ? 'Cerrar' : 'Volver'),
         ),
         if (canAct && _mode == _Mode.view) ...[
@@ -398,7 +474,9 @@ class _SettlementDialogState extends ConsumerState<_SettlementDialog> {
               minimumSize: const Size(0, 44),
               backgroundColor: _mode == _Mode.cancel ? palette.danger : null,
             ),
-            child: Text(_mode == _Mode.pay ? 'Confirmar pago' : 'Confirmar anulación'),
+            child: Text(
+              _mode == _Mode.pay ? 'Confirmar pago' : 'Confirmar anulación',
+            ),
           ),
       ],
     );

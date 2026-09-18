@@ -129,9 +129,20 @@ Future<void> main() async {
     expect(find.text('Corte anulado.'), findsOneWidget);
     expect(backend.driverSettlement(id)!.status, SettlementStatus.voided);
 
-    // "Generar cortes ahora" picks the same jobs up again.
+    // "Generar cortes ahora" picks the same jobs up again — with the page
+    // saying it is working for as long as the call takes, not just a button
+    // that has quietly gone grey.
     await tester.tap(find.byKey(const Key('generate-settlements')));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const Key('settlements-generating')), findsOneWidget);
+    expect(find.text('Generando cortes…'), findsWidgets);
+    final button = tester.widget<ButtonStyleButton>(
+      find.byKey(const Key('generate-settlements')),
+    );
+    expect(button.onPressed, isNull);
+
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('settlements-generating')), findsNothing);
     expect(find.text('Se generó 1 corte.'), findsOneWidget);
     expect(kpi('kpi-to-collect', 80000.formatDOP), findsOneWidget);
 

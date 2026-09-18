@@ -60,11 +60,17 @@ class AddressField extends ConsumerStatefulWidget {
     required this.fieldKey,
     this.hint = '',
     this.value,
+    this.labelInside = true,
     super.key,
   });
 
+  /// Names the place — in the field, and as the map picker's title.
   final String label;
   final String hint;
+
+  /// False where the form puts its labels above the fields: the label then
+  /// only titles the map picker, and the field shows its hint.
+  final bool labelInside;
   final ServiceLocation? value;
   final ValueChanged<ServiceLocation?> onChanged;
 
@@ -193,7 +199,7 @@ class _AddressFieldState extends ConsumerState<AddressField> {
           focusNode: _focus,
           onChanged: _typed,
           decoration: InputDecoration(
-            labelText: widget.label,
+            labelText: widget.labelInside ? widget.label : null,
             hintText: widget.hint,
             prefixIcon: Icon(
               chosen == null ? Icons.search : Icons.place,

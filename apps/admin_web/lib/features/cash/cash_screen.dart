@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
+import '../shared/page_parts.dart';
 import '../shared/toast.dart';
 
 /// Efectivo: what each chofer collected in cash and still holds for the
@@ -51,20 +52,20 @@ class CashScreen extends ConsumerWidget {
           style: text.bodyMedium?.copyWith(color: palette.textMuted),
         ),
         const SizedBox(height: Insets.xl),
-        _KpiRow(
+        StatRow(
           children: [
-            _Kpi(
+            StatTile(
               icon: Icons.account_balance_wallet_outlined,
               label: 'Efectivo por entregar',
               value: total.formatDOP,
               color: total > 0 ? palette.brand : null,
             ),
-            _Kpi(
+            StatTile(
               icon: Icons.groups_outlined,
               label: 'Choferes con efectivo',
               value: '${holding.length}',
             ),
-            _Kpi(
+            StatTile(
               icon: Icons.task_alt_outlined,
               label: 'Recibido este mes',
               value: received.formatDOP,
@@ -437,102 +438,6 @@ class _SettleDialogState extends ConsumerState<_SettleDialog> {
               : Text('Recibí ${total.formatDOP}'),
         ),
       ],
-    );
-  }
-}
-
-/// The figures across the top, sharing the width evenly so their row ends
-/// where the cards below it do, and wrapping to fixed-width tiles when the
-/// window is too narrow to split three ways.
-class _KpiRow extends StatelessWidget {
-  const _KpiRow({required this.children});
-
-  final List<Widget> children;
-
-  /// Under this, three tiles side by side leave no room for the figures.
-  static const _wrapUnder = 860.0;
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      if (constraints.maxWidth < _wrapUnder) {
-        return Wrap(
-          spacing: Insets.lg,
-          runSpacing: Insets.lg,
-          children: [
-            for (final child in children) SizedBox(width: 280, child: child),
-          ],
-        );
-      }
-      return IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final (index, child) in children.indexed) ...[
-              if (index > 0) const SizedBox(width: Insets.lg),
-              Expanded(child: child),
-            ],
-          ],
-        ),
-      );
-    },
-  );
-}
-
-/// One figure across the top: an icon in a tinted circle, what it counts, and
-/// the number itself in the colour that says how to read it.
-class _Kpi extends StatelessWidget {
-  const _Kpi({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  /// Null for a plain figure. A colour both tints the icon and colours the
-  /// number, so the tile reads as one thing rather than two.
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final palette = context.palette;
-    final tone = color ?? palette.textMuted;
-
-    return FloatingCard(
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: tone.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 21, color: tone),
-          ),
-          const SizedBox(width: Insets.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                FieldLabel(label),
-                const SizedBox(height: Insets.xxs),
-                Text(
-                  value,
-                  style: text.headlineSmall?.copyWith(
-                    color: color ?? palette.text,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

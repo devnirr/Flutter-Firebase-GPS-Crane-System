@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import '../shared/form_dialog.dart';
+import '../shared/page_parts.dart';
 import '../shared/toast.dart';
 import 'invoices_screen.dart';
 
@@ -30,17 +32,19 @@ class FiscalSettingsScreen extends ConsumerWidget {
       children: [
         Row(
           children: [
-            IconButton(
+            PageBackButton(
               tooltip: 'Volver a facturación',
               onPressed: () => context.go(Routes.invoices),
-              icon: const Icon(Icons.arrow_back),
             ),
-            const SizedBox(width: Insets.sm),
+            const SizedBox(width: Insets.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Comprobantes fiscales (NCF)', style: text.headlineSmall),
+                  Text(
+                    'Comprobantes fiscales (NCF)',
+                    style: text.headlineSmall,
+                  ),
                   Text(
                     'Datos de la empresa que emite las facturas y la secuencia '
                     'de NCF autorizada por la DGII.',
@@ -122,8 +126,9 @@ class _IssuerFormState extends ConsumerState<_IssuerForm> {
   late final _address = TextEditingController(text: widget.issuer.address);
   late final _phone = TextEditingController(text: widget.issuer.phone);
   late final _email = TextEditingController(text: widget.issuer.email);
-  late final _terms =
-      TextEditingController(text: widget.issuer.paymentTermsDays.toString());
+  late final _terms = TextEditingController(
+    text: widget.issuer.paymentTermsDays.toString(),
+  );
   var _busy = false;
   String? _error;
 
@@ -141,7 +146,9 @@ class _IssuerFormState extends ConsumerState<_IssuerForm> {
       _busy = true;
       _error = null;
     });
-    final result = await ref.read(functionsGatewayProvider).saveFiscalIssuer(
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .saveFiscalIssuer(
           FiscalIssuer(
             name: _name.text,
             rnc: DoValidators.digits(_rnc.text),
@@ -163,118 +170,149 @@ class _IssuerFormState extends ConsumerState<_IssuerForm> {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final palette = context.palette;
     final enabled = widget.canEdit && !_busy;
 
     return FloatingCard(
+      padding: const EdgeInsets.all(Insets.xl),
       child: Form(
         key: _formKey,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Empresa emisora', style: text.titleMedium),
-            const SizedBox(height: Insets.xs),
-            Text(
-              'Sale en el encabezado de cada factura. El RNC puede quedar vacío '
-              'mientras la empresa está en constitución; las facturas dirán "En trámite".',
-              style: text.bodySmall?.copyWith(color: palette.textMuted),
+            const _CardTitle(
+              icon: Icons.business_outlined,
+              title: 'Empresa emisora',
+              note:
+                  'Sale en el encabezado de cada factura. El RNC puede quedar '
+                  'vacío mientras la empresa está en constitución; las '
+                  'facturas dirán "En trámite".',
             ),
-            const SizedBox(height: Insets.lg),
-            TextFormField(
-              key: const Key('issuer-name'),
-              controller: _name,
-              enabled: enabled,
-              decoration: const InputDecoration(labelText: 'Razón social'),
-              validator: (v) =>
-                  (v?.trim().length ?? 0) < 2 ? 'Escribe la razón social.' : null,
-            ),
-            const SizedBox(height: Insets.md),
-            TextFormField(
-              key: const Key('issuer-rnc'),
-              controller: _rnc,
-              enabled: enabled,
-              decoration: const InputDecoration(
-                labelText: 'RNC',
-                hintText: '1-30-00000-1',
-                helperText: 'Vacío hasta que la DGII lo asigne.',
+            const SizedBox(height: Insets.xl),
+            LabeledField(
+              label: 'Razón social',
+              required: true,
+              child: TextFormField(
+                key: const Key('issuer-name'),
+                controller: _name,
+                enabled: enabled,
+                decoration: const InputDecoration(
+                  hintText: 'Grúas RD, SRL',
+                  prefixIcon: Icon(Icons.business_outlined, size: 18),
+                ),
+                validator: (v) => (v?.trim().length ?? 0) < 2
+                    ? 'Escribe la razón social.'
+                    : null,
               ),
-              validator: (v) {
-                final digits = DoValidators.digits(v);
-                if (digits.isEmpty) return null;
-                return DoValidators.companyRnc(digits) == null ? null : 'Ese RNC no es válido.';
-              },
             ),
-            const SizedBox(height: Insets.md),
-            TextFormField(
-              key: const Key('issuer-address'),
-              controller: _address,
-              enabled: enabled,
-              decoration: const InputDecoration(labelText: 'Dirección'),
+            FormRow(
+              left: LabeledField(
+                label: 'RNC',
+                help: 'Vacío hasta que la DGII lo asigne.',
+                child: TextFormField(
+                  key: const Key('issuer-rnc'),
+                  controller: _rnc,
+                  enabled: enabled,
+                  decoration: const InputDecoration(
+                    hintText: '1-30-00000-1',
+                    prefixIcon: Icon(Icons.badge_outlined, size: 18),
+                  ),
+                  validator: (v) {
+                    final digits = DoValidators.digits(v);
+                    if (digits.isEmpty) return null;
+                    return DoValidators.companyRnc(digits) == null
+                        ? null
+                        : 'Ese RNC no es válido.';
+                  },
+                ),
+              ),
+              right: LabeledField(
+                label: 'Días de crédito',
+                required: true,
+                help: 'Para pagar cada factura. 0 para contado.',
+                child: TextFormField(
+                  key: const Key('issuer-terms'),
+                  controller: _terms,
+                  enabled: enabled,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    hintText: '30',
+                    prefixIcon: Icon(Icons.event_outlined, size: 18),
+                    suffixText: 'días',
+                  ),
+                  validator: (v) {
+                    final days = int.tryParse(v?.trim() ?? '');
+                    return days == null || days > 180
+                        ? 'Entre 0 y 180 días.'
+                        : null;
+                  },
+                ),
+              ),
             ),
-            const SizedBox(height: Insets.md),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    key: const Key('issuer-phone'),
-                    controller: _phone,
-                    enabled: enabled,
-                    decoration: const InputDecoration(labelText: 'Teléfono'),
+            LabeledField(
+              label: 'Dirección',
+              child: TextFormField(
+                key: const Key('issuer-address'),
+                controller: _address,
+                enabled: enabled,
+                decoration: const InputDecoration(
+                  hintText: 'Calle, número, sector, ciudad',
+                  prefixIcon: Icon(Icons.place_outlined, size: 18),
+                ),
+              ),
+            ),
+            FormRow(
+              left: LabeledField(
+                label: 'Teléfono',
+                child: TextFormField(
+                  key: const Key('issuer-phone'),
+                  controller: _phone,
+                  enabled: enabled,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    hintText: '809 555-0150',
+                    prefixIcon: Icon(Icons.phone_outlined, size: 18),
                   ),
                 ),
-                const SizedBox(width: Insets.md),
-                Expanded(
-                  child: TextFormField(
-                    key: const Key('issuer-email'),
-                    controller: _email,
-                    enabled: enabled,
-                    decoration: const InputDecoration(labelText: 'Correo'),
-                    validator: (v) {
-                      final value = v?.trim() ?? '';
-                      if (value.isEmpty) return null;
-                      return DoValidators.email(value);
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: Insets.md),
-            TextFormField(
-              key: const Key('issuer-terms'),
-              controller: _terms,
-              enabled: enabled,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'Días de crédito para las aseguradoras',
-                helperText: '0 para contado.',
               ),
-              validator: (v) {
-                final days = int.tryParse(v?.trim() ?? '');
-                return days == null || days > 180 ? 'Entre 0 y 180 días.' : null;
-              },
+              right: LabeledField(
+                label: 'Correo',
+                child: TextFormField(
+                  key: const Key('issuer-email'),
+                  controller: _email,
+                  enabled: enabled,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    hintText: 'facturacion@empresa.com.do',
+                    prefixIcon: Icon(Icons.mail_outline, size: 18),
+                  ),
+                  validator: (v) {
+                    final value = v?.trim() ?? '';
+                    if (value.isEmpty) return null;
+                    return DoValidators.email(value);
+                  },
+                ),
+              ),
             ),
             if (_error != null) ...[
-              const SizedBox(height: Insets.md),
               InlineNotice(
                 key: const Key('issuer-error'),
                 tone: NoticeTone.error,
+                icon: Icons.error_outline,
                 message: _error!,
               ),
-            ],
-            if (widget.canEdit) ...[
               const SizedBox(height: Insets.lg),
+            ],
+            if (widget.canEdit)
               Align(
                 alignment: Alignment.centerRight,
-                child: ElevatedButton(
-                  key: const Key('save-issuer'),
+                child: _SaveButton(
+                  buttonKey: const Key('save-issuer'),
+                  label: 'Guardar datos fiscales',
+                  busy: _busy,
                   onPressed: enabled ? _save : null,
-                  style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
-                  child: const Text('Guardar datos fiscales'),
                 ),
               ),
-            ],
           ],
         ),
       ),
@@ -283,7 +321,11 @@ class _IssuerFormState extends ConsumerState<_IssuerForm> {
 }
 
 class _SequenceForm extends ConsumerStatefulWidget {
-  const _SequenceForm({required this.sequence, required this.canEdit, super.key});
+  const _SequenceForm({
+    required this.sequence,
+    required this.canEdit,
+    super.key,
+  });
 
   final NcfSequence sequence;
   final bool canEdit;
@@ -320,7 +362,8 @@ class _SequenceFormState extends ConsumerState<_SequenceForm> {
   static String? _isoOf(String value) {
     final m = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$').firstMatch(value.trim());
     if (m == null) return null;
-    final iso = '${m.group(3)}-${m.group(2)!.padLeft(2, '0')}-${m.group(1)!.padLeft(2, '0')}';
+    final iso =
+        '${m.group(3)}-${m.group(2)!.padLeft(2, '0')}-${m.group(1)!.padLeft(2, '0')}';
     return Ncf.isIsoDay(iso) ? iso : null;
   }
 
@@ -329,7 +372,9 @@ class _SequenceFormState extends ConsumerState<_SequenceForm> {
       _busy = true;
       _error = null;
     });
-    final result = await ref.read(functionsGatewayProvider).saveNcfSequence(sequence);
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .saveNcfSequence(sequence);
     if (!mounted) return;
     switch (result) {
       case Ok(:final value):
@@ -391,151 +436,331 @@ class _SequenceFormState extends ConsumerState<_SequenceForm> {
 
     String? number(String? v) {
       final n = int.tryParse(v?.trim() ?? '');
-      if (n == null || n < 1 || n > NcfSequence.maxNumber) return 'Número de 1 a 99,999,999.';
+      if (n == null || n < 1 || n > NcfSequence.maxNumber) {
+        return 'Número de 1 a 99,999,999.';
+      }
       return null;
     }
 
+    final firstNcf = switch (int.tryParse(_next.text.trim())) {
+      final n? when n >= 1 && n <= NcfSequence.maxNumber => Ncf.format(
+        Ncf.creditoFiscal,
+        n,
+      ),
+      _ => '—',
+    };
+
     return FloatingCard(
+      padding: const EdgeInsets.all(Insets.xl),
       child: Form(
         key: _formKey,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Secuencia B01 · Crédito fiscal', style: text.titleMedium),
-            const SizedBox(height: Insets.md),
+            const _CardTitle(
+              icon: Icons.pin_outlined,
+              title: 'Secuencia B01 · Crédito fiscal',
+              note: 'El rango de números con que se emiten las facturas.',
+            ),
+            const SizedBox(height: Insets.lg),
             NcfSequenceNotice(sequence: s, now: now, linkToSettings: false),
-            const SizedBox(height: Insets.md),
-            DetailRow(
-              label: 'Tipo',
-              value: s.isTest ? 'Prueba (sin valor fiscal)' : 'Real, autorizada por la DGII',
-              valueColor: s.isTest ? palette.warning : palette.success,
-            ),
-            DetailRow(
-              key: const Key('sequence-next'),
-              label: 'Próximo NCF',
-              value: Ncf.next(s) ?? '—',
-              emphasise: true,
-            ),
-            if (!s.isTest) ...[
-              DetailRow(
-                label: 'Último de la secuencia',
-                value: Ncf.format(s.prefix, s.lastNumber),
-              ),
-              DetailRow(label: 'Disponibles', value: '${s.remaining}'),
-              DetailRow(label: 'Válida hasta', value: InvoiceDocument.isoDay(s.expiresOn)),
-            ],
-            if (s.lastIssued.isNotEmpty)
-              DetailRow(
-                label: 'Último emitido',
-                value: [
-                  s.lastIssued,
-                  if (s.lastIssuedAt != null) InvoiceDocument.day(s.lastIssuedAt),
-                ].join(' · '),
-              ),
-            if (widget.canEdit) ...[
-              const Divider(height: Insets.xxl),
-              Text('Registrar secuencia autorizada', style: text.titleSmall),
-              const SizedBox(height: Insets.xs),
-              Text(
-                'Copia los datos de la autorización de la DGII. Las facturas '
-                'siguientes usarán esta secuencia; no hay que cambiar nada más.',
-                style: text.bodySmall?.copyWith(color: palette.textMuted),
-              ),
-              const SizedBox(height: Insets.md),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      key: const Key('sequence-from'),
-                      controller: _next,
-                      enabled: enabled,
-                      onChanged: (_) => setState(() {}),
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      decoration: const InputDecoration(
-                        labelText: 'Desde (número)',
-                        hintText: '1',
-                      ),
-                      validator: number,
-                    ),
+            const SizedBox(height: Insets.lg),
+            // The state of the range at a glance: each figure over its label
+            // rather than at the far end of a row, where the eye had to cross
+            // half a card to pair them up.
+            Wrap(
+              spacing: Insets.xl,
+              runSpacing: Insets.lg,
+              children: [
+                _Fact(
+                  label: 'Tipo',
+                  value: s.isTest
+                      ? 'Prueba (sin valor fiscal)'
+                      : 'Real, autorizada por la DGII',
+                  color: s.isTest ? palette.warning : palette.success,
+                ),
+                _Fact(
+                  key: const Key('sequence-next'),
+                  label: 'Próximo NCF',
+                  value: Ncf.next(s) ?? '—',
+                  large: true,
+                ),
+                if (!s.isTest) ...[
+                  _Fact(
+                    label: 'Último de la secuencia',
+                    value: Ncf.format(s.prefix, s.lastNumber),
                   ),
-                  const SizedBox(width: Insets.md),
-                  Expanded(
-                    child: TextFormField(
-                      key: const Key('sequence-to'),
-                      controller: _last,
-                      enabled: enabled,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      decoration: const InputDecoration(
-                        labelText: 'Hasta (número)',
-                        hintText: '500',
-                      ),
-                      validator: (v) {
-                        final problem = number(v);
-                        if (problem != null) return problem;
-                        final from = int.tryParse(_next.text.trim());
-                        if (from != null && int.parse(v!.trim()) < from) {
-                          return 'Debe ser mayor o igual a "Desde".';
-                        }
-                        return null;
-                      },
-                    ),
+                  _Fact(label: 'Disponibles', value: '${s.remaining}'),
+                  _Fact(
+                    label: 'Válida hasta',
+                    value: InvoiceDocument.isoDay(s.expiresOn),
                   ),
                 ],
+                if (s.lastIssued.isNotEmpty)
+                  _Fact(
+                    label: 'Último emitido',
+                    value: [
+                      s.lastIssued,
+                      if (s.lastIssuedAt != null)
+                        InvoiceDocument.day(s.lastIssuedAt),
+                    ].join(' · '),
+                  ),
+              ],
+            ),
+            if (widget.canEdit) ...[
+              const SizedBox(height: Insets.xl),
+              const FormSection(
+                'Registrar secuencia autorizada',
+                note:
+                    'Copia los datos de la autorización de la DGII. Las '
+                    'facturas siguientes usarán esta secuencia; no hay que '
+                    'cambiar nada más.',
               ),
-              const SizedBox(height: Insets.md),
-              TextFormField(
-                key: const Key('sequence-expires'),
-                controller: _expires,
-                enabled: enabled,
-                decoration: const InputDecoration(
-                  labelText: 'Fecha de vencimiento',
-                  hintText: 'dd/mm/aaaa',
+              FormRow(
+                left: LabeledField(
+                  label: 'Desde',
+                  required: true,
+                  child: TextFormField(
+                    key: const Key('sequence-from'),
+                    controller: _next,
+                    enabled: enabled,
+                    onChanged: (_) => setState(() {}),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      hintText: '1',
+                      prefixIcon: Icon(Icons.first_page, size: 18),
+                    ),
+                    validator: number,
+                  ),
                 ),
-                validator: (v) {
-                  final iso = _isoOf(v ?? '');
-                  if (iso == null) return 'Escribe la fecha como dd/mm/aaaa.';
-                  final expiry = Ncf.expiryInstant(iso);
-                  if (expiry == null || !expiry.isAfter(now)) return 'Esa fecha ya pasó.';
-                  return null;
-                },
+                right: LabeledField(
+                  label: 'Hasta',
+                  required: true,
+                  child: TextFormField(
+                    key: const Key('sequence-to'),
+                    controller: _last,
+                    enabled: enabled,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      hintText: '500',
+                      prefixIcon: Icon(Icons.last_page, size: 18),
+                    ),
+                    validator: (v) {
+                      final problem = number(v);
+                      if (problem != null) return problem;
+                      final from = int.tryParse(_next.text.trim());
+                      if (from != null && int.parse(v!.trim()) < from) {
+                        return 'Debe ser mayor o igual a "Desde".';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
               ),
-              const SizedBox(height: Insets.sm),
-              Text(
-                [
-                  'Primer NCF: ',
-                  if (int.tryParse(_next.text.trim()) case final n?
-                      when n >= 1 && n <= NcfSequence.maxNumber)
-                    Ncf.format(Ncf.creditoFiscal, n)
-                  else
-                    '—',
-                ].join(),
-                style: text.bodySmall?.copyWith(color: palette.textMuted),
+              LabeledField(
+                label: 'Fecha de vencimiento',
+                required: true,
+                child: TextFormField(
+                  key: const Key('sequence-expires'),
+                  controller: _expires,
+                  enabled: enabled,
+                  decoration: const InputDecoration(
+                    hintText: 'dd/mm/aaaa',
+                    prefixIcon: Icon(Icons.event_outlined, size: 18),
+                  ),
+                  validator: (v) {
+                    final iso = _isoOf(v ?? '');
+                    if (iso == null) return 'Escribe la fecha como dd/mm/aaaa.';
+                    final expiry = Ncf.expiryInstant(iso);
+                    if (expiry == null || !expiry.isAfter(now)) {
+                      return 'Esa fecha ya pasó.';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+              // What "Desde" turns into, as the number the first invoice will
+              // carry, so a missing digit shows before it is saved.
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: Insets.lg,
+                  vertical: Insets.md,
+                ),
+                decoration: BoxDecoration(
+                  color: palette.surfaceSubtle,
+                  borderRadius: Corners.brMd,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.receipt_long_outlined,
+                      size: 18,
+                      color: palette.textMuted,
+                    ),
+                    const SizedBox(width: Insets.sm),
+                    Text('Primer NCF: $firstNcf', style: text.bodyMedium),
+                  ],
+                ),
               ),
               if (_error != null) ...[
                 const SizedBox(height: Insets.md),
                 InlineNotice(
                   key: const Key('sequence-error'),
                   tone: NoticeTone.error,
+                  icon: Icons.error_outline,
                   message: _error!,
                 ),
               ],
               const SizedBox(height: Insets.lg),
               Align(
                 alignment: Alignment.centerRight,
-                child: ElevatedButton(
-                  key: const Key('save-real-sequence'),
+                child: _SaveButton(
+                  buttonKey: const Key('save-real-sequence'),
+                  label: 'Guardar secuencia real',
+                  busy: _busy,
                   onPressed: enabled ? _saveReal : null,
-                  style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
-                  child: const Text('Guardar secuencia real'),
                 ),
               ),
             ],
           ],
         ),
       ),
+    );
+  }
+}
+
+/// An icon, a card's title, and a line saying what the card is for.
+class _CardTitle extends StatelessWidget {
+  const _CardTitle({
+    required this.icon,
+    required this.title,
+    required this.note,
+  });
+
+  final IconData icon;
+  final String title;
+  final String note;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: palette.brandTint,
+            borderRadius: Corners.brSm,
+          ),
+          child: Icon(icon, size: 20, color: palette.brand),
+        ),
+        const SizedBox(width: Insets.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: text.titleMedium),
+              const SizedBox(height: Insets.xxs),
+              Text(
+                note,
+                style: text.bodySmall?.copyWith(color: palette.textMuted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One stored figure: its label over its value.
+class _Fact extends StatelessWidget {
+  const _Fact({
+    required this.label,
+    required this.value,
+    this.color,
+    this.large = false,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final Color? color;
+
+  /// The next NCF, the figure the whole card is about.
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 160),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FieldLabel(label),
+          const SizedBox(height: Insets.xxs),
+          Text(
+            value,
+            style: (large ? text.titleLarge : text.bodyLarge)?.copyWith(
+              color: color ?? palette.text,
+              fontWeight: large ? FontWeight.w700 : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A save button that turns into a spinner while it saves, so the wait is
+/// seen rather than guessed at from a greyed-out button.
+class _SaveButton extends StatelessWidget {
+  const _SaveButton({
+    required this.buttonKey,
+    required this.label,
+    required this.busy,
+    required this.onPressed,
+  });
+
+  final Key buttonKey;
+  final String label;
+  final bool busy;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+
+    return ElevatedButton(
+      key: buttonKey,
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
+        disabledBackgroundColor: busy
+            ? palette.brand.withValues(alpha: 0.75)
+            : null,
+        disabledForegroundColor: busy ? BrandColors.white : null,
+      ),
+      child: busy
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: BrandColors.white,
+              ),
+            )
+          : Text(label),
     );
   }
 }

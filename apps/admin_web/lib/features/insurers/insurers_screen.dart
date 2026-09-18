@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import '../shared/page_parts.dart';
 import '../shared/toast.dart';
 import 'insurer_form_dialog.dart';
 import 'insurer_users_panel.dart';
@@ -304,27 +305,13 @@ class InsurerDetailScreen extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => context.go(Routes.insurers),
-                  style: TextButton.styleFrom(
-                    // The theme's buttons fill their width, which centred this
-                    // one over the page like a heading.
-                    minimumSize: Size.zero,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Insets.sm,
-                      vertical: Insets.xs,
-                    ),
-                    foregroundColor: palette.textMuted,
-                  ),
-                  icon: const Icon(Icons.arrow_back, size: 18),
-                  label: const Text('Aseguradoras'),
-                ),
-              ),
-              const SizedBox(height: Insets.sm),
               Row(
                 children: [
+                  PageBackButton(
+                    onPressed: () => context.go(Routes.insurers),
+                    tooltip: 'Volver a Aseguradoras',
+                  ),
+                  const SizedBox(width: Insets.md),
                   Container(
                     width: 44,
                     height: 44,
@@ -637,32 +624,31 @@ class DefaultTariffScreen extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(Insets.xl),
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () => context.go(Routes.insurers),
-            style: TextButton.styleFrom(
-              // The theme's buttons fill their width, which centred this one
-              // over the page like a heading.
-              minimumSize: Size.zero,
-              padding: const EdgeInsets.symmetric(
-                horizontal: Insets.sm,
-                vertical: Insets.xs,
-              ),
-              foregroundColor: palette.textMuted,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            PageBackButton(
+              onPressed: () => context.go(Routes.insurers),
+              tooltip: 'Volver a Aseguradoras',
             ),
-            icon: const Icon(Icons.arrow_back, size: 18),
-            label: const Text('Aseguradoras'),
-          ),
-        ),
-        const SizedBox(height: Insets.sm),
-        Text('Tarifa base', style: text.headlineSmall),
-        const SizedBox(height: Insets.xs),
-        Text(
-          'Precios por zona de kilómetros, sin ITBIS, para toda aseguradora sin '
-          'precio negociado. Más allá de la última zona se cobra el precio más '
-          'el extra por cada kilómetro pasado su inicio.',
-          style: text.bodyMedium?.copyWith(color: palette.textMuted),
+            const SizedBox(width: Insets.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Tarifa base', style: text.headlineSmall),
+                  const SizedBox(height: Insets.xs),
+                  Text(
+                    'Precios por zona de kilómetros, sin ITBIS, para toda '
+                    'aseguradora sin precio negociado. Más allá de la última '
+                    'zona se cobra el precio más el extra por cada kilómetro '
+                    'pasado su inicio.',
+                    style: text.bodyMedium?.copyWith(color: palette.textMuted),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: Insets.xl),
         ZoneTariffPanel(insurerId: null, canEdit: isAdmin),

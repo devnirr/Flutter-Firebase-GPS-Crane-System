@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import '../shared/page_parts.dart';
 import '../shell/theme_toggle.dart';
 
 /// The panel as an insurance company sees it: its own tows and nothing else.
@@ -25,7 +26,8 @@ class PortalShell extends ConsumerWidget {
       return const Scaffold(
         body: EmptyState(
           title: 'Pantalla muy pequeña',
-          message: 'El portal de aseguradoras necesita una pantalla de al menos '
+          message:
+              'El portal de aseguradoras necesita una pantalla de al menos '
               '1024 px de ancho. Ábrelo en una computadora.',
           icon: Icons.desktop_windows_outlined,
         ),
@@ -78,7 +80,7 @@ class PortalShell extends ConsumerWidget {
       return company.statusReason.isEmpty
           ? 'La cuenta de tu aseguradora está suspendida. $office'
           : 'La cuenta de tu aseguradora está suspendida: '
-              '${company.statusReason}. $office';
+                '${company.statusReason}. $office';
     }
     if (!member.isLoading && !(member.value?.active ?? false)) {
       return 'Tu usuario está desactivado o tu aseguradora está suspendida. '
@@ -106,7 +108,11 @@ class _PortalSidebar extends ConsumerWidget {
         icon: Icons.add_circle_outline,
         route: Routes.portalNew,
       ),
-      (label: 'Mapa en vivo', icon: Icons.map_outlined, route: Routes.portalMap),
+      (
+        label: 'Mapa en vivo',
+        icon: Icons.map_outlined,
+        route: Routes.portalMap,
+      ),
       (
         label: 'Servicios',
         icon: Icons.list_alt_outlined,
@@ -154,16 +160,16 @@ class _PortalSidebar extends ConsumerWidget {
                     children: [
                       Text(
                         'GRÚAS RD',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
                               color: BrandColors.white,
                               letterSpacing: 1.1,
                             ),
                       ),
                       Text(
                         'Aseguradoras',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: BrandColors.grey400,
-                            ),
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: BrandColors.grey400),
                       ),
                     ],
                   ),
@@ -243,9 +249,8 @@ class _PortalNavItem extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color:
-                            selected ? BrandColors.white : BrandColors.grey200,
-                      ),
+                    color: selected ? BrandColors.white : BrandColors.grey200,
+                  ),
                 ),
               ),
             ],
@@ -289,24 +294,31 @@ class _PortalTopBar extends ConsumerWidget {
           if (member != null) ...[
             // Flexible, not bare: a long name on a 1024-px screen must give
             // way to the controls beside it rather than push them off the bar.
+            // Aligned right inside its share of the row: on its own the
+            // column took only its text's width and left the rest of that
+            // share empty to the right of the controls, stranding them near
+            // the middle of a wide bar.
             Flexible(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    member.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.titleSmall,
-                  ),
-                  Text(
-                    member.role.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.bodySmall?.copyWith(color: palette.textMuted),
-                  ),
-                ],
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      member.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.titleSmall,
+                    ),
+                    Text(
+                      member.role.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall?.copyWith(color: palette.textMuted),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: Insets.md),
@@ -363,7 +375,10 @@ class PortalHeader extends StatelessWidget {
   }
 }
 
-/// One number on the portal's front page.
+/// One number on the portal's pages.
+///
+/// The panel's own [StatTile] underneath, so the company sees the same figures
+/// the office does, built the same way.
 class PortalKpi extends StatelessWidget {
   const PortalKpi({
     required this.label,
@@ -371,6 +386,7 @@ class PortalKpi extends StatelessWidget {
     required this.icon,
     this.detail,
     this.color,
+    this.width = 250,
     super.key,
   });
 
@@ -380,87 +396,127 @@ class PortalKpi extends StatelessWidget {
   final String? detail;
   final Color? color;
 
+  /// Fixed for a free-standing row of tiles; null inside a [StatRow], which
+  /// shares the width out and gives every tile the same height.
+  final double? width;
+
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final palette = context.palette;
-    return SizedBox(
-      width: 250,
-      child: FloatingCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 18, color: palette.textFaint),
-                const SizedBox(width: Insets.sm),
-                Expanded(child: FieldLabel(label)),
-              ],
-            ),
-            const SizedBox(height: Insets.sm),
-            Text(value, style: text.headlineSmall?.copyWith(color: color)),
-            if (detail != null) ...[
-              const SizedBox(height: Insets.xxs),
-              Text(
-                detail!,
-                style: text.bodySmall?.copyWith(color: palette.textMuted),
-              ),
-            ],
-          ],
-        ),
-      ),
+    final tile = StatTile(
+      icon: icon,
+      label: label,
+      value: value,
+      detail: detail ?? '',
+      color: color,
     );
+    return width == null ? tile : SizedBox(width: width, child: tile);
   }
 }
 
 /// One tow in a portal list: the claim first, because that is the number the
-/// company files it under.
+/// company files it under; then what it cost and where it stands, and a
+/// chevron because the row opens it.
 class PortalServiceTile extends StatelessWidget {
-  const PortalServiceTile({required this.service, this.onTap, super.key});
+  const PortalServiceTile({
+    required this.service,
+    this.onTap,
+    this.padding = const EdgeInsets.symmetric(vertical: Insets.md),
+    super.key,
+  });
 
   final Service service;
   final VoidCallback? onTap;
 
+  /// Vertical only inside a card that pads its own content; a [ListCard],
+  /// whose rows run edge to edge, passes the horizontal part too.
+  final EdgeInsetsGeometry padding;
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final s = service;
     final claim = s.insurance?.claimNumber ?? '';
     final price = portalPriceOf(s);
     final at = s.createdAt ?? s.timeline.createdAt;
+    // The icon takes the state's colour, so a list reads at a glance: blue on
+    // the road, green done, grey cancelled.
+    final tone = switch (s.status) {
+      ServiceStatus.completed || ServiceStatus.closed => palette.success,
+      ServiceStatus.cancelled => palette.textFaint,
+      _ => palette.info,
+    };
 
-    return ListTile(
+    return InkWell(
       key: Key('portal-service-${s.id}'),
-      contentPadding: EdgeInsets.zero,
       onTap: onTap,
-      leading: const Icon(Icons.local_shipping_outlined),
-      title: Text(
-        [
-          if (claim.isNotEmpty) 'Siniestro $claim' else s.code,
-          if (s.vehicle.plate.isNotEmpty) s.vehicle.plate,
-          if ((s.insurance?.insuredName ?? '').isNotEmpty) s.insurance!.insuredName,
-        ].join(' · '),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        [
-          if (claim.isNotEmpty) s.code,
-          if (at != null) DoTime.dateAndTime(at),
-          s.pickup.displayAddress,
-        ].join(' · '),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (price != null) ...[
-            Text(price.formatDOP, style: text.titleSmall),
+      child: Padding(
+        padding: padding,
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: tone.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.local_shipping_outlined, size: 20, color: tone),
+            ),
             const SizedBox(width: Insets.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    [
+                      if (claim.isNotEmpty) 'Siniestro $claim' else s.code,
+                      if (s.vehicle.plate.isNotEmpty) s.vehicle.plate,
+                      if ((s.insurance?.insuredName ?? '').isNotEmpty)
+                        s.insurance!.insuredName,
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.titleSmall,
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    [
+                      if (claim.isNotEmpty) s.code,
+                      if (at != null) DoTime.dateAndTime(at),
+                      s.pickup.displayAddress,
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: palette.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            if (price != null) ...[
+              const SizedBox(width: Insets.md),
+              Text(price.formatDOP, style: text.titleSmall),
+            ],
+            const SizedBox(width: Insets.md),
+            // A fixed slot, so the chips stack in a column however long the
+            // word in each one is.
+            SizedBox(
+              width: 128,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: StatusChip(
+                  s.status,
+                  compact: true,
+                  label: s.status.officeLabel,
+                ),
+              ),
+            ),
+            if (onTap != null) ...[
+              const SizedBox(width: Insets.sm),
+              Icon(Icons.chevron_right, size: 20, color: palette.textFaint),
+            ],
           ],
-          StatusChip(s.status, compact: true, label: s.status.officeLabel),
-        ],
+        ),
       ),
     );
   }
@@ -472,7 +528,8 @@ int? portalPriceOf(Service s) {
   if (s.status == ServiceStatus.completed || s.status == ServiceStatus.closed) {
     return s.billing?.subtotalCents ?? s.quote.subtotalCents;
   }
-  if (s.status == ServiceStatus.cancelled && (s.cancellation?.hasFee ?? false)) {
+  if (s.status == ServiceStatus.cancelled &&
+      (s.cancellation?.hasFee ?? false)) {
     return s.cancellation!.feeCents;
   }
   return null;

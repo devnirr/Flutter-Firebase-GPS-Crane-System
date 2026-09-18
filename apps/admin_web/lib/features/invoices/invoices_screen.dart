@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import '../shared/form_dialog.dart';
+import '../shared/page_parts.dart';
 import '../shared/toast.dart';
 import 'file_saver.dart';
 import 'invoice_view.dart';
@@ -31,12 +33,12 @@ enum _Filter {
   final String label;
 
   bool matches(InsurerInvoice i, DateTime now) => switch (this) {
-        _Filter.all => true,
-        _Filter.issued => i.isIssued,
-        _Filter.overdue => i.isOverdueAt(now),
-        _Filter.paid => i.isPaid,
-        _Filter.voided => i.isVoided,
-      };
+    _Filter.all => true,
+    _Filter.issued => i.isIssued,
+    _Filter.overdue => i.isOverdueAt(now),
+    _Filter.paid => i.isPaid,
+    _Filter.voided => i.isVoided,
+  };
 }
 
 class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
@@ -47,7 +49,9 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
     final now = DateTime.now().toUtc();
     final company = insurers.where((i) => i.id == _insurerId).firstOrNull?.name;
     final name = InvoiceWorkbook.listFileName(now);
-    final saved = ref.read(fileSaverProvider).save(
+    final saved = ref
+        .read(fileSaverProvider)
+        .save(
           InvoiceWorkbook.list(
             shown,
             subtitle: [
@@ -75,19 +79,26 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
     final isAdmin = ref.watch(currentRoleProvider).value == UserRole.admin;
     final invoicesAsync = ref.watch(insurerInvoicesProvider(''));
     final invoices = invoicesAsync.value ?? const <InsurerInvoice>[];
-    final toInvoice = ref.watch(servicesToInvoiceProvider).value ?? const <Service>[];
+    final toInvoice =
+        ref.watch(servicesToInvoiceProvider).value ?? const <Service>[];
     final insurers = ref.watch(allInsurersProvider).value ?? const <Insurer>[];
     final sequence = ref.watch(creditNcfSequenceProvider).value;
     final now = DateTime.now().toUtc();
 
     final issued = invoices.where((i) => i.isIssued).toList();
     final overdue = invoices.where((i) => i.isOverdueAt(now)).toList();
-    int sum(Iterable<InsurerInvoice> list) => list.fold(0, (s, i) => s + i.totalCents);
-    final waitingCents = toInvoice.fold<int>(0, (s, x) => s + (_billable(x) ?? 0));
+    int sum(Iterable<InsurerInvoice> list) =>
+        list.fold(0, (s, i) => s + i.totalCents);
+    final waitingCents = toInvoice.fold<int>(
+      0,
+      (s, x) => s + (_billable(x) ?? 0),
+    );
 
     final shown = [
       for (final i in invoices)
-        if (_filter.matches(i, now) && (_insurerId.isEmpty || i.insurerId == _insurerId)) i,
+        if (_filter.matches(i, now) &&
+            (_insurerId.isEmpty || i.insurerId == _insurerId))
+          i,
     ];
 
     return ListView(
@@ -136,85 +147,63 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
           NcfSequenceNotice(sequence: sequence, now: now),
         ],
         const SizedBox(height: Insets.xl),
-        Wrap(
-          spacing: Insets.lg,
-          runSpacing: Insets.lg,
+        StatRow(
           children: [
-            _Kpi(
+            StatTile(
               key: const Key('kpi-receivable'),
+              icon: Icons.request_quote_outlined,
               label: 'Por cobrar',
               value: sum(issued).formatDOP,
-              detail: '${issued.length} factura(s)',
+              detail: _count(issued.length, 'factura', 'facturas'),
+              color: issued.isEmpty ? null : palette.info,
             ),
-            _Kpi(
+            StatTile(
               key: const Key('kpi-overdue'),
+              icon: Icons.warning_amber_rounded,
               label: 'Vencidas',
               value: sum(overdue).formatDOP,
-              detail: '${overdue.length} factura(s)',
+              detail: _count(overdue.length, 'factura', 'facturas'),
               color: overdue.isEmpty ? null : palette.danger,
             ),
-            _Kpi(
+            StatTile(
               key: const Key('kpi-to-invoice'),
+              icon: Icons.pending_actions_outlined,
               label: 'Por facturar',
               value: ZonePricing.withItbis(waitingCents).totalCents.formatDOP,
-              detail: '${toInvoice.length} servicio(s), ITBIS incluido',
+              detail:
+                  '${_count(toInvoice.length, 'servicio', 'servicios')}, '
+                  'ITBIS incluido',
             ),
-            _Kpi(
+            StatTile(
               key: const Key('kpi-next-ncf'),
+              icon: Icons.pin_outlined,
               label: 'Próximo NCF',
               value: sequence == null ? '—' : (Ncf.next(sequence) ?? '—'),
               detail: sequence == null
                   ? ''
                   : sequence.isTest
-                      ? 'Secuencia de prueba'
-                      : '${sequence.remaining} disponible(s)',
+                  ? 'Secuencia de prueba'
+                  : '${sequence.remaining} disponible(s)',
+              color: sequence != null && sequence.isTest
+                  ? palette.warning
+                  : null,
             ),
           ],
         ),
         if (toInvoice.isNotEmpty) ...[
           const SizedBox(height: Insets.xl),
-          Text('Por facturar', style: text.titleMedium),
-          const SizedBox(height: Insets.sm),
-          FloatingCard(
-            child: Column(
-              children: [
-                for (final group in _byCompany(toInvoice, insurers))
-                  ListTile(
-                    key: Key('to-invoice-${group.insurerId}'),
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.shield_outlined),
-                    title: Text(group.name),
-                    subtitle: Text(
-                      '${group.count} servicio(s) terminados, desde el '
-                      '${group.oldest == null ? '—' : DoTime.fullDate(group.oldest!)}',
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '${group.subtotalCents.formatDOP} + ITBIS',
-                          style: text.titleSmall,
-                        ),
-                        if (isAdmin) ...[
-                          const SizedBox(width: Insets.md),
-                          TextButton(
-                            key: Key('invoice-now-${group.insurerId}'),
-                            onPressed: () => showDialog<void>(
-                              context: context,
-                              builder: (_) =>
-                                  GenerateInvoicesDialog(insurerId: group.insurerId),
-                            ),
-                            child: const Text('Facturar'),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-              ],
-            ),
+          ListCard(
+            title: 'Por facturar',
+            trailing: _CountChip(_byCompany(toInvoice, insurers).length),
+            children: [
+              for (final group in _byCompany(toInvoice, insurers))
+                _ToInvoiceRow(group: group, canAct: isAdmin),
+            ],
           ),
         ],
         const SizedBox(height: Insets.xl),
+        // The filters on the left, what can be done with the result on the
+        // right: the bar reads as "which invoices", then "and then".
         Row(
           children: [
             Expanded(
@@ -232,6 +221,43 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
                 ],
               ),
             ),
+            SizedBox(
+              width: 260,
+              child: DropdownButtonFormField<String>(
+                key: const Key('invoice-insurer-filter'),
+                initialValue: _insurerId,
+                isExpanded: true,
+                // No floating label: "Todas las aseguradoras" says what the
+                // field is about on its own, and the label sat over the
+                // border like a second heading.
+                // Brought down to the export button's 44 px, so the two
+                // controls at the end of the bar sit as one row.
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: Insets.md,
+                    vertical: Insets.sm + 2,
+                  ),
+                  prefixIcon: Icon(Icons.shield_outlined, size: 18),
+                ),
+                items: [
+                  const DropdownMenuItem(
+                    value: '',
+                    child: Text('Todas las aseguradoras'),
+                  ),
+                  for (final insurer in insurers)
+                    DropdownMenuItem(
+                      value: insurer.id,
+                      child: Text(
+                        insurer.name,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _insurerId = v ?? ''),
+              ),
+            ),
+            const SizedBox(width: Insets.sm),
             OutlinedButton.icon(
               key: const Key('export-invoices-excel'),
               onPressed: shown.isEmpty ? null : () => _export(shown, insurers),
@@ -239,56 +265,174 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
               icon: const Icon(Icons.table_view_outlined),
               label: const Text('Exportar Excel'),
             ),
-            const SizedBox(width: Insets.md),
-            SizedBox(
-              width: 280,
-              child: DropdownButtonFormField<String>(
-                key: const Key('invoice-insurer-filter'),
-                initialValue: _insurerId,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Aseguradora'),
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('Todas')),
-                  for (final insurer in insurers)
-                    DropdownMenuItem(
-                      value: insurer.id,
-                      child: Text(insurer.name, overflow: TextOverflow.ellipsis),
-                    ),
-                ],
-                onChanged: (v) => setState(() => _insurerId = v ?? ''),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: Insets.md),
-        FloatingCard(
-          child: switch (invoicesAsync) {
-            AsyncValue(:final error?) when !invoicesAsync.hasValue => Text(
-                error is Failure ? error.userMessage : 'No pudimos cargar las facturas.',
-                style: text.bodyMedium?.copyWith(color: palette.danger),
+        switch (invoicesAsync) {
+          AsyncValue(:final error?) when !invoicesAsync.hasValue =>
+            FloatingCard(
+              child: EmptyState(
+                icon: Icons.error_outline,
+                tone: EmptyStateTone.error,
+                title: 'No pudimos cargar las facturas',
+                message: error is Failure
+                    ? error.userMessage
+                    : 'Revisa tu conexión e intenta de nuevo.',
               ),
-            _ when shown.isEmpty => Text(
-                invoicesAsync.isLoading
-                    ? 'Cargando…'
-                    : invoices.isEmpty
-                        ? 'Todavía no hay facturas.'
-                        : 'Ninguna factura coincide con el filtro.',
-                key: const Key('invoices-empty'),
-                style: text.bodyMedium?.copyWith(color: palette.textMuted),
-              ),
-            _ => Column(
-                children: [
-                  for (final invoice in shown)
-                    InvoiceTile(
-                      invoice: invoice,
-                      now: now,
-                      onTap: () => context.go(Routes.invoiceFor(invoice.id)),
-                    ),
-                ],
-              ),
-          },
-        ),
+            ),
+          _ when shown.isEmpty && invoicesAsync.isLoading => const FloatingCard(
+            child: Padding(
+              padding: EdgeInsets.all(Insets.xl),
+              child: BrandLoader(),
+            ),
+          ),
+          _ when shown.isEmpty => FloatingCard(
+            child: invoices.isEmpty
+                ? EmptyState(
+                    key: const Key('invoices-empty'),
+                    icon: Icons.receipt_long_outlined,
+                    title: 'Todavía no hay facturas',
+                    message:
+                        'Se emiten solas el día 1 de cada mes. También puedes '
+                        'generarlas ahora.',
+                    actionLabel: isAdmin ? 'Generar facturas' : null,
+                    onAction: isAdmin
+                        ? () => showDialog<void>(
+                            context: context,
+                            builder: (_) => const GenerateInvoicesDialog(),
+                          )
+                        : null,
+                  )
+                : const EmptyState(
+                    key: Key('invoices-empty'),
+                    icon: Icons.filter_alt_off_outlined,
+                    title: 'Ninguna factura coincide',
+                    message: 'Prueba con otro estado o con otra aseguradora.',
+                  ),
+          ),
+          _ => ListCard(
+            children: [
+              for (final invoice in shown)
+                InvoiceTile(
+                  invoice: invoice,
+                  now: now,
+                  onTap: () => context.go(Routes.invoiceFor(invoice.id)),
+                ),
+            ],
+          ),
+        },
       ],
+    );
+  }
+}
+
+/// "1 factura", "3 facturas": the count and the word agreeing, which
+/// "factura(s)" never did.
+String _count(int n, String one, String many) => '$n ${n == 1 ? one : many}';
+
+/// A small grey count beside a card's title.
+class _CountChip extends StatelessWidget {
+  const _CountChip(this.count);
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: Insets.sm, vertical: 2),
+      decoration: BoxDecoration(
+        color: palette.surfaceSubtle,
+        borderRadius: Corners.brSm,
+      ),
+      child: Text(
+        '$count',
+        style: Theme.of(context).textTheme.labelMedium
+            ?.copyWith(color: palette.textMuted),
+      ),
+    );
+  }
+}
+
+/// One company with finished work nobody has invoiced yet.
+class _ToInvoiceRow extends StatelessWidget {
+  const _ToInvoiceRow({required this.group, required this.canAct});
+
+  final _Group group;
+  final bool canAct;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+    final since = group.oldest == null
+        ? ''
+        : ', desde el ${DoTime.fullDate(group.oldest!)}';
+
+    return Padding(
+      key: Key('to-invoice-${group.insurerId}'),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.lg,
+        vertical: Insets.md,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: palette.brand.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.shield_outlined, size: 20, color: palette.brand),
+          ),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(group.name, style: text.titleSmall),
+                Text(
+                  _count(
+                        group.count,
+                        'servicio terminado',
+                        'servicios terminados',
+                      ) +
+                      since,
+                  style: text.bodySmall?.copyWith(color: palette.textMuted),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(group.subtotalCents.formatDOP, style: text.titleSmall),
+              Text(
+                '+ ITBIS',
+                style: text.bodySmall?.copyWith(color: palette.textMuted),
+              ),
+            ],
+          ),
+          if (canAct) ...[
+            const SizedBox(width: Insets.lg),
+            OutlinedButton.icon(
+              key: Key('invoice-now-${group.insurerId}'),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) =>
+                    GenerateInvoicesDialog(insurerId: group.insurerId),
+              ),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 40),
+                padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+              ),
+              icon: const Icon(Icons.request_quote_outlined, size: 18),
+              label: const Text('Facturar'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -321,58 +465,31 @@ List<_Group> _byCompany(List<Service> services, List<Insurer> insurers) {
     final oldest = g?.oldest;
     groups[s.insurerId] = (
       insurerId: s.insurerId,
-      name: names[s.insurerId] ?? (s.insurerName.isEmpty ? s.insurerId : s.insurerName),
+      name:
+          names[s.insurerId] ??
+          (s.insurerName.isEmpty ? s.insurerId : s.insurerName),
       count: (g?.count ?? 0) + 1,
       subtotalCents: (g?.subtotalCents ?? 0) + (_billable(s) ?? 0),
-      oldest: oldest == null || (at != null && at.isBefore(oldest)) ? at ?? oldest : oldest,
+      oldest: oldest == null || (at != null && at.isBefore(oldest))
+          ? at ?? oldest
+          : oldest,
     );
   }
   return groups.values.toList()..sort((a, b) => a.name.compareTo(b.name));
 }
 
-class _Kpi extends StatelessWidget {
-  const _Kpi({
-    required this.label,
-    required this.value,
-    this.detail = '',
-    this.color,
-    super.key,
-  });
-
-  final String label;
-  final String value;
-  final String detail;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final palette = context.palette;
-    return SizedBox(
-      width: 250,
-      child: FloatingCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            FieldLabel(label),
-            const SizedBox(height: Insets.xs),
-            Text(value, style: text.headlineSmall?.copyWith(color: color)),
-            if (detail.isNotEmpty)
-              Text(detail, style: text.bodySmall?.copyWith(color: palette.textMuted)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// One invoice in a list.
+/// One invoice in a list: its number, whose it is, what it covers, the
+/// amount and where it stands, and a chevron because the row opens it.
 class InvoiceTile extends StatelessWidget {
   const InvoiceTile({
     required this.invoice,
     required this.now,
     this.onTap,
     this.showCompany = true,
+    this.padding = const EdgeInsets.symmetric(
+      horizontal: Insets.lg,
+      vertical: Insets.md,
+    ),
     super.key,
   });
 
@@ -381,47 +498,107 @@ class InvoiceTile extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showCompany;
 
+  /// Edge to edge in a [ListCard]; a card that pads its own content passes
+  /// only the vertical part.
+  final EdgeInsetsGeometry padding;
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final palette = context.palette;
     final i = invoice;
-    final period =
-        InvoicePeriod.isKey(i.periodKey) ? InvoicePeriod.parse(i.periodKey).title : i.periodKey;
-    return ListTile(
+    final period = InvoicePeriod.isKey(i.periodKey)
+        ? InvoicePeriod.parse(i.periodKey).title
+        : i.periodKey;
+    final tone = i.isVoided
+        ? palette.textFaint
+        : i.isOverdueAt(now)
+        ? palette.danger
+        : i.isPaid
+        ? palette.success
+        : palette.info;
+
+    return InkWell(
       key: Key('invoice-row-${i.id}'),
-      contentPadding: EdgeInsets.zero,
       onTap: onTap,
-      leading: const Icon(Icons.receipt_long_outlined),
-      title: Row(
-        children: [
-          Flexible(
-            child: Text(
-              [i.ncf, if (showCompany) i.insurerName].join(' · '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+      child: Padding(
+        padding: padding,
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: tone.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.receipt_long_outlined, size: 20, color: tone),
             ),
-          ),
-          if (i.isTestNcf) ...[
-            const SizedBox(width: Insets.sm),
-            const NcfTestChip(),
+            const SizedBox(width: Insets.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(i.ncf, style: text.titleSmall),
+                      if (showCompany) ...[
+                        Text(
+                          '  ·  ',
+                          style: text.bodyMedium?.copyWith(
+                            color: palette.textFaint,
+                          ),
+                        ),
+                        Flexible(
+                          child: Text(
+                            i.insurerName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: text.bodyMedium,
+                          ),
+                        ),
+                      ],
+                      if (i.isTestNcf) ...[
+                        const SizedBox(width: Insets.sm),
+                        const NcfTestChip(),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    [
+                      period,
+                      _count(i.lines.length, 'servicio', 'servicios'),
+                      if (i.dueAt != null && i.isIssued)
+                        'vence ${InvoiceDocument.day(i.dueAt)}',
+                      if (i.isPaid && i.paymentReference.isNotEmpty)
+                        'Ref. ${i.paymentReference}',
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: palette.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: Insets.md),
+            Text(i.totalCents.formatDOP, style: text.titleSmall),
+            const SizedBox(width: Insets.md),
+            // A fixed slot so the chips stack in a column however long the
+            // word in each one is.
+            SizedBox(
+              width: 104,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: InvoiceStatusChip(invoice: i, now: now),
+              ),
+            ),
+            if (onTap != null) ...[
+              const SizedBox(width: Insets.sm),
+              Icon(Icons.chevron_right, size: 20, color: palette.textFaint),
+            ],
           ],
-        ],
-      ),
-      subtitle: Text(
-        [
-          period,
-          '${i.lines.length} servicio(s)',
-          if (i.dueAt != null && i.isIssued) 'vence ${InvoiceDocument.day(i.dueAt)}',
-          if (i.isPaid && i.paymentReference.isNotEmpty) 'Ref. ${i.paymentReference}',
-        ].join(' · '),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(i.totalCents.formatDOP, style: text.titleSmall),
-          const SizedBox(width: Insets.md),
-          InvoiceStatusChip(invoice: i, now: now),
-        ],
+        ),
       ),
     );
   }
@@ -451,18 +628,23 @@ class NcfSequenceNotice extends StatelessWidget {
         tone: NoticeTone.error,
         message: problem,
         actionLabel: linkToSettings ? 'Registrar secuencia' : null,
-        onAction: linkToSettings ? () => context.go(Routes.fiscalSettings) : null,
+        onAction: linkToSettings
+            ? () => context.go(Routes.fiscalSettings)
+            : null,
       );
     }
     if (sequence.isTest) {
       return InlineNotice(
         key: const Key('ncf-test-mode'),
-        message: 'Modo prueba: las facturas salen con NCF de prueba '
+        message:
+            'Modo prueba: las facturas salen con NCF de prueba '
             '(${Ncf.next(sequence) ?? ''} en adelante) y quedan marcadas como tales. '
             'Cuando la DGII autorice la secuencia real, regístrala en '
             'Comprobantes (NCF) y las siguientes facturas la usarán.',
         actionLabel: linkToSettings ? 'Comprobantes (NCF)' : null,
-        onAction: linkToSettings ? () => context.go(Routes.fiscalSettings) : null,
+        onAction: linkToSettings
+            ? () => context.go(Routes.fiscalSettings)
+            : null,
       );
     }
     final expiresOn = sequence.expiresOn;
@@ -491,11 +673,15 @@ class GenerateInvoicesDialog extends ConsumerStatefulWidget {
   final String? insurerId;
 
   @override
-  ConsumerState<GenerateInvoicesDialog> createState() => _GenerateInvoicesDialogState();
+  ConsumerState<GenerateInvoicesDialog> createState() =>
+      _GenerateInvoicesDialogState();
 }
 
-class _GenerateInvoicesDialogState extends ConsumerState<GenerateInvoicesDialog> {
-  late final List<InvoicePeriod> _periods = InvoicePeriod.recent(DateTime.now().toUtc());
+class _GenerateInvoicesDialogState
+    extends ConsumerState<GenerateInvoicesDialog> {
+  late final List<InvoicePeriod> _periods = InvoicePeriod.recent(
+    DateTime.now().toUtc(),
+  );
   late InvoicePeriod _period = _periods[1];
   late String _insurerId = widget.insurerId ?? '';
   var _busy = false;
@@ -506,7 +692,9 @@ class _GenerateInvoicesDialogState extends ConsumerState<GenerateInvoicesDialog>
       _busy = true;
       _error = null;
     });
-    final result = await ref.read(functionsGatewayProvider).generateInsurerInvoices(
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .generateInsurerInvoices(
           insurerId: _insurerId.isEmpty ? null : _insurerId,
           periodKey: _period.key,
         );
@@ -516,7 +704,9 @@ class _GenerateInvoicesDialogState extends ConsumerState<GenerateInvoicesDialog>
         final toast = Toaster.of(context);
         Navigator.of(context).pop();
         final made = value.created.length;
-        final test = value.created.any((c) => c.isTestNcf) ? ' con NCF de prueba' : '';
+        final test = value.created.any((c) => c.isTestNcf)
+            ? ' con NCF de prueba'
+            : '';
         toast.show(
           [
             if (made == 0)
@@ -531,8 +721,8 @@ class _GenerateInvoicesDialogState extends ConsumerState<GenerateInvoicesDialog>
           tone: value.failed.isNotEmpty
               ? ToastTone.warning
               : made == 0
-                  ? ToastTone.info
-                  : ToastTone.success,
+              ? ToastTone.info
+              : ToastTone.success,
         );
       case Err(:final failure):
         setState(() {
@@ -548,89 +738,121 @@ class _GenerateInvoicesDialogState extends ConsumerState<GenerateInvoicesDialog>
     final palette = context.palette;
     final current = _periods.first;
 
-    return AlertDialog(
-      title: const Text('Generar facturas'),
-      content: SizedBox(
-        width: 460,
+    return Dialog(
+      backgroundColor: palette.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DropdownButtonFormField<InvoicePeriod>(
-              key: const Key('invoice-period'),
-              initialValue: _period,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Mes'),
-              items: [
-                for (final p in _periods)
-                  DropdownMenuItem(
-                    value: p,
-                    child: Text(p == current ? '${p.title} (en curso)' : p.title),
-                  ),
-              ],
-              onChanged: (p) => setState(() => _period = p ?? _period),
+            FormDialogHeader(
+              icon: Icons.request_quote_outlined,
+              title: 'Generar facturas',
+              subtitle: 'Lo que la corrida del día 1 emitiría, emitido ahora.',
+              onClose: _busy ? null : () => Navigator.of(context).pop(),
             ),
-            const SizedBox(height: Insets.md),
-            DropdownButtonFormField<String>(
-              key: const Key('invoice-insurer'),
-              initialValue: _insurerId,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Aseguradora'),
-              items: [
-                const DropdownMenuItem(value: '', child: Text('Todas')),
-                for (final insurer in insurers)
-                  DropdownMenuItem(
-                    value: insurer.id,
-                    child: Text(insurer.name, overflow: TextOverflow.ellipsis),
-                  ),
-              ],
-              onChanged: (v) => setState(() => _insurerId = v ?? ''),
-            ),
-            const SizedBox(height: Insets.md),
-            Text(
-              _period == current
-                  ? 'Se factura lo terminado hasta ahora. Lo que termine después '
-                      'irá en la factura del próximo mes.'
-                  : 'Se factura lo terminado hasta el final de ${_period.label} '
-                      'que no esté facturado todavía, incluidos servicios de meses '
-                      'anteriores que hayan quedado pendientes.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: palette.textMuted),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: Insets.md),
-              InlineNotice(
-                key: const Key('generate-invoices-error'),
-                tone: NoticeTone.error,
-                message: _error!,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                Insets.xxl,
+                Insets.xl,
+                Insets.xxl,
+                Insets.lg,
               ),
-            ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LabeledField(
+                    label: 'Mes',
+                    child: DropdownButtonFormField<InvoicePeriod>(
+                      key: const Key('invoice-period'),
+                      initialValue: _period,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(
+                          Icons.calendar_month_outlined,
+                          size: 18,
+                        ),
+                      ),
+                      items: [
+                        for (final p in _periods)
+                          DropdownMenuItem(
+                            value: p,
+                            child: Text(
+                              p == current ? '${p.title} (en curso)' : p.title,
+                            ),
+                          ),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (p) => setState(() => _period = p ?? _period),
+                    ),
+                  ),
+                  LabeledField(
+                    label: 'Aseguradora',
+                    child: DropdownButtonFormField<String>(
+                      key: const Key('invoice-insurer'),
+                      initialValue: _insurerId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.shield_outlined, size: 18),
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('Todas las aseguradoras'),
+                        ),
+                        for (final insurer in insurers)
+                          DropdownMenuItem(
+                            value: insurer.id,
+                            child: Text(
+                              insurer.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (v) => setState(() => _insurerId = v ?? ''),
+                    ),
+                  ),
+                  // What this run will pick up, said before it is run: the
+                  // month in the field is an end date, not a window, and
+                  // that is the part nobody would guess.
+                  InlineNotice(
+                    tone: NoticeTone.info,
+                    icon: Icons.info_outline,
+                    message: _period == current
+                        ? 'Se factura lo terminado hasta ahora. Lo que termine '
+                              'después irá en la factura del próximo mes.'
+                        : 'Se factura lo terminado hasta el final de '
+                              '${_period.label} que no esté facturado todavía, '
+                              'incluidos servicios de meses anteriores que hayan '
+                              'quedado pendientes.',
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: Insets.md),
+                    InlineNotice(
+                      key: const Key('generate-invoices-error'),
+                      tone: NoticeTone.error,
+                      icon: Icons.error_outline,
+                      message: _error!,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            FormDialogFooter(
+              submitting: _busy,
+              label: 'Emitir facturas',
+              submitKey: const Key('confirm-generate-invoices'),
+              onCancel: () => Navigator.of(context).pop(),
+              onSubmit: _generate,
+            ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancelar'),
-        ),
-        ElevatedButton(
-          key: const Key('confirm-generate-invoices'),
-          onPressed: _busy ? null : _generate,
-          style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
-          child: _busy
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: BrandColors.white,
-                  ),
-                )
-              : const Text('Emitir facturas'),
-        ),
-      ],
     );
   }
 }
@@ -649,41 +871,45 @@ class InvoiceDetailScreen extends ConsumerWidget {
 
     return switch (invoice) {
       AsyncValue(:final value?) => InsurerInvoiceView(
-          invoice: value,
-          onBack: () => context.go(Routes.invoices),
-          actions: [
-            if (isAdmin && value.isIssued) ...[
-              TextButton(
-                key: const Key('void-invoice'),
-                onPressed: () => showDialog<void>(
-                  context: context,
-                  builder: (_) => _InvoiceActionDialog(invoice: value, voiding: true),
-                ),
-                style: TextButton.styleFrom(foregroundColor: palette.danger),
-                child: const Text('Anular'),
+        invoice: value,
+        onBack: () => context.go(Routes.invoices),
+        actions: [
+          if (isAdmin && value.isIssued) ...[
+            TextButton(
+              key: const Key('void-invoice'),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) =>
+                    _InvoiceActionDialog(invoice: value, voiding: true),
               ),
-              ElevatedButton.icon(
-                key: const Key('pay-invoice'),
-                onPressed: () => showDialog<void>(
-                  context: context,
-                  builder: (_) => _InvoiceActionDialog(invoice: value, voiding: false),
-                ),
-                style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
-                icon: const Icon(Icons.payments_outlined),
-                label: const Text('Registrar cobro'),
+              style: TextButton.styleFrom(foregroundColor: palette.danger),
+              child: const Text('Anular'),
+            ),
+            ElevatedButton.icon(
+              key: const Key('pay-invoice'),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) =>
+                    _InvoiceActionDialog(invoice: value, voiding: false),
               ),
-            ],
+              style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
+              icon: const Icon(Icons.payments_outlined),
+              label: const Text('Registrar cobro'),
+            ),
           ],
-        ),
-      AsyncValue(isLoading: true) => const Center(child: CircularProgressIndicator()),
+        ],
+      ),
+      AsyncValue(isLoading: true) => const Center(
+        child: CircularProgressIndicator(),
+      ),
       _ => EmptyState(
-          key: const Key('invoice-missing'),
-          title: 'Factura no encontrada',
-          message: 'Esa factura no existe.',
-          icon: Icons.search_off,
-          actionLabel: 'Ver facturas',
-          onAction: () => context.go(Routes.invoices),
-        ),
+        key: const Key('invoice-missing'),
+        title: 'Factura no encontrada',
+        message: 'Esa factura no existe.',
+        icon: Icons.search_off,
+        actionLabel: 'Ver facturas',
+        onAction: () => context.go(Routes.invoices),
+      ),
     };
   }
 }
@@ -695,7 +921,8 @@ class _InvoiceActionDialog extends ConsumerStatefulWidget {
   final bool voiding;
 
   @override
-  ConsumerState<_InvoiceActionDialog> createState() => _InvoiceActionDialogState();
+  ConsumerState<_InvoiceActionDialog> createState() =>
+      _InvoiceActionDialogState();
 }
 
 class _InvoiceActionDialogState extends ConsumerState<_InvoiceActionDialog> {
@@ -714,9 +941,11 @@ class _InvoiceActionDialogState extends ConsumerState<_InvoiceActionDialog> {
   Future<void> _submit() async {
     final value = _main.text.trim();
     if (value.length < 3) {
-      setState(() => _error = widget.voiding
-          ? 'Escribe por qué se anula la factura.'
-          : 'Escribe el número de la transferencia.');
+      setState(
+        () => _error = widget.voiding
+            ? 'Escribe por qué se anula la factura.'
+            : 'Escribe el número de la transferencia.',
+      );
       return;
     }
     setState(() {
@@ -725,7 +954,10 @@ class _InvoiceActionDialogState extends ConsumerState<_InvoiceActionDialog> {
     });
     final gateway = ref.read(functionsGatewayProvider);
     final result = widget.voiding
-        ? await gateway.voidInsurerInvoice(invoiceId: widget.invoice.id, reason: value)
+        ? await gateway.voidInsurerInvoice(
+            invoiceId: widget.invoice.id,
+            reason: value,
+          )
         : await gateway.markInsurerInvoicePaid(
             invoiceId: widget.invoice.id,
             reference: value,
@@ -754,7 +986,11 @@ class _InvoiceActionDialogState extends ConsumerState<_InvoiceActionDialog> {
     final palette = context.palette;
     final i = widget.invoice;
     return AlertDialog(
-      title: Text(widget.voiding ? 'Anular factura ${i.ncf}' : 'Registrar cobro de ${i.ncf}'),
+      title: Text(
+        widget.voiding
+            ? 'Anular factura ${i.ncf}'
+            : 'Registrar cobro de ${i.ncf}',
+      ),
       content: SizedBox(
         width: 460,
         child: Column(
@@ -764,17 +1000,21 @@ class _InvoiceActionDialogState extends ConsumerState<_InvoiceActionDialog> {
             Text(
               widget.voiding
                   ? 'Los ${i.lines.length} servicio(s) vuelven a quedar por facturar '
-                      'y saldrán en la próxima factura, con un NCF nuevo. El NCF '
-                      '${i.ncf} queda usado${i.isTestNcf ? '' : ' y debe reportarse como anulado en el formato 608 de la DGII'}.'
+                        'y saldrán en la próxima factura, con un NCF nuevo. El NCF '
+                        '${i.ncf} queda usado${i.isTestNcf ? '' : ' y debe reportarse como anulado en el formato 608 de la DGII'}.'
                   : '${i.insurerName} · ${i.totalCents.formatDOP}',
             ),
             const SizedBox(height: Insets.lg),
             TextField(
-              key: Key(widget.voiding ? 'invoice-void-reason' : 'invoice-reference'),
+              key: Key(
+                widget.voiding ? 'invoice-void-reason' : 'invoice-reference',
+              ),
               controller: _main,
               autofocus: true,
               decoration: InputDecoration(
-                labelText: widget.voiding ? 'Por qué se anula' : 'Número de transferencia',
+                labelText: widget.voiding
+                    ? 'Por qué se anula'
+                    : 'Número de transferencia',
               ),
             ),
             if (!widget.voiding) ...[
@@ -808,7 +1048,9 @@ class _InvoiceActionDialogState extends ConsumerState<_InvoiceActionDialog> {
             minimumSize: const Size(0, 44),
             backgroundColor: widget.voiding ? palette.danger : null,
           ),
-          child: Text(widget.voiding ? 'Confirmar anulación' : 'Confirmar cobro'),
+          child: Text(
+            widget.voiding ? 'Confirmar anulación' : 'Confirmar cobro',
+          ),
         ),
       ],
     );

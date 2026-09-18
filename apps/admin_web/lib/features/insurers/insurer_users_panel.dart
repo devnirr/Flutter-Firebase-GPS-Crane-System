@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../shared/form_dialog.dart';
+import '../shared/page_parts.dart';
 import '../shared/toast.dart';
 
 /// A company's people: who they are, their role, whether they may sign in.
@@ -56,100 +57,245 @@ class InsurerUsersPanel extends ConsumerWidget {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
     final members = ref.watch(insurerMembersProvider(insurerId)).value;
+    final me = ref.watch(currentUserIdProvider);
 
-    return FloatingCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    // By name only. Sorting the switched-off to the bottom moved a row out
+    // from under the pointer the moment its switch was flipped.
+    final sorted = members == null
+        ? null
+        : (members.toList()..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          ));
+
+    return ListCard(
+      title: 'Personas con acceso',
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Expanded(child: Text('Usuarios', style: text.titleMedium)),
-              if (canEdit)
-                ElevatedButton.icon(
-                  key: const Key('add-insurer-user'),
-                  onPressed: () => showDialog<void>(
-                    context: context,
-                    // A tap outside closes an untouched form and asks before
-                    // throwing away a filled-in one; see [FormDialogScope].
-                    builder: (_) => _AddUserDialog(insurerId: insurerId),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(0, 40),
-                  ),
-                  icon: const Icon(Icons.person_add_alt),
-                  label: const Text('Agregar usuario'),
-                ),
-            ],
-          ),
-          const SizedBox(height: Insets.md),
-          if (members == null)
-            const BrandLoader()
-          else if (members.isEmpty)
+          if (sorted != null && sorted.isNotEmpty)
             Text(
-              'Esta aseguradora todavía no tiene usuarios.',
-              style: text.bodyMedium?.copyWith(color: palette.textMuted),
-            )
-          else
-            for (final m in members)
-              ListTile(
-                key: Key('insurer-user-${m.uid}'),
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(
-                  backgroundColor: m.active
-                      ? palette.brandTint
-                      : palette.surfaceSubtle,
-                  child: Text(m.name.isEmpty ? '?' : m.name[0]),
-                ),
-                title: Text(m.name),
-                subtitle: Text(
-                  [
-                    m.email,
-                    m.role.label,
-                    if (!m.active) 'Desactivado',
-                  ].join(' · '),
-                ),
-                // Nobody demotes or switches off themselves: the server
-                // refuses it, so the controls are not offered.
-                trailing: !canEdit
-                    ? null
-                    : m.uid == ref.watch(currentUserIdProvider)
-                    ? Text(
-                        'Tú',
-                        key: Key('insurer-user-self-${m.uid}'),
-                        style: text.bodySmall?.copyWith(
-                          color: palette.textMuted,
-                        ),
-                      )
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          PopupMenuButton<InsurerRole>(
-                            key: Key('insurer-user-role-${m.uid}'),
-                            tooltip: 'Cambiar rol',
-                            onSelected: (role) =>
-                                _change(context, ref, m, role: role),
-                            itemBuilder: (_) => [
-                              for (final role in [
-                                InsurerRole.manager,
-                                InsurerRole.operator,
-                              ])
-                                PopupMenuItem(
-                                  value: role,
-                                  enabled: role != m.role,
-                                  child: Text(role.label),
-                                ),
-                            ],
-                            icon: const Icon(Icons.manage_accounts_outlined),
-                          ),
-                          Switch(
-                            key: Key('insurer-user-active-${m.uid}'),
-                            value: m.active,
-                            onChanged: (active) =>
-                                _change(context, ref, m, active: active),
-                          ),
-                        ],
-                      ),
+              sorted.length == 1 ? '1 persona' : '${sorted.length} personas',
+              style: text.bodySmall?.copyWith(color: palette.textMuted),
+            ),
+          if (canEdit) ...[
+            const SizedBox(width: Insets.md),
+            ElevatedButton.icon(
+              key: const Key('add-insurer-user'),
+              onPressed: () => showDialog<void>(
+                context: context,
+                // A tap outside closes an untouched form and asks before
+                // throwing away a filled-in one; see [FormDialogScope].
+                builder: (_) => _AddUserDialog(insurerId: insurerId),
               ),
+              style: ElevatedButton.styleFrom(minimumSize: const Size(0, 40)),
+              icon: const Icon(Icons.person_add_alt),
+              label: const Text('Agregar usuario'),
+            ),
+          ],
+        ],
+      ),
+      children: [
+        if (sorted == null)
+          const Padding(
+            padding: EdgeInsets.all(Insets.xl),
+            child: BrandLoader(),
+          )
+        else if (sorted.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: Insets.lg),
+            child: EmptyState(
+              icon: Icons.group_outlined,
+              title: 'Todavía no hay usuarios',
+              message:
+                  'Agrega a la primera persona que va a pedir grúas por esta '
+                  'aseguradora.',
+            ),
+          )
+        else
+          for (final m in sorted)
+            _MemberRow(
+              member: m,
+              isMe: m.uid == me,
+              canEdit: canEdit,
+              onRole: (role) => _change(context, ref, m, role: role),
+              onActive: (active) => _change(context, ref, m, active: active),
+            ),
+      ],
+    );
+  }
+}
+
+/// One person: who they are, what they can do, and whether they can sign in.
+class _MemberRow extends StatelessWidget {
+  const _MemberRow({
+    required this.member,
+    required this.isMe,
+    required this.canEdit,
+    required this.onRole,
+    required this.onActive,
+  });
+
+  final InsurerMember member;
+  final bool isMe;
+  final bool canEdit;
+  final ValueChanged<InsurerRole> onRole;
+  final ValueChanged<bool> onActive;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+    final m = member;
+    final manager = m.role == InsurerRole.manager;
+    final initials = [
+      for (final part in m.name.trim().split(RegExp(r'\s+')).take(2))
+        if (part.isNotEmpty) part[0].toUpperCase(),
+    ].join();
+
+    return Padding(
+      key: Key('insurer-user-${m.uid}'),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.lg,
+        vertical: Insets.md,
+      ),
+      child: Opacity(
+        // Switched off: still listed, so it can be switched back on, but
+        // plainly not one of the people who can act today.
+        opacity: m.active ? 1 : 0.6,
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: m.active
+                  ? palette.brandTint
+                  : palette.surfaceSubtle,
+              child: Text(
+                initials.isEmpty ? '?' : initials,
+                style: text.labelLarge?.copyWith(
+                  color: m.active ? palette.brand : palette.textMuted,
+                ),
+              ),
+            ),
+            const SizedBox(width: Insets.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          m.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.titleSmall,
+                        ),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: Insets.sm),
+                        _Pill(
+                          key: Key('insurer-user-self-${m.uid}'),
+                          label: 'Tú',
+                          color: palette.info,
+                        ),
+                      ],
+                    ],
+                  ),
+                  Text(
+                    m.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: palette.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: Insets.md),
+            if (!m.active) ...[
+              _Pill(label: 'Desactivado', color: palette.textMuted),
+              const SizedBox(width: Insets.sm),
+            ],
+            // What they can do, readable at a glance; for someone who may
+            // change it, the same pill opens the choice.
+            if (canEdit && !isMe)
+              PopupMenuButton<InsurerRole>(
+                key: Key('insurer-user-role-${m.uid}'),
+                tooltip: 'Cambiar rol',
+                onSelected: onRole,
+                itemBuilder: (_) => [
+                  for (final role in const [
+                    InsurerRole.manager,
+                    InsurerRole.operator,
+                  ])
+                    PopupMenuItem(
+                      value: role,
+                      enabled: role != m.role,
+                      child: Text(role.label),
+                    ),
+                ],
+                child: _Pill(
+                  label: m.role.label,
+                  color: manager ? palette.brand : palette.textMuted,
+                  trailing: Icons.expand_more,
+                ),
+              )
+            else
+              _Pill(
+                label: m.role.label,
+                color: manager ? palette.brand : palette.textMuted,
+              ),
+            // Nobody switches themselves off: the server refuses it, so the
+            // control is not offered. The slot stays, so the columns line up.
+            SizedBox(
+              width: 64,
+              child: canEdit && !isMe
+                  ? Align(
+                      alignment: Alignment.centerRight,
+                      child: Switch(
+                        key: Key('insurer-user-active-${m.uid}'),
+                        value: m.active,
+                        onChanged: onActive,
+                      ),
+                    )
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A small tinted label, with an optional arrow when it opens a menu.
+class _Pill extends StatelessWidget {
+  const _Pill({
+    required this.label,
+    required this.color,
+    this.trailing,
+    super.key,
+  });
+
+  final String label;
+  final Color color;
+  final IconData? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: Insets.sm, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: Corners.brSm,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium
+                ?.copyWith(color: color),
+          ),
+          if (trailing != null) Icon(trailing, size: 16, color: color),
         ],
       ),
     );

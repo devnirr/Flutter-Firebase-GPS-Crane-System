@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import '../shared/form_dialog.dart';
 import '../shared/toast.dart';
 import 'portal_shell.dart';
 
@@ -18,7 +19,8 @@ class ChangePasswordScreen extends ConsumerStatefulWidget {
   static const minLength = 8;
 
   @override
-  ConsumerState<ChangePasswordScreen> createState() => _ChangePasswordScreenState();
+  ConsumerState<ChangePasswordScreen> createState() =>
+      _ChangePasswordScreenState();
 }
 
 class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
@@ -57,7 +59,8 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
         _busy = false;
         // A wrong password says so; a network problem or too many tries says
         // what it is.
-        _error = failure.code == FailureCode.invalidInput &&
+        _error =
+            failure.code == FailureCode.invalidInput &&
                 (failure.message ?? '').contains('contraseña')
             ? 'La contraseña actual no es correcta.'
             : failure.userMessage;
@@ -93,7 +96,7 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
       cleared.isOk
           ? 'Contraseña actualizada.'
           : 'Tu contraseña nueva ya quedó guardada. Si el portal vuelve a '
-              'pedirte cambiarla, escribe la nueva como contraseña actual.',
+                'pedirte cambiarla, escribe la nueva como contraseña actual.',
       tone: cleared.isOk ? ToastTone.success : ToastTone.warning,
     );
     if (cleared.isOk && member.mustChangePassword) context.go(Routes.portal);
@@ -103,83 +106,156 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
   Widget build(BuildContext context) {
     final member = ref.watch(myInsurerMemberProvider).value;
     final forced = member?.mustChangePassword ?? false;
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+    final next = _next.text;
 
     return ListView(
       padding: const EdgeInsets.all(Insets.xl),
       children: [
         const PortalHeader(
           title: 'Cambiar contraseña',
-          subtitle: 'Usa al menos ${ChangePasswordScreen.minLength} caracteres, '
+          subtitle:
+              'Usa al menos ${ChangePasswordScreen.minLength} caracteres, '
               'con letras y números.',
         ),
         const SizedBox(height: Insets.xl),
         Align(
           alignment: Alignment.centerLeft,
           child: SizedBox(
-            width: 420,
+            width: 480,
             child: FloatingCard(
+              padding: const EdgeInsets.all(Insets.xl),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: palette.brandTint,
+                            borderRadius: Corners.brSm,
+                          ),
+                          child: Icon(
+                            Icons.lock_outline,
+                            size: 20,
+                            color: palette.brand,
+                          ),
+                        ),
+                        const SizedBox(width: Insets.md),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Tu contraseña', style: text.titleMedium),
+                              Text(
+                                member?.email ?? '',
+                                style: text.bodySmall?.copyWith(
+                                  color: palette.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: Insets.xl),
                     if (forced) ...[
                       const InlineNotice(
                         key: Key('password-change-required'),
-                        message: 'Tu cuenta se abrió con una contraseña '
+                        icon: Icons.info_outline,
+                        message:
+                            'Tu cuenta se abrió con una contraseña '
                             'temporal. Elige una nueva para continuar.',
                       ),
                       const SizedBox(height: Insets.lg),
                     ],
-                    TextFormField(
-                      key: const Key('password-current'),
-                      controller: _current,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Contraseña actual',
+                    LabeledField(
+                      label: 'Contraseña actual',
+                      required: true,
+                      child: _PasswordField(
+                        fieldKey: const Key('password-current'),
+                        controller: _current,
+                        validator: (v) =>
+                            (v?.isEmpty ?? true) ? 'Requerido' : null,
                       ),
-                      validator: (v) => (v?.isEmpty ?? true) ? 'Requerido' : null,
                     ),
-                    const SizedBox(height: Insets.md),
-                    TextFormField(
-                      key: const Key('password-new'),
-                      controller: _next,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Contraseña nueva',
+                    LabeledField(
+                      label: 'Contraseña nueva',
+                      required: true,
+                      child: _PasswordField(
+                        fieldKey: const Key('password-new'),
+                        controller: _next,
+                        onChanged: (_) => setState(() {}),
+                        validator: (v) {
+                          final value = v ?? '';
+                          if (value.length < ChangePasswordScreen.minLength) {
+                            return 'Usa al menos ${ChangePasswordScreen.minLength} caracteres.';
+                          }
+                          if (!value.contains(RegExp('[A-Za-z]')) ||
+                              !value.contains(RegExp('[0-9]'))) {
+                            return 'Usa letras y números.';
+                          }
+                          if (value == _current.text) {
+                            return 'Debe ser distinta de la actual.';
+                          }
+                          return null;
+                        },
                       ),
-                      validator: (v) {
-                        final value = v ?? '';
-                        if (value.length < ChangePasswordScreen.minLength) {
-                          return 'Usa al menos ${ChangePasswordScreen.minLength} caracteres.';
-                        }
-                        if (!value.contains(RegExp('[A-Za-z]')) ||
-                            !value.contains(RegExp('[0-9]'))) {
-                          return 'Usa letras y números.';
-                        }
-                        if (value == _current.text) {
-                          return 'Debe ser distinta de la actual.';
-                        }
-                        return null;
-                      },
                     ),
-                    const SizedBox(height: Insets.md),
-                    TextFormField(
-                      key: const Key('password-repeat'),
-                      controller: _repeat,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Repite la contraseña nueva',
+                    LabeledField(
+                      label: 'Repite la contraseña nueva',
+                      required: true,
+                      child: _PasswordField(
+                        fieldKey: const Key('password-repeat'),
+                        controller: _repeat,
+                        onChanged: (_) => setState(() {}),
+                        onSubmitted: (_) => _save(),
+                        validator: (v) => v != _next.text
+                            ? 'Las contraseñas no coinciden.'
+                            : null,
                       ),
-                      onFieldSubmitted: (_) => _save(),
-                      validator: (v) =>
-                          v != _next.text ? 'Las contraseñas no coinciden.' : null,
+                    ),
+                    // The rules ticked off as they are met, so nobody has to
+                    // submit to find out which one they missed.
+                    Container(
+                      padding: const EdgeInsets.all(Insets.md),
+                      decoration: BoxDecoration(
+                        color: palette.surfaceSubtle,
+                        borderRadius: Corners.brMd,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _Rule(
+                            met: next.length >= ChangePasswordScreen.minLength,
+                            text:
+                                'Al menos ${ChangePasswordScreen.minLength} '
+                                'caracteres',
+                          ),
+                          _Rule(
+                            met:
+                                next.contains(RegExp('[A-Za-z]')) &&
+                                next.contains(RegExp('[0-9]')),
+                            text: 'Letras y números',
+                          ),
+                          _Rule(
+                            met: next.isNotEmpty && _repeat.text == next,
+                            text: 'Las dos nuevas son iguales',
+                          ),
+                        ],
+                      ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: Insets.lg),
                       InlineNotice(
                         key: const Key('password-error'),
                         tone: NoticeTone.error,
+                        icon: Icons.error_outline,
                         message: _error!,
                       ),
                     ],
@@ -187,6 +263,12 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
                     ElevatedButton(
                       key: const Key('password-save'),
                       onPressed: _busy || member == null ? null : _save,
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        disabledBackgroundColor: _busy
+                            ? palette.brand.withValues(alpha: 0.75)
+                            : null,
+                      ),
                       child: _busy
                           ? const SizedBox(
                               width: 20,
@@ -205,6 +287,84 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// A password field with a lock in front and an eye to show what was typed.
+class _PasswordField extends StatefulWidget {
+  const _PasswordField({
+    required this.fieldKey,
+    required this.controller,
+    required this.validator,
+    this.onChanged,
+    this.onSubmitted,
+  });
+
+  /// On the field itself, where the tests type.
+  final Key fieldKey;
+  final TextEditingController controller;
+  final FormFieldValidator<String> validator;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  State<_PasswordField> createState() => _PasswordFieldState();
+}
+
+class _PasswordFieldState extends State<_PasswordField> {
+  var _visible = false;
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    key: widget.fieldKey,
+    controller: widget.controller,
+    obscureText: !_visible,
+    onChanged: widget.onChanged,
+    onFieldSubmitted: widget.onSubmitted,
+    validator: widget.validator,
+    decoration: InputDecoration(
+      prefixIcon: const Icon(Icons.lock_outline, size: 18),
+      suffixIcon: IconButton(
+        tooltip: _visible ? 'Ocultar' : 'Mostrar',
+        onPressed: () => setState(() => _visible = !_visible),
+        icon: Icon(
+          _visible ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+          size: 18,
+        ),
+      ),
+    ),
+  );
+}
+
+/// One password rule, ticked green once it is met.
+class _Rule extends StatelessWidget {
+  const _Rule({required this.met, required this.text});
+
+  final bool met;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final color = met ? palette.success : palette.textFaint;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Icon(
+            met ? Icons.check_circle : Icons.radio_button_unchecked,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: Insets.sm),
+          Text(
+            text,
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: met ? palette.text : palette.textMuted),
+          ),
+        ],
+      ),
     );
   }
 }
