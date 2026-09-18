@@ -24,6 +24,14 @@ class OperationsScreen extends ConsumerStatefulWidget {
 /// Which roster the left panel is showing.
 enum _Panel { requests, services, drivers }
 
+/// How many queued jobs the map will route itself in one go.
+///
+/// Every one of these is a billed call the first time it is asked for —
+/// answers are then cached by their ends — and the queue is drawn with nothing
+/// selected, so the cap is what keeps a busy night from opening with thirty
+/// calls at once. Beyond it the straight line stands in.
+const _maxQueueRoutes = 12;
+
 class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   // Opens on the queue: a request nobody has taken is the only thing on this
   // screen with a customer sitting on the shoulder behind it.
@@ -55,18 +63,18 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   // Only one thing is inspected at a time: a service and a chofer would fight
   // over the map's camera and over the right-hand drawer.
   void _selectService(String id) => setState(() {
-        // Whichever list of jobs they were reading, they stay in it. Only the
-        // fleet tab has to give way, since the job is not in it.
-        if (_panel == _Panel.drivers) _panel = _Panel.services;
-        _selectedId = id;
-        _selectedDriverId = null;
-      });
+    // Whichever list of jobs they were reading, they stay in it. Only the
+    // fleet tab has to give way, since the job is not in it.
+    if (_panel == _Panel.drivers) _panel = _Panel.services;
+    _selectedId = id;
+    _selectedDriverId = null;
+  });
 
   void _selectDriver(String id) => setState(() {
-        _panel = _Panel.drivers;
-        _selectedDriverId = id;
-        _selectedId = null;
-      });
+    _panel = _Panel.drivers;
+    _selectedDriverId = id;
+    _selectedId = null;
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -86,7 +94,8 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     final now = DateTime.now().toUtc();
 
     // needs_manual first, then oldest first — the dispatcher's real priority.
-    final ordered = [...services]..sort((a, b) {
+    final ordered = [...services]
+      ..sort((a, b) {
         final aUrgent = a.status == ServiceStatus.needsManual ? 0 : 1;
         final bUrgent = b.status == ServiceStatus.needsManual ? 0 : 1;
         if (aUrgent != bUrgent) return aUrgent.compareTo(bUrgent);
@@ -96,19 +105,21 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     // A deleted chofer is archived, not erased; the panel is for the living.
     // Dispatchable first, then by name — the top of this list is who the
     // dispatcher can actually send.
-    final drivers = (roster.value ?? const <Driver>[])
-        .where((d) => !d.archived)
-        .toList()
-      ..sort((a, b) {
-        final rank =
-            _presenceRank(a, appOpen).compareTo(_presenceRank(b, appOpen));
-        if (rank != 0) return rank;
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
+    final drivers =
+        (roster.value ?? const <Driver>[]).where((d) => !d.archived).toList()
+          ..sort((a, b) {
+            final rank = _presenceRank(
+              a,
+              appOpen,
+            ).compareTo(_presenceRank(b, appOpen));
+            if (rank != 0) return rank;
+            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          });
 
     // What a client has sent and no chofer has taken yet.
-    final requests =
-        ordered.where((s) => s.status.isAwaitingDriver).toList(growable: false);
+    final requests = ordered
+        .where((s) => s.status.isAwaitingDriver)
+        .toList(growable: false);
 
     final positions = {for (final p in live) p.driverId: p};
     final selected = ordered.where((s) => s.id == _selectedId).firstOrNull;
@@ -130,10 +141,12 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                   (byId[p.driverId]?.currentServiceId ?? '').isEmpty)
                 p.driverId,
           };
-    final selectedDriver =
-        drivers.where((d) => d.id == _selectedDriverId).firstOrNull;
-    final driverPosition =
-        selectedDriver == null ? null : positions[selectedDriver.id];
+    final selectedDriver = drivers
+        .where((d) => d.id == _selectedDriverId)
+        .firstOrNull;
+    final driverPosition = selectedDriver == null
+        ? null
+        : positions[selectedDriver.id];
 
     return Row(
       children: [
@@ -155,34 +168,33 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 Expanded(
                   child: switch (_panel) {
                     _Panel.requests => _RequestList(
-                        stream: servicesAsync,
-                        requests: requests,
-                        selectedId: _selectedId,
-                        now: now,
-                        onSelect: _selectService,
-                        onRetry: () => ref.invalidate(activeServicesProvider),
-                      ),
+                      stream: servicesAsync,
+                      requests: requests,
+                      selectedId: _selectedId,
+                      now: now,
+                      onSelect: _selectService,
+                      onRetry: () => ref.invalidate(activeServicesProvider),
+                    ),
                     _Panel.services => _ServiceList(
-                        stream: servicesAsync,
-                        services: ordered,
-                        selectedId: _selectedId,
-                        now: now,
-                        onSelect: _selectService,
-                        onRetry: () => ref.invalidate(activeServicesProvider),
-                      ),
+                      stream: servicesAsync,
+                      services: ordered,
+                      selectedId: _selectedId,
+                      now: now,
+                      onSelect: _selectService,
+                      onRetry: () => ref.invalidate(activeServicesProvider),
+                    ),
                     _Panel.drivers => _DriverList(
-                        roster: roster,
-                        drivers: drivers,
-                        positions: positions,
-                        appOpen: appOpen,
-                        selectedId: _selectedDriverId,
-                        query: _driverQuery,
-                        now: now,
-                        onQuery: (value) =>
-                            setState(() => _driverQuery = value),
-                        onSelect: _selectDriver,
-                        onRetry: () => ref.invalidate(allDriversProvider),
-                      ),
+                      roster: roster,
+                      drivers: drivers,
+                      positions: positions,
+                      appOpen: appOpen,
+                      selectedId: _selectedDriverId,
+                      query: _driverQuery,
+                      now: now,
+                      onQuery: (value) => setState(() => _driverQuery = value),
+                      onSelect: _selectDriver,
+                      onRetry: () => ref.invalidate(allDriversProvider),
+                    ),
                   },
                 ),
               ],
@@ -368,9 +380,7 @@ class _PanelTab extends StatelessWidget {
                   ),
                   child: Text(
                     '$count',
-                    style: text.labelMedium?.copyWith(
-                      color: BrandColors.white,
-                    ),
+                    style: text.labelMedium?.copyWith(color: BrandColors.white),
                   ),
                 )
               else
@@ -490,8 +500,8 @@ class _RequestRow extends StatelessWidget {
       color: selected
           ? palette.brandTint
           : urgent
-              ? palette.dangerTint
-              : palette.surface,
+          ? palette.dangerTint
+          : palette.surface,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -744,8 +754,8 @@ class _ServiceRow extends StatelessWidget {
       color: selected
           ? palette.brandTint
           : urgent
-              ? palette.dangerTint
-              : palette.surface,
+          ? palette.dangerTint
+          : palette.surface,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -857,15 +867,18 @@ class _LiveMap extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
     final filter = eligible;
     final onlineDrivers = live
         .where((p) => p.isOnline)
         // A chofer picked from the roster stays on the map whatever else is
         // filtered: the dispatcher is looking at them on purpose.
-        .where((p) =>
-            filter == null ||
-            filter.contains(p.driverId) ||
-            p.driverId == selectedDriver?.id)
+        .where(
+          (p) =>
+              filter == null ||
+              filter.contains(p.driverId) ||
+              p.driverId == selectedDriver?.id,
+        )
         .toList();
     final focus = driverPosition?.position ?? selected?.pickup.geo;
 
@@ -877,30 +890,71 @@ class _LiveMap extends ConsumerWidget {
         ? services
         : services.where((s) => s.id == selected!.id).toList();
 
-    // A trip per queued request, plus the selected one wherever it came from.
-    // Dashed, because none of these is a route anybody is driving yet — it is
-    // the job, not a path.
-    final trips = [
-      if (selected == null)
-        for (final service in routed)
-          if (service.dropoff != null)
-            MapRoute(
-              points: [service.pickup.geo, service.dropoff!.geo],
-              color: BrandColors.grey400,
-              dashed: true,
-            ),
-    ];
+    // A trip per queued request, each on the road it will actually take. They
+    // used to be straight grey lines on the grounds that the job is not a path
+    // yet, which on a city map read as a road through six barrios in a colour
+    // that disappeared into the streets under it.
+    //
+    // The stored path costs nothing. Anything without one is asked for here,
+    // capped: a queue of thirty must not fan out into thirty billed calls the
+    // moment the screen opens. Past the cap the straight line stands in, as it
+    // does for the selected job.
+    var queueFetches = 0;
+    final trips = <MapRoute>[];
+    if (selected == null) {
+      for (final service in routed) {
+        final dropoff = service.dropoff?.geo;
+        if (dropoff == null) continue;
+
+        var points = service.towPath;
+        if (points.isEmpty && queueFetches < _maxQueueRoutes) {
+          queueFetches++;
+          final road = ref
+              .watch(roadRouteProvider((service.pickup.geo, dropoff)))
+              .value;
+          if (road != null && !road.isApproximate) points = road.points;
+        }
+        final straight = points.length < 2;
+        trips.add(
+          MapRoute(
+            points: straight ? [service.pickup.geo, dropoff] : points,
+            // The tow is red wherever it is drawn, queued or open. Grey read
+            // as scenery next to the roads under it.
+            color: straight ? palette.warning : BrandColors.red,
+            dashed: straight,
+          ),
+        );
+      }
+    }
 
     final selectedDropoff = selected?.dropoff?.geo;
     final storedPath = selected?.towPath ?? const <LatLng>[];
-    final selectedRoad = storedPath.isNotEmpty
-        ? storedPath
-        : selected == null || selectedDropoff == null
-            ? null
-            : ref
-                .watch(roadRouteProvider((selected!.pickup.geo, selectedDropoff)))
-                .value
-                ?.points;
+
+    // Asked for only when the service carries no path of its own: the server
+    // routes once, for every screen, and this is the panel's own attempt when
+    // that did not happen.
+    final fetched =
+        selected == null || selectedDropoff == null || storedPath.isNotEmpty
+        ? null
+        : ref
+              .watch(roadRouteProvider((selected!.pickup.geo, selectedDropoff)))
+              .value;
+
+    // The tow, and whether what we have is the road or a line standing in for
+    // it. Drawing the fallback solid, as this did, told the dispatcher there
+    // was a road straight through the Ensanche: the line is the same either
+    // way, so the only honest difference is how it is drawn.
+    final (towLine, towApproximate) = switch ((selected, selectedDropoff)) {
+      (null, _) || (_, null) => (const <LatLng>[], false),
+      (final service?, final dropoff?) when storedPath.isNotEmpty => (
+        storedPath,
+        false,
+      ),
+      (final service?, final dropoff?) =>
+        fetched != null && !fetched.isApproximate
+            ? (fetched.points, false)
+            : ([service.pickup.geo, dropoff], true),
+    };
 
     // What the camera has to hold: the whole job, and everyone who could take
     // it. A capable truck ninety kilometres away is worth seeing — that is the
@@ -924,14 +978,23 @@ class _LiveMap extends ConsumerWidget {
             // Framed rather than centred: a fixed zoom either cropped the
             // destination out or sat so far back the pickup was a speck.
             fitTo: frame,
-            // The roads the tow will take, not a line over the mountains.
-            // Falls back to the straight pair on its own when there is no
-            // answer, so the job is always drawn.
-            route: selectedRoad ??
-                (selected?.dropoff == null
-                    ? const []
-                    : [selected!.pickup.geo, selected!.dropoff!.geo]),
-            routes: trips,
+            // The tow is drawn among the other legs rather than as the map's
+            // one route, so it can be dashed when it is only a straight line
+            // standing in for a road.
+            routes: [
+              ...trips,
+              if (towLine.length >= 2)
+                MapRoute(
+                  points: towLine,
+                  // Dashes alone would not do it: `google_maps_flutter_web`
+                  // drops a polyline's pattern, so on the panel — the one
+                  // place this screen runs — a dashed line renders solid and
+                  // a guess looks exactly like the road. The colour carries
+                  // it there, and matches the banner above.
+                  color: towApproximate ? palette.warning : BrandColors.red,
+                  dashed: towApproximate,
+                ),
+            ],
             markers: [
               for (final service in shown) ...[
                 MapMarker(
@@ -968,8 +1031,8 @@ class _LiveMap extends ConsumerWidget {
                   kind: driver.isStale(now)
                       ? MapMarkerKind.truckStale
                       : driver.state == DriverLiveState.onService
-                          ? MapMarkerKind.truckOnService
-                          : MapMarkerKind.truckIdle,
+                      ? MapMarkerKind.truckOnService
+                      : MapMarkerKind.truckIdle,
                 ),
             ],
           ),
@@ -981,10 +1044,11 @@ class _LiveMap extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               if (filter != null && selected != null) ...[
-                _EligibleBanner(
-                  service: selected!,
-                  count: filter.length,
-                ),
+                _EligibleBanner(service: selected!, count: filter.length),
+                const SizedBox(height: Insets.sm),
+              ],
+              if (towApproximate) ...[
+                const _ApproximateRouteBanner(),
                 const SizedBox(height: Insets.sm),
               ],
               _Legend(drivers: onlineDrivers, now: now),
@@ -992,6 +1056,41 @@ class _LiveMap extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Says that the dashed line is not the road.
+///
+/// The tow is drawn straight when neither the stored route nor the panel's own
+/// call produced one — the Routes API key on the server, or the Directions
+/// service on the browser key. The distance under it is an estimate too, so
+/// the dispatcher has to know which of the two they are reading.
+class _ApproximateRouteBanner extends StatelessWidget {
+  const _ApproximateRouteBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+
+    return FloatingCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.md,
+        vertical: Insets.sm,
+      ),
+      borderRadius: Corners.brSm,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.timeline, size: 16, color: palette.warning),
+          const SizedBox(width: Insets.sm),
+          Text(
+            'Ruta aproximada, no por calles',
+            style: text.labelMedium?.copyWith(color: palette.warning),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1032,7 +1131,7 @@ class _EligibleBanner extends StatelessWidget {
             none
                 ? 'Ninguna grúa de ${service.truckTypeRequired.label} libre'
                 : '$count grúa${count == 1 ? '' : 's'} para '
-                    '${service.truckTypeRequired.label}',
+                      '${service.truckTypeRequired.label}',
             style: text.labelMedium?.copyWith(
               color: none ? palette.warning : palette.text,
             ),
@@ -1059,7 +1158,9 @@ class _Legend extends StatelessWidget {
     final idle = drivers
         .where((d) => d.state == DriverLiveState.idle && !d.isStale(now))
         .length;
-    final busy = drivers.where((d) => d.state == DriverLiveState.onService).length;
+    final busy = drivers
+        .where((d) => d.state == DriverLiveState.onService)
+        .length;
     final stale = drivers.where((d) => d.isStale(now)).length;
 
     return FloatingCard(
@@ -1074,7 +1175,11 @@ class _Legend extends StatelessWidget {
         children: [
           const FieldLabel('Flota en línea'),
           const SizedBox(height: Insets.sm),
-          _LegendRow(color: BrandColors.driverIdle, label: 'Disponibles', count: idle),
+          _LegendRow(
+            color: BrandColors.driverIdle,
+            label: 'Disponibles',
+            count: idle,
+          ),
           _LegendRow(
             color: BrandColors.driverOnService,
             label: 'En servicio',
@@ -1123,9 +1228,7 @@ class _LegendRow extends StatelessWidget {
           ),
           Text(
             '$count',
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
+            style: Theme.of(context).textTheme.labelMedium
                 ?.copyWith(fontFeatures: const []),
           ),
         ],
@@ -1145,7 +1248,8 @@ class _ServiceDrawer extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
-    final events = ref.watch(serviceEventsProvider(service.id)).value ?? const [];
+    final events =
+        ref.watch(serviceEventsProvider(service.id)).value ?? const [];
 
     return ColoredBox(
       color: palette.surface,
@@ -1169,7 +1273,8 @@ class _ServiceDrawer extends ConsumerWidget {
           if (service.awaitsOperator)
             const InlineNotice(
               key: Key('heavy-review-notice'),
-              message: 'Vehículo pesado. Llama al cliente, confirma que hay una '
+              message:
+                  'Vehículo pesado. Llama al cliente, confirma que hay una '
                   'grúa pesada disponible y acuerda el precio final. Nadie sale '
                   'hasta que lo confirmes.',
               icon: Icons.support_agent,
@@ -1179,9 +1284,9 @@ class _ServiceDrawer extends ConsumerWidget {
             InlineNotice(
               message: service.dispatch.lastReason.isEmpty
                   ? 'La búsqueda automática no encontró chofer. Asigna uno '
-                      'manualmente.'
+                        'manualmente.'
                   : '${service.dispatch.lastReason} Asigna un chofer '
-                      'manualmente.',
+                        'manualmente.',
               tone: NoticeTone.error,
             )
           else if (service.dispatch.lastReason.isNotEmpty)
@@ -1214,13 +1319,11 @@ class _ServiceDrawer extends ConsumerWidget {
           DetailRow(label: 'Grúa', value: service.truckTypeRequired.label),
           if (service.hasDriver)
             DetailRow(label: 'Chofer', value: service.driverName),
-          DetailRow(
-            label: 'Asignación',
-            value: service.assignmentMode.label,
-          ),
+          DetailRow(label: 'Asignación', value: service.assignmentMode.label),
           DetailRow(
             label: 'Pago',
-            value: '${service.payment.method.label} · '
+            value:
+                '${service.payment.method.label} · '
                 '${service.payment.status.label}',
           ),
           DetailRow(
@@ -1338,21 +1441,20 @@ class _HeavyReviewPanelState extends ConsumerState<_HeavyReviewPanel> {
     });
 
     final toast = Toaster.of(context);
-    final result = await ref.read(functionsGatewayProvider).confirmHeavyService(
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .confirmHeavyService(
           serviceId: widget.service.id,
           totalCents: cents,
           note: _note.text.trim(),
         );
 
     if (mounted) setState(() => _sending = false);
-    toast.show(
-      switch (result) {
-        Ok<void>() =>
-          'Precio confirmado: ${cents.formatDOP}. Buscando grúa pesada.',
-        Err<void>(:final failure) => failure.userMessage,
-      },
-      tone: result.isOk ? ToastTone.success : ToastTone.error,
-    );
+    toast.show(switch (result) {
+      Ok<void>() =>
+        'Precio confirmado: ${cents.formatDOP}. Buscando grúa pesada.',
+      Err<void>(:final failure) => failure.userMessage,
+    }, tone: result.isOk ? ToastTone.success : ToastTone.error);
   }
 
   @override
@@ -1370,7 +1472,8 @@ class _HeavyReviewPanelState extends ConsumerState<_HeavyReviewPanel> {
           decoration: InputDecoration(
             prefixText: r'RD$ ',
             labelText: 'Precio acordado con el cliente',
-            helperText: 'Lo que paga el cliente'
+            helperText:
+                'Lo que paga el cliente'
                 '${widget.service.quote.itbisCents > 0 ? ', ITBIS incluido' : ''}.',
             errorText: _error,
           ),
@@ -1424,20 +1527,19 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
     // the dispatcher needs when it does not.
     final toast = Toaster.of(context);
 
-    final result = await ref.read(functionsGatewayProvider).assignServiceManually(
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .assignServiceManually(
           serviceId: widget.service.id,
           driverId: driver.id,
         );
 
     if (mounted) setState(() => _sending = null);
 
-    toast.show(
-      switch (result) {
-        Ok<void>() => '${driver.shortName} va en camino.',
-        Err<void>(:final failure) => failure.userMessage,
-      },
-      tone: result.isOk ? ToastTone.success : ToastTone.error,
-    );
+    toast.show(switch (result) {
+      Ok<void>() => '${driver.shortName} va en camino.',
+      Err<void>(:final failure) => failure.userMessage,
+    }, tone: result.isOk ? ToastTone.success : ToastTone.error);
   }
 
   @override
@@ -1454,20 +1556,23 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
     // The same rule the cascade uses, and the same one the map filters by: a
     // plataforma can do a gancho job. Exact-match here hid the very truck
     // dispatch would have chosen.
-    final candidates = drivers
-        .where((d) =>
-            d.status.canWork &&
-            d.isOnline &&
-            !d.isBusy &&
-            d.truckType.canServe(service.truckTypeRequired) &&
-            positions[d.id] != null &&
-            !positions[d.id]!.isStale(now))
-        .toList()
-      ..sort((a, b) {
-        final da = positions[a.id]!.position.distanceTo(service.pickup.geo);
-        final db = positions[b.id]!.position.distanceTo(service.pickup.geo);
-        return da.compareTo(db);
-      });
+    final candidates =
+        drivers
+            .where(
+              (d) =>
+                  d.status.canWork &&
+                  d.isOnline &&
+                  !d.isBusy &&
+                  d.truckType.canServe(service.truckTypeRequired) &&
+                  positions[d.id] != null &&
+                  !positions[d.id]!.isStale(now),
+            )
+            .toList()
+          ..sort((a, b) {
+            final da = positions[a.id]!.position.distanceTo(service.pickup.geo);
+            final db = positions[b.id]!.position.distanceTo(service.pickup.geo);
+            return da.compareTo(db);
+          });
 
     if (candidates.isEmpty) {
       return const InlineNotice(
@@ -1504,7 +1609,9 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
                   : TextButton(
                       // Every row is disabled while one is in flight, so a
                       // second chofer cannot be sent to the same job.
-                      onPressed: _sending == null ? () => _assign(driver) : null,
+                      onPressed: _sending == null
+                          ? () => _assign(driver)
+                          : null,
                       child: const Text('Asignar'),
                     ),
             ),
@@ -1513,7 +1620,6 @@ class _AssignPanelState extends ConsumerState<_AssignPanel> {
     );
   }
 }
-
 
 /// The whole fleet, one row per chofer.
 ///
@@ -1638,7 +1744,13 @@ class _DriverRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
-    final (status, statusColor) = _status(driver, position, now, appOpen, palette);
+    final (status, statusColor) = _status(
+      driver,
+      position,
+      now,
+      appOpen,
+      palette,
+    );
 
     return Material(
       color: selected ? palette.brandTint : palette.surface,
@@ -1678,7 +1790,7 @@ class _DriverRow extends StatelessWidget {
                       driver.assignedTruckId == null
                           ? 'Sin grúa asignada'
                           : '${driver.assignedTruckPlate} · '
-                              '${driver.truckType.label}',
+                                '${driver.truckType.label}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: text.bodySmall?.copyWith(color: palette.textMuted),
@@ -1760,10 +1872,16 @@ class _AccountPill extends StatelessWidget {
     final palette = context.palette;
     final (label, fg, bg) = switch (status) {
       DriverStatus.active => ('Activo', palette.success, palette.successTint),
-      DriverStatus.inactive =>
-        ('Inactivo', palette.textMuted, palette.surfaceSubtle),
-      DriverStatus.suspended =>
-        ('Suspendido', palette.danger, palette.dangerTint),
+      DriverStatus.inactive => (
+        'Inactivo',
+        palette.textMuted,
+        palette.surfaceSubtle,
+      ),
+      DriverStatus.suspended => (
+        'Suspendido',
+        palette.danger,
+        palette.dangerTint,
+      ),
       DriverStatus.unknown => ('—', palette.textMuted, palette.surfaceSubtle),
     };
 
@@ -1803,7 +1921,13 @@ class _DriverDrawer extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
-    final (status, statusColor) = _status(driver, position, now, appOpen, palette);
+    final (status, statusColor) = _status(
+      driver,
+      position,
+      now,
+      appOpen,
+      palette,
+    );
     final serviceId = driver.currentServiceId;
 
     return ColoredBox(

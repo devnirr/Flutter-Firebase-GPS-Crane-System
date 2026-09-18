@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,10 +10,15 @@ import '../shared/form_dialog.dart';
 import '../shared/toast.dart';
 
 /// Opens the form for a new grúa. Returns its id, or null when dismissed.
-Future<String?> showCreateTruckDialog(BuildContext context) => showDialog<String>(
+///
+/// A tap outside closes an untouched form and asks before throwing away a
+/// filled-in one: see [_TruckFormDialogState._close]. The barrier is dismissible
+/// so that a tap outside reaches that code at all — with it off, the tap is
+/// swallowed and the dialog just sits there.
+Future<String?> showCreateTruckDialog(BuildContext context) =>
+    showDialog<String>(
       context: context,
-      // The form holds typed data; a stray tap outside should not throw it away.
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (context) => const TruckFormDialog(),
     );
 
@@ -18,7 +26,7 @@ Future<String?> showCreateTruckDialog(BuildContext context) => showDialog<String
 Future<bool?> showEditTruckDialog(BuildContext context, Truck truck) =>
     showDialog<bool>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (context) => TruckFormDialog(editing: truck),
     );
 
@@ -60,6 +68,11 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
   /// the way a validator does.
   var _datesChecked = false;
 
+  /// Every field as it stood when the form opened, to tell a form nobody has
+  /// touched from one with work in it. Taken once [initState] has filled the
+  /// controllers, so an edit starts out unchanged rather than fully typed.
+  late final List<Object?> _opened;
+
   Truck? get _editing => widget.editing;
   bool get _isEdit => widget.editing != null;
 
@@ -67,7 +80,10 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
   void initState() {
     super.initState();
     final truck = widget.editing;
-    if (truck == null) return;
+    if (truck == null) {
+      _opened = _snapshot();
+      return;
+    }
 
     _plate.text = truck.displayPlate;
     _make.text = truck.make;
@@ -82,6 +98,7 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
     _type = truck.type.isDispatchable ? truck.type : null;
     _insuranceExpiry = truck.insuranceExpiry;
     _marbeteExpiry = truck.marbeteExpiry;
+    _opened = _snapshot();
   }
 
   @override
@@ -108,37 +125,32 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
         ? _editing!.assignedDriverName
         : null;
 
-    return Dialog(
-      backgroundColor: palette.surface,
-      // The header and footer paint their own rounded corners over the full
-      // width; without the clip they square off against the dialog's.
-      clipBehavior: Clip.antiAlias,
-      shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 720,
-          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FormDialogHeader(
-              icon: Icons.local_shipping_outlined,
-              title: _isEdit ? 'Editar grúa' : 'Nueva grúa',
-              subtitle: _isEdit
-                  ? 'Los cambios se guardan en la flota.'
-                  : 'Se agrega sin chofer. Asígnala desde el formulario del '
-                      'chofer.',
-              onClose: _submitting ? null : () => Navigator.of(context).pop(),
-            ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(
-                  Insets.xxl,
-                  Insets.xl,
-                  Insets.xxl,
-                  Insets.lg,
-                ),
+    return FormDialogScope(
+      onClose: () => unawaited(_close()),
+      child: Dialog(
+        backgroundColor: palette.surface,
+        // The header and footer paint their own rounded corners over the full
+        // width; without the clip they square off against the dialog's.
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(borderRadius: Corners.brLg),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 720,
+            maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FormDialogHeader(
+                icon: Icons.local_shipping_outlined,
+                title: _isEdit ? 'Editar grúa' : 'Nueva grúa',
+                subtitle: _isEdit
+                    ? 'Los cambios se guardan en la flota.'
+                    : 'Se agrega sin chofer. Asígnala desde el formulario del '
+                          'chofer.',
+                onClose: _submitting ? null : _close,
+              ),
+              FormDialogBody(
                 child: Form(
                   key: _formKey,
                   child: Column(
@@ -148,16 +160,13 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                         InlineNotice(
                           icon: Icons.person_outline,
                           tone: NoticeTone.info,
-                          message: 'Asignada a $assignedTo. La placa y el tipo '
-                              'no se pueden cambiar mientras tenga un servicio '
-                              'en curso, ni el tipo mientras esté en línea.',
+                          message:
+                              'Asignada a $assignedTo. Con un servicio en '
+                              'curso no se le cambia la placa ni el tipo.',
                         ),
                         const SizedBox(height: Insets.lg),
                       ],
-                      const FormSection(
-                        'Identificación',
-                        note: 'Cómo se reconoce la grúa en el despacho.',
-                      ),
+                      const FormSection('Identificación'),
                       FormRow(
                         left: LabeledField(
                           label: 'Placa',
@@ -187,7 +196,12 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                             initialValue: _type,
                             isExpanded: true,
                             hint: const Text('Escoge el tipo'),
-                            decoration: const InputDecoration(),
+                            decoration: const InputDecoration(
+                              prefixIcon: Icon(
+                                Icons.local_shipping_outlined,
+                                size: 18,
+                              ),
+                            ),
                             items: [
                               for (final type in TruckType.values)
                                 if (type.isDispatchable)
@@ -203,11 +217,7 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: Insets.sm),
-                      const FormSection(
-                        'Vehículo',
-                        note: 'Lo que el cliente ve llegar.',
-                      ),
+                      const FormSection('Vehículo'),
                       FormRow(
                         left: LabeledField(
                           label: 'Marca',
@@ -218,9 +228,7 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                             inputFormatters: [
                               LengthLimitingTextInputFormatter(40),
                             ],
-                            decoration: const InputDecoration(
-                              hintText: 'Ford',
-                            ),
+                            decoration: const InputDecoration(hintText: 'Ford'),
                             validator: (value) => (value ?? '').trim().isEmpty
                                 ? 'Escribe la marca.'
                                 : null,
@@ -254,9 +262,7 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                               FilteringTextInputFormatter.digitsOnly,
                               LengthLimitingTextInputFormatter(4),
                             ],
-                            decoration: const InputDecoration(
-                              hintText: '2020',
-                            ),
+                            decoration: const InputDecoration(hintText: '2020'),
                             validator: _validateYear,
                           ),
                         ),
@@ -276,7 +282,6 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                         third: LabeledField(
                           label: 'Capacidad',
                           required: true,
-                          help: 'Lo que puede cargar.',
                           child: TextFormField(
                             controller: _capacity,
                             keyboardType: TextInputType.number,
@@ -286,13 +291,19 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                             ],
                             decoration: const InputDecoration(
                               hintText: '4500',
-                              suffixText: 'kg',
+                              // Not `suffixText`, which Flutter hides until the
+                              // field has focus or text: the unit is part of
+                              // what is being asked for, so it stays put.
+                              suffixIcon: _Unit('kg'),
+                              suffixIconConstraints: BoxConstraints(
+                                minWidth: 0,
+                                minHeight: 0,
+                              ),
                             ),
                             validator: _validateCapacity,
                           ),
                         ),
                       ),
-                      const SizedBox(height: Insets.sm),
                       const FormSection(
                         'Documentos',
                         note: 'La grúa sale de línea sola cuando uno vence.',
@@ -323,10 +334,7 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                             ],
                             decoration: const InputDecoration(
                               hintText: 'Número de póliza',
-                              prefixIcon: Icon(
-                                Icons.shield_outlined,
-                                size: 18,
-                              ),
+                              prefixIcon: Icon(Icons.shield_outlined, size: 18),
                             ),
                           ),
                         ),
@@ -371,19 +379,51 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
                   ),
                 ),
               ),
-            ),
-            FormDialogFooter(
-              submitting: _submitting,
-              note: '* Obligatorio',
-              label: _isEdit ? 'Guardar cambios' : 'Crear grúa',
-              onCancel: () => Navigator.of(context).pop(),
-              onSubmit: _submit,
-            ),
-          ],
+              FormDialogFooter(
+                submitting: _submitting,
+                note: '* Obligatorio',
+                label: _isEdit ? 'Guardar cambios' : 'Crear grúa',
+                onCancel: _close,
+                onSubmit: _submit,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Closing
+  // ---------------------------------------------------------------------------
+
+  /// Every field, in a fixed order, to compare against [_opened].
+  List<Object?> _snapshot() => [
+    _plate.text.trim(),
+    _make.text.trim(),
+    _model.text.trim(),
+    _year.text.trim(),
+    _color.text.trim(),
+    _capacity.text.trim(),
+    _registration.text.trim(),
+    _policy.text.trim(),
+    _type,
+    _insuranceExpiry,
+    _marbeteExpiry,
+  ];
+
+  bool get _dirty => !listEquals(_snapshot(), _opened);
+
+  /// Closes the form, through the panel's one rule for it.
+  Future<void> _close() => closeFormDialog(
+    context,
+    dirty: _dirty,
+    submitting: _submitting,
+    question: _isEdit ? '¿Descartar los cambios?' : '¿Descartar la grúa?',
+    detail: _isEdit
+        ? 'Los cambios que hiciste no se guardan.'
+        : 'Lo que escribiste se pierde y la grúa no se agrega.',
+  );
 
   // ---------------------------------------------------------------------------
   // Fields
@@ -423,9 +463,8 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
     // an expired seguro is exactly what the fleet screen should then flag.
     final first = DateTime(now.year - 5);
     final last = DateTime(now.year + 10);
-    final initial = current == null ||
-            current.isBefore(first) ||
-            current.isAfter(last)
+    final initial =
+        current == null || current.isBefore(first) || current.isAfter(last)
         ? now.add(const Duration(days: 365))
         : current;
 
@@ -496,6 +535,23 @@ class _TruckFormDialogState extends ConsumerState<TruckFormDialog> {
   }
 }
 
+/// The unit a number is asked in, sitting inside the field's trailing edge.
+class _Unit extends StatelessWidget {
+  const _Unit(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: Insets.lg, left: Insets.sm),
+    child: Text(
+      label,
+      style: Theme.of(context).textTheme.bodyMedium
+          ?.copyWith(color: context.palette.textFaint),
+    ),
+  );
+}
+
 /// Plates are written in capitals; typing "l123456" should read as it will
 /// be stored.
 class _UpperCaseFormatter extends TextInputFormatter {
@@ -503,6 +559,5 @@ class _UpperCaseFormatter extends TextInputFormatter {
   TextEditingValue formatEditUpdate(
     TextEditingValue oldValue,
     TextEditingValue newValue,
-  ) =>
-      newValue.copyWith(text: newValue.text.toUpperCase());
+  ) => newValue.copyWith(text: newValue.text.toUpperCase());
 }

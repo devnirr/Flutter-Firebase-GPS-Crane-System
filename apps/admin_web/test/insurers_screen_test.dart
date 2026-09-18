@@ -182,8 +182,13 @@ Future<void> main() async {
     await tester.tap(find.text('Crear usuario'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('user-error')), findsOneWidget);
+    // Leaving a form with something typed in it asks before it is thrown away.
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
+    expect(find.text('¿Descartar el usuario?'), findsOneWidget);
+    await tester.tap(find.text('Descartar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear usuario'), findsNothing);
 
     // Switching someone off.
     await tester.tap(find.byKey(const Key('insurer-user-active-insurer-operator-1')));
@@ -193,6 +198,78 @@ Future<void> main() async {
         .firstWhere((m) => m.uid == 'insurer-operator-1');
     expect(operator.active, isFalse);
     expect(find.textContaining('Desactivado'), findsOneWidget);
+  });
+
+  testWidgets('a tap outside the company form closes it, or asks first',
+      (tester) async {
+    final backend = DemoBackend()..seed();
+    await open(tester, backend);
+
+    // Nothing typed: it just goes.
+    await tester.tap(find.byKey(const Key('create-insurer')));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear aseguradora'), findsNothing);
+
+    // Something typed: the question first.
+    await tester.tap(find.byKey(const Key('create-insurer')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('insurer-name')),
+      'Seguros Prueba',
+    );
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.text('¿Descartar la aseguradora?'), findsOneWidget);
+    await tester.tap(find.text('Descartar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear aseguradora'), findsNothing);
+    expect(backend.allInsurers, hasLength(1));
+
+    // An edit opens pre-filled, and that is not "something typed".
+    await openSeeded(tester);
+    await tester.tap(find.byKey(const Key('edit-insurer')));
+    await tester.pumpAndSettle();
+    expect(find.text('Guardar cambios'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.text('Guardar cambios'), findsNothing);
+  });
+
+  testWidgets('a tap outside the user form closes it, or asks first',
+      (tester) async {
+    final backend = DemoBackend()..seed();
+    await open(tester, backend);
+    await openSeeded(tester);
+    await tab(tester, 'tab-users');
+
+    // Nothing typed: it just goes.
+    await tester.tap(find.byKey(const Key('add-insurer-user')));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear usuario'), findsNothing);
+
+    // Something typed: the question first, and "Seguir editando" keeps it.
+    await tester.tap(find.byKey(const Key('add-insurer-user')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('user-name')), 'Ana Pérez');
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    expect(find.text('¿Descartar el usuario?'), findsOneWidget);
+    await tester.tap(find.text('Seguir editando'));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear usuario'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'Ana Pérez'), findsOneWidget);
+
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Descartar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear usuario'), findsNothing);
+    expect(backend.insurerMembers('ins-demo'), hasLength(2));
   });
 
   testWidgets('a company gets its own price, and goes back to the base one', (tester) async {

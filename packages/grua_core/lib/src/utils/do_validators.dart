@@ -41,6 +41,20 @@ abstract final class DoValidators {
     return null;
   }
 
+  /// A stored phone as it is written down here: `809 555-0150`.
+  ///
+  /// Numbers are stored E.164 (`+18095550150`), which is right for dialling
+  /// and unreadable on a page. Anything that is not a Dominican ten-digit
+  /// number is handed back untouched rather than mangled into a shape it is
+  /// not.
+  static String phoneLabel(String? value) {
+    final raw = (value ?? '').trim();
+    var d = digits(raw);
+    if (d.length == 11 && d.startsWith('1')) d = d.substring(1);
+    if (d.length != 10 || !areaCodes.contains(d.substring(0, 3))) return raw;
+    return '${d.substring(0, 3)} ${d.substring(3, 6)}-${d.substring(6)}';
+  }
+
   /// Optional: 9 digits for a company, 11 for a persona física.
   static String? rnc(String? value) {
     final d = digits(value);

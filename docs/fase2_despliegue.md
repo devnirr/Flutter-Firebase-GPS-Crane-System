@@ -27,7 +27,39 @@ comprobar que quedó bien.
   firebase functions:secrets:access QUOTE_SIGNING_SECRET
   ```
 
+- El secreto `MAPS_API_KEY`, si quieres que las rutas se dibujen por las calles
+  y no en línea recta. Ver "Rutas por calle" más abajo.
+
 - Todas las pruebas en verde (ver "Pruebas" al final).
+
+## Rutas por calle
+
+El servidor calcula la ruta **una sola vez**, cuando se crea el servicio, y la
+guarda en el documento (`route.polyline`). Todas las pantallas —cliente, chofer
+y panel— dibujan esa misma línea. Sin ella cada una cae en la recta entre los
+dos puntos, que el panel dibuja **punteada** y con el aviso "Ruta aproximada, no
+por calles": la distancia que se muestra también es una estimación (la recta
+× 1.35), no el camino real.
+
+Para que haya ruta real hacen falta dos cosas, en dos llaves distintas:
+
+| Dónde | Llave | API que hay que habilitar |
+|---|---|---|
+| Servidor (funciones) | Secreto `MAPS_API_KEY` | **Routes API** |
+| Navegador (`apps/admin_web/web/index.html`) | La llave del `<script>` de Maps | **Maps JavaScript API** y **Directions API** |
+
+```bash
+firebase functions:secrets:set MAPS_API_KEY
+firebase deploy --only functions
+```
+
+La llave del servidor no es la misma que la del navegador: aquélla se restringe
+a la Routes API, ésta por referente HTTP. La del navegador solo se usa como
+respaldo, para servicios ya creados sin ruta guardada; si le falta la Directions
+API, el panel se queda en la recta punteada aunque el mapa se vea bien.
+
+Los servicios creados **antes** de poner el secreto no tienen ruta guardada y
+seguirán mostrándose punteados: la ruta se calcula al crearlos, no al abrirlos.
 
 ## Orden de despliegue
 

@@ -4,6 +4,74 @@ import 'package:grua_core/grua_core.dart';
 /// The pieces every create / edit form in the panel is built from, so the
 /// chofer, grúa and aseguradora forms look and behave the same.
 
+/// Sends every way out of a form dialog — the barrier, Escape, the X and
+/// Cancelar — through one [onClose], so none of them can drop typed data on
+/// its own.
+///
+/// `canPop` is false rather than "false while there is work": typing rebuilds
+/// the field and not the dialog, so a flag computed here would be read stale
+/// at the moment it matters. [onClose] decides instead, with the values as
+/// they are right then.
+///
+/// The dialog must be opened with `barrierDismissible: true`, or a tap outside
+/// never reaches this at all — it is swallowed and the dialog just sits there,
+/// which is what it looks like to somebody trying to leave.
+class FormDialogScope extends StatelessWidget {
+  const FormDialogScope({required this.onClose, required this.child, super.key});
+
+  final VoidCallback onClose;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: false,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) onClose();
+    },
+    child: child,
+  );
+}
+
+/// Closes a form dialog, asking first when there is typed work to lose.
+///
+/// An untouched form closes on the tap that asked for it: a confirmation there
+/// is a second click to dismiss an empty dialog, which is the nag that teaches
+/// people to click through these without reading. Mid-save nothing closes —
+/// the outcome is still coming, as a toast or as an error in the form.
+Future<void> closeFormDialog(
+  BuildContext context, {
+  required bool dirty,
+  required bool submitting,
+  required String question,
+  required String detail,
+}) async {
+  if (submitting) return;
+  if (!dirty) {
+    Navigator.of(context).pop();
+    return;
+  }
+
+  final discard = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(question),
+      content: Text(detail),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Seguir editando'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          style: TextButton.styleFrom(foregroundColor: context.palette.danger),
+          child: const Text('Descartar'),
+        ),
+      ],
+    ),
+  );
+  if (discard == true && context.mounted) Navigator.of(context).pop();
+}
+
 /// Icon, title, subtitle and the close button across the top of a form dialog.
 class FormDialogHeader extends StatelessWidget {
   const FormDialogHeader({
@@ -90,14 +158,22 @@ class FormDialogFooter extends StatelessWidget {
     required this.onCancel,
     required this.onSubmit,
     this.note,
+    this.submitKey,
     super.key,
   });
 
   final bool submitting;
   final String label;
-  final VoidCallback onCancel;
+
+  /// Null on a dialog whose only way on is the primary button — a result
+  /// being acknowledged rather than a form being filled in. Two buttons that
+  /// both close it just make the reader choose between identical doors.
+  final VoidCallback? onCancel;
   final VoidCallback onSubmit;
   final String? note;
+
+  /// On the primary button, for a dialog whose own tests reach for it.
+  final Key? submitKey;
 
   @override
   Widget build(BuildContext context) {
@@ -121,20 +197,21 @@ class FormDialogFooter extends StatelessWidget {
             Expanded(
               child: Text(
                 note!,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
+                style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: palette.textMuted),
               ),
             )
           else
             const Spacer(),
-          TextButton(
-            onPressed: submitting ? null : onCancel,
-            child: const Text('Cancelar'),
-          ),
-          const SizedBox(width: Insets.sm),
+          if (onCancel != null) ...[
+            TextButton(
+              onPressed: submitting ? null : onCancel,
+              child: const Text('Cancelar'),
+            ),
+            const SizedBox(width: Insets.sm),
+          ],
           ElevatedButton(
+            key: submitKey,
             onPressed: submitting ? null : onSubmit,
             style: ElevatedButton.styleFrom(
               minimumSize: const Size(0, 42),
@@ -150,6 +227,64 @@ class FormDialogFooter extends StatelessWidget {
                     ),
                   )
                 : Text(label),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The scrolling middle of a form dialog, between the header and the footer.
+///
+/// A long form is cut off by the footer, and a field cut exactly at its label
+/// reads as a rendering fault rather than as "there is more below". The last
+/// few pixels fade into the surface so the cut is legible as an edge, and the
+/// scrollbar says how much is left.
+class FormDialogBody extends StatelessWidget {
+  const FormDialogBody({required this.child, super.key});
+
+  final Widget child;
+
+  /// Tall enough to read as a fade, short enough not to grey out a field.
+  static const _fade = 24.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+
+    return Flexible(
+      child: Stack(
+        children: [
+          Scrollbar(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(
+                Insets.xxl,
+                Insets.xl,
+                Insets.xxl,
+                Insets.lg,
+              ),
+              child: child,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: _fade,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      palette.surface.withValues(alpha: 0),
+                      palette.surface,
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -185,9 +320,7 @@ class FormSection extends StatelessWidget {
             const SizedBox(height: Insets.xs),
             Text(
               note!,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
+              style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: palette.textMuted),
             ),
           ],
@@ -324,19 +457,34 @@ class DateField extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
     final expiry = value;
-    final soon = expiry != null &&
-        expiry.difference(DateTime.now()).inDays <= 30;
+    final soon =
+        expiry != null && expiry.difference(DateTime.now()).inDays <= 30;
+
+    // A date about to run out is a warning, not a refusal: as `errorText` it
+    // painted the field's border the same red as a date left empty, which said
+    // "wrong" about paperwork the office had entered correctly.
+    final warn = soon && error == null;
 
     return InkWell(
       onTap: onPick,
       borderRadius: Corners.brSm,
       child: InputDecorator(
         decoration: InputDecoration(
-          suffixIcon: const Icon(Icons.calendar_today_outlined, size: 18),
-          errorText: error ?? (soon ? 'Vence en menos de 30 días.' : null),
-          errorStyle: TextStyle(
-            color: error != null ? palette.danger : palette.warning,
+          suffixIcon: Icon(
+            Icons.calendar_today_outlined,
+            size: 18,
+            color: warn ? palette.warning : null,
           ),
+          errorText: error,
+          errorStyle: TextStyle(color: palette.danger),
+          helperText: warn ? 'Vence en menos de 30 días.' : null,
+          helperStyle: TextStyle(color: palette.warning, fontSize: 12),
+          enabledBorder: warn
+              ? OutlineInputBorder(
+                  borderRadius: Corners.brMd,
+                  borderSide: BorderSide(color: palette.warning),
+                )
+              : null,
         ),
         child: Text(
           expiry == null ? 'dd/mm/aaaa' : DoTime.fullDate(expiry),

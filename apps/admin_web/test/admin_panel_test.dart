@@ -214,6 +214,94 @@ Future<void> main() async {
     await tester.pump();
   });
 
+  testWidgets('the map says when the tow is a straight line, not the road',
+      (tester) async {
+    // The bug: with no stored route and no answer from the browser, the panel
+    // drew the straight-line fallback as a solid line like any other route.
+    // A dispatcher read it as a road through the middle of the Ensanche.
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await signIn(tester);
+
+    const pickup = ServiceLocation(
+      geo: LatLng(18.4795, -69.9420),
+      address: 'Gazcue, Santo Domingo',
+    );
+    const dropoff = ServiceLocation(
+      geo: LatLng(18.5001, -69.8800),
+      address: 'Villa Consuelo, Santo Domingo',
+    );
+
+    // Quoted before anything routed it: no polyline on the service.
+    final straight = backend.createService(
+      clientId: 'demo-client-1',
+      pickup: pickup,
+      dropoff: dropoff,
+      vehicle: const ServiceVehicle(make: 'Toyota', model: 'Corolla'),
+      truckType: TruckType.gancho,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(distanceMeters: 8000),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text(straight.code));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Ruta aproximada, no por calles'), findsOneWidget);
+    expect(
+      tester
+          .widgetList<SchematicMap>(find.byType(SchematicMap))
+          .expand((map) => map.routes)
+          .any((route) => route.dashed && route.points.length == 2),
+      isTrue,
+    );
+
+    // The same trip with the road the server stored: drawn as the road, and
+    // the warning goes away.
+    final routed = backend.createService(
+      clientId: 'demo-client-1',
+      pickup: pickup,
+      dropoff: dropoff,
+      vehicle: const ServiceVehicle(make: 'Honda', model: 'Civic'),
+      truckType: TruckType.gancho,
+      quote: const Quote(totalCents: 250000),
+      route: const ServiceRoute(
+        distanceMeters: 8000,
+        polyline: '{gxoBnp{iL{T_jAwj@_|Bod@w|AsXw|A',
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text(routed.code));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Ruta aproximada, no por calles'), findsNothing);
+    expect(
+      tester
+          .widgetList<SchematicMap>(find.byType(SchematicMap))
+          .expand((map) => map.routes)
+          .any((route) => !route.dashed && route.points.length == 5),
+      isTrue,
+    );
+
+    // And with nothing open, the queue draws each job on its roads too. This
+    // is the state the dispatcher watches all night: it used to draw every
+    // queued tow as a line straight across the city.
+    await tester.tap(find.byIcon(Icons.close).first);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final queued = tester
+        .widgetList<SchematicMap>(find.byType(SchematicMap))
+        .expand((map) => map.routes)
+        .toList();
+    expect(queued.any((route) => route.points.length == 5), isTrue);
+
+    backend.dispose();
+    await tester.pump();
+  });
+
   testWidgets('a heavy request waits for the operator to confirm the price',
       (tester) async {
     setDesktopSize(tester);
@@ -1068,6 +1156,55 @@ Future<void> main() async {
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
     expect(find.text('Ya existe una grúa con esa placa.'), findsOneWidget);
+    expect(backend.allTrucks, hasLength(5));
+  });
+
+  testWidgets('a tap outside closes an untouched grúa form', (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await openFleet(tester);
+    await tester.tap(find.text('Nueva grúa'));
+    await tester.pumpAndSettle();
+
+    // The barrier: the top-left corner is outside a dialog this size.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Crear grúa'), findsNothing);
+  });
+
+  testWidgets('a tap outside a filled-in grúa form asks before closing',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await openFleet(tester);
+    await tester.tap(find.text('Nueva grúa'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'L123456'),
+      'L777888',
+    );
+
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    // Still there, with the question over it.
+    expect(find.text('¿Descartar la grúa?'), findsOneWidget);
+    await tester.tap(find.text('Seguir editando'));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear grúa'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'L777888'), findsOneWidget);
+
+    // And discarding takes the whole form with it.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Descartar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Crear grúa'), findsNothing);
     expect(backend.allTrucks, hasLength(5));
   });
 

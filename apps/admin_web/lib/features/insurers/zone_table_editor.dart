@@ -30,15 +30,20 @@ class _ZoneTariffPanelState extends State<ZoneTariffPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SegmentedButton<VehicleClass>(
-          key: const Key('tariff-class'),
-          segments: [
-            for (final c in VehicleClass.priced)
-              ButtonSegment(value: c, label: Text(c.label)),
-          ],
-          selected: {_class},
-          showSelectedIcon: false,
-          onSelectionChanged: (s) => setState(() => _class = s.first),
+        // Sized to its three words rather than stretched across the window:
+        // full width, each segment read as a page-wide tab bar.
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SegmentedButton<VehicleClass>(
+            key: const Key('tariff-class'),
+            segments: [
+              for (final c in VehicleClass.priced)
+                ButtonSegment(value: c, label: Text(c.label)),
+            ],
+            selected: {_class},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) => setState(() => _class = s.first),
+          ),
         ),
         const SizedBox(height: Insets.lg),
         ZoneTableEditor(
@@ -53,6 +58,14 @@ class _ZoneTariffPanelState extends State<ZoneTariffPanel> {
     );
   }
 }
+
+/// The table's column widths. Wide enough for what goes in them — a limit in
+/// kilometres, a price of a few thousand pesos — and no wider.
+const _kmColumn = 132.0;
+const _moneyColumn = 176.0;
+
+/// The two km columns, the two money ones, their gaps and the remove button.
+const _tableWidth = _kmColumn * 2 + _moneyColumn * 2 + Insets.md * 2 + 48;
 
 class _Row {
   _Row({required int? maxKm, required int baseCents, required int extraKmCents})
@@ -107,14 +120,16 @@ class _ZoneTableEditorState extends ConsumerState<ZoneTableEditor>
   bool get wantKeepAlive => true;
 
   static String _shape(List<PricingRule> rules) => [
-        for (final r in rules) '${r.zoneMinKm}-${r.zoneMaxKm}-${r.baseCents}-${r.extraKmCents}',
-      ].join('|');
+    for (final r in rules)
+      '${r.zoneMinKm}-${r.zoneMaxKm}-${r.baseCents}-${r.extraKmCents}',
+  ].join('|');
 
   /// Whether the rows say something other than the table they came from.
   bool get _edited {
     final (typed, _) = _read();
     return typed == null || _shape(typed) != _shape(_loaded);
   }
+
   var _saving = false;
   String? _error;
 
@@ -297,7 +312,8 @@ class _ZoneTableEditorState extends ConsumerState<ZoneTableEditor>
     final (rules, isOwn) = _current(own, defaults);
     // Follows the stored table — a reset, another admin's save — unless
     // something typed here would be thrown away.
-    if (_rows == null || (!_saving && !_edited && _shape(rules) != _shape(_loaded))) {
+    if (_rows == null ||
+        (!_saving && !_edited && _shape(rules) != _shape(_loaded))) {
       _load(rules);
     }
     final rows = _rows!;
@@ -307,159 +323,218 @@ class _ZoneTableEditorState extends ConsumerState<ZoneTableEditor>
     const samples = [5.0, 20.0, 62.0];
 
     return FloatingCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          InlineNotice(
-            key: const Key('tariff-source'),
-            tone: NoticeTone.info,
-            icon: Icons.info_outline,
-            message: switch ((_isDefault, isOwn)) {
-              (true, true) => 'Tarifa base guardada. La usan todas las aseguradoras sin precio propio.',
-              (true, false) => 'Lista de precios incluida. Al guardar, pasa a ser la tarifa base.',
-              (false, true) => 'Precio negociado de esta aseguradora.',
-              (false, false) => 'Esta aseguradora usa la tarifa base. Al guardar, tendrá su propio precio.',
-            },
-          ),
-          const SizedBox(height: Insets.lg),
-          Row(
-            children: [
-              SizedBox(width: 90, child: Text('Desde km', style: muted)),
-              SizedBox(width: 110, child: Text('Hasta km', style: muted)),
-              Expanded(child: Text(r'Precio (RD$, sin ITBIS)', style: muted)),
-              const SizedBox(width: Insets.md),
-              Expanded(child: Text(r'Extra por km (RD$)', style: muted)),
-              const SizedBox(width: 48),
-            ],
-          ),
-          const Divider(),
-          for (var i = 0; i < rows.length; i++)
-            Padding(
-              key: Key('zone-row-$i'),
-              padding: const EdgeInsets.symmetric(vertical: Insets.xs),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 90,
-                    child: Text(
-                      i == 0 ? '0' : rows[i - 1].max.text,
-                      style: text.bodyMedium,
+      // The table is as wide as its columns, and the notice above it and the
+      // buttons below it line up with that rather than running off across a
+      // wide monitor on their own.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: _tableWidth),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InlineNotice(
+              key: const Key('tariff-source'),
+              tone: NoticeTone.info,
+              icon: Icons.info_outline,
+              message: switch ((_isDefault, isOwn)) {
+                (true, true) => 'Tarifa base guardada. La usan todas las aseguradoras sin precio propio.',
+                (true, false) => 'Lista de precios incluida. Al guardar, pasa a ser la tarifa base.',
+                (false, true) => 'Precio negociado de esta aseguradora.',
+                (false, false) => 'Esta aseguradora usa la tarifa base. Al guardar, tendrá su propio precio.',
+              },
+            ),
+            const SizedBox(height: Insets.lg),
+            // Columns sized to what goes in them. Stretched, a four-digit price
+            // sat in a box wide enough for a paragraph, and the eye had to cross
+            // it to reach the next figure.
+            Row(
+              children: [
+                const SizedBox(width: _kmColumn, child: Text('')),
+                SizedBox(
+                  width: _kmColumn,
+                  child: Text('Hasta', style: muted),
+                ),
+                const SizedBox(width: Insets.md),
+                SizedBox(
+                  width: _moneyColumn,
+                  child: Text('Precio (sin ITBIS)', style: muted),
+                ),
+                const SizedBox(width: Insets.md),
+                SizedBox(
+                  width: _moneyColumn,
+                  child: Text('Extra por km', style: muted),
+                ),
+              ],
+            ),
+            const SizedBox(height: Insets.xs),
+            const Divider(height: 1),
+            for (var i = 0; i < rows.length; i++)
+              Padding(
+                key: Key('zone-row-$i'),
+                padding: const EdgeInsets.symmetric(vertical: Insets.sm),
+                child: Row(
+                  children: [
+                    // Where the zone starts: the one before it ended there, so
+                    // it is read, never typed.
+                    SizedBox(
+                      width: _kmColumn,
+                      child: Text(
+                        'Desde ${i == 0 ? '0' : rows[i - 1].max.text} km',
+                        style: muted,
+                      ),
                     ),
-                  ),
-                  SizedBox(
-                    width: 110,
-                    child: i == rows.length - 1
-                        ? Text('Sin límite', style: muted)
-                        : Padding(
-                            padding: const EdgeInsets.only(right: Insets.md),
-                            child: TextField(
+                    SizedBox(
+                      width: _kmColumn,
+                      child: i == rows.length - 1
+                          ? Text('Sin límite', style: muted)
+                          : TextField(
                               key: Key('zone-max-$i'),
                               controller: rows[i].max,
                               enabled: widget.canEdit,
                               keyboardType: TextInputType.number,
                               onChanged: (_) => setState(() {}),
-                              decoration: const InputDecoration(isDense: true),
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                suffixText: 'km',
+                              ),
                             ),
-                          ),
-                  ),
-                  Expanded(
-                    child: TextField(
-                      key: Key('zone-base-$i'),
-                      controller: rows[i].base,
-                      enabled: widget.canEdit,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(isDense: true),
                     ),
-                  ),
-                  const SizedBox(width: Insets.md),
-                  Expanded(
-                    child: TextField(
-                      key: Key('zone-extra-$i'),
-                      controller: rows[i].extra,
-                      enabled: widget.canEdit,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
+                    const SizedBox(width: Insets.md),
+                    SizedBox(
+                      width: _moneyColumn,
+                      child: TextField(
+                        key: Key('zone-base-$i'),
+                        controller: rows[i].base,
+                        enabled: widget.canEdit,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          prefixText: r'RD$ ',
+                        ),
                       ),
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(isDense: true),
                     ),
-                  ),
-                  SizedBox(
-                    width: 48,
-                    child:
-                        widget.canEdit && rows.length > 1 && i < rows.length - 1
-                        ? IconButton(
-                            key: Key('zone-remove-$i'),
-                            tooltip: 'Quitar zona',
-                            onPressed: () => _removeZone(i),
-                            icon: const Icon(
-                              Icons.remove_circle_outline,
-                              size: 20,
-                            ),
-                          )
-                        : null,
+                    const SizedBox(width: Insets.md),
+                    SizedBox(
+                      width: _moneyColumn,
+                      child: TextField(
+                        key: Key('zone-extra-$i'),
+                        controller: rows[i].extra,
+                        enabled: widget.canEdit,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          prefixText: r'RD$ ',
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 48,
+                      child:
+                          widget.canEdit &&
+                              rows.length > 1 &&
+                              i < rows.length - 1
+                          ? IconButton(
+                              key: Key('zone-remove-$i'),
+                              tooltip: 'Quitar zona',
+                              onPressed: () => _removeZone(i),
+                              icon: const Icon(
+                                Icons.remove_circle_outline,
+                                size: 20,
+                              ),
+                            )
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            if (widget.canEdit)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('zone-add'),
+                  onPressed: _addZone,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Agregar zona'),
+                ),
+              ),
+            const SizedBox(height: Insets.md),
+            // What the table above charges, recomputed on every keystroke. It is
+            // the only way to tell a good table from a typo, so it is given the
+            // weight of an answer rather than of a footnote.
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: Insets.lg,
+                  vertical: Insets.md,
+                ),
+                decoration: BoxDecoration(
+                  color: palette.surfaceSubtle,
+                  borderRadius: Corners.brMd,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.calculate_outlined,
+                      size: 18,
+                      color: palette.textMuted,
+                    ),
+                    const SizedBox(width: Insets.sm),
+                    Text(
+                      preview == null
+                          ? 'Ejemplos: completa la tabla para verlos.'
+                          : 'Ejemplos: ${[for (final km in samples) '${km.toStringAsFixed(0)} km = ${ZonePricing.quote(rules: preview, distanceKm: km, tariff: ZoneTariffSource.standard).subtotalCents.formatDOP}'].join(' · ')}',
+                      key: const Key('tariff-examples'),
+                      style: text.bodyMedium?.copyWith(color: palette.text),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: Insets.md),
+              InlineNotice(
+                key: const Key('tariff-error'),
+                tone: NoticeTone.error,
+                icon: Icons.error_outline,
+                message: _error!,
+              ),
+            ],
+            if (widget.canEdit) ...[
+              const SizedBox(height: Insets.lg),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (isOwn)
+                    TextButton(
+                      key: const Key('tariff-reset'),
+                      onPressed: _saving ? null : _reset,
+                      child: Text(
+                        _isDefault
+                            ? 'Volver a la lista incluida'
+                            : 'Usar la tarifa base',
+                      ),
+                    ),
+                  const SizedBox(width: Insets.sm),
+                  ElevatedButton(
+                    key: const Key('tariff-save'),
+                    onPressed: _saving ? null : _save,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(0, 42),
+                    ),
+                    child: const Text('Guardar tarifa'),
                   ),
                 ],
               ),
-            ),
-          if (widget.canEdit)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                key: const Key('zone-add'),
-                onPressed: _addZone,
-                icon: const Icon(Icons.add),
-                label: const Text('Agregar zona'),
-              ),
-            ),
-          const SizedBox(height: Insets.sm),
-          Text(
-            preview == null
-                ? 'Ejemplos: completa la tabla para verlos.'
-                : 'Ejemplos: ${[for (final km in samples) '${km.toStringAsFixed(0)} km = ${ZonePricing.quote(rules: preview, distanceKm: km, tariff: ZoneTariffSource.standard).subtotalCents.formatDOP}'].join(' · ')}',
-            key: const Key('tariff-examples'),
-            style: muted,
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: Insets.md),
-            InlineNotice(
-              key: const Key('tariff-error'),
-              tone: NoticeTone.error,
-              icon: Icons.error_outline,
-              message: _error!,
-            ),
+            ],
           ],
-          if (widget.canEdit) ...[
-            const SizedBox(height: Insets.lg),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (isOwn)
-                  TextButton(
-                    key: const Key('tariff-reset'),
-                    onPressed: _saving ? null : _reset,
-                    child: Text(
-                      _isDefault
-                          ? 'Volver a la lista incluida'
-                          : 'Usar la tarifa base',
-                    ),
-                  ),
-                const SizedBox(width: Insets.sm),
-                ElevatedButton(
-                  key: const Key('tariff-save'),
-                  onPressed: _saving ? null : _save,
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(0, 42),
-                  ),
-                  child: const Text('Guardar tarifa'),
-                ),
-              ],
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }

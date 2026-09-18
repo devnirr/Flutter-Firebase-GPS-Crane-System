@@ -25,6 +25,22 @@ class CashScreen extends ConsumerWidget {
       ..sort((a, b) => b.cashOnHandCents.compareTo(a.cashOnHandCents));
     final total = holding.fold(0, (sum, d) => sum + d.cashOnHandCents);
 
+    // What has already come in this month, as the counterweight to what is
+    // still out: the figure the office is working towards.
+    final now = DateTime.now();
+    final received = settlements
+        .where(
+          (s) =>
+              s.createdAt != null &&
+              s.createdAt!.year == now.year &&
+              s.createdAt!.month == now.month,
+        )
+        .fold(0, (sum, s) => sum + s.amountCents);
+
+    // A project with nothing on either list gets one explanation rather than
+    // two cards each saying they are empty.
+    final nothingYet = holding.isEmpty && settlements.isEmpty;
+
     return ListView(
       padding: const EdgeInsets.all(Insets.xl),
       children: [
@@ -35,68 +51,198 @@ class CashScreen extends ConsumerWidget {
           style: text.bodyMedium?.copyWith(color: palette.textMuted),
         ),
         const SizedBox(height: Insets.xl),
-        Wrap(
-          spacing: Insets.lg,
-          runSpacing: Insets.lg,
+        _KpiRow(
           children: [
             _Kpi(
+              icon: Icons.account_balance_wallet_outlined,
               label: 'Efectivo por entregar',
               value: total.formatDOP,
-              accent: total > 0,
+              color: total > 0 ? palette.brand : null,
             ),
-            _Kpi(label: 'Choferes con efectivo', value: '${holding.length}'),
+            _Kpi(
+              icon: Icons.groups_outlined,
+              label: 'Choferes con efectivo',
+              value: '${holding.length}',
+            ),
+            _Kpi(
+              icon: Icons.task_alt_outlined,
+              label: 'Recibido este mes',
+              value: received.formatDOP,
+              color: received > 0 ? palette.success : null,
+            ),
           ],
         ),
         const SizedBox(height: Insets.xl),
-        FloatingCard(
-          key: const Key('cash-by-driver'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Por chofer', style: text.titleMedium),
-              const SizedBox(height: Insets.md),
-              if (holding.isEmpty)
-                Text(
-                  'Ningún chofer tiene efectivo por entregar.',
-                  style: text.bodyMedium?.copyWith(color: palette.textMuted),
-                )
-              else
-                for (final driver in holding) _DriverCashRow(driver: driver),
+        if (nothingYet)
+          const FloatingCard(
+            key: Key('cash-by-driver'),
+            child: EmptyState(
+              icon: Icons.payments_outlined,
+              title: 'Nada pendiente de entregar',
+              message:
+                  'Cuando un chofer cobre un servicio en efectivo, '
+                  'aparece aquí para hacerle el corte.',
+            ),
+          )
+        else ...[
+          _Section(
+            cardKey: const Key('cash-by-driver'),
+            title: 'Por chofer',
+            count: holding.length,
+            emptyMessage: 'Ningún chofer tiene efectivo por entregar.',
+            rows: [
+              for (final driver in holding) _DriverCashRow(driver: driver),
             ],
           ),
-        ),
-        const SizedBox(height: Insets.xl),
-        FloatingCard(
-          key: const Key('cash-settlements'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Cortes realizados', style: text.titleMedium),
-              const SizedBox(height: Insets.md),
-              if (settlements.isEmpty)
-                Text(
-                  'Todavía no hay cortes.',
-                  style: text.bodyMedium?.copyWith(color: palette.textMuted),
-                )
-              else
-                for (final corte in settlements)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.receipt_long_outlined),
-                    title: Text(corte.driverName.isEmpty ? 'Chofer' : corte.driverName),
-                    subtitle: Text(
-                      [
-                        if (corte.createdAt != null) DoTime.dateAndTime(corte.createdAt!),
-                        '${corte.serviceCount} servicio${corte.serviceCount == 1 ? '' : 's'}',
-                        if (corte.note.isNotEmpty) corte.note,
-                      ].join(' · '),
-                    ),
-                    trailing: Text(corte.amountLabel, style: text.titleSmall),
-                  ),
+          const SizedBox(height: Insets.xl),
+          _Section(
+            cardKey: const Key('cash-settlements'),
+            title: 'Cortes realizados',
+            count: settlements.length,
+            emptyMessage: 'Todavía no hay cortes.',
+            rows: [
+              for (final corte in settlements) _SettlementRow(corte: corte),
             ],
           ),
-        ),
+        ],
       ],
+    );
+  }
+}
+
+/// A titled card holding a list, with the count beside the title and a line
+/// between rows so a long list reads as rows rather than as a block.
+class _Section extends StatelessWidget {
+  const _Section({
+    required this.cardKey,
+    required this.title,
+    required this.count,
+    required this.emptyMessage,
+    required this.rows,
+  });
+
+  final Key cardKey;
+  final String title;
+  final int count;
+  final String emptyMessage;
+  final List<Widget> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+
+    return FloatingCard(
+      key: cardKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(title, style: text.titleMedium),
+              const SizedBox(width: Insets.sm),
+              if (rows.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Insets.sm,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceSubtle,
+                    borderRadius: Corners.brSm,
+                  ),
+                  child: Text(
+                    '$count',
+                    style: text.labelMedium?.copyWith(color: palette.textMuted),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: Insets.sm),
+          if (rows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: Insets.lg),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.inbox_outlined,
+                    size: 18,
+                    color: palette.textFaint,
+                  ),
+                  const SizedBox(width: Insets.sm),
+                  Text(
+                    emptyMessage,
+                    style: text.bodyMedium?.copyWith(color: palette.textMuted),
+                  ),
+                ],
+              ),
+            )
+          else
+            for (final (index, row) in rows.indexed) ...[
+              if (index > 0) const Divider(height: 1),
+              row,
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One corte already taken in.
+class _SettlementRow extends StatelessWidget {
+  const _SettlementRow({required this.corte});
+
+  final CashSettlement corte;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final palette = context.palette;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Insets.md),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: palette.successTint,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.receipt_long_outlined,
+              size: 18,
+              color: palette.success,
+            ),
+          ),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  corte.driverName.isEmpty ? 'Chofer' : corte.driverName,
+                  style: text.titleSmall,
+                ),
+                Text(
+                  [
+                    if (corte.createdAt != null)
+                      DoTime.dateAndTime(corte.createdAt!),
+                    if (corte.serviceCount == 1)
+                      '1 servicio'
+                    else
+                      '${corte.serviceCount} servicios',
+                    if (corte.note.isNotEmpty) corte.note,
+                  ].join(' · '),
+                  style: text.bodySmall?.copyWith(color: palette.textMuted),
+                ),
+              ],
+            ),
+          ),
+          Text(corte.amountLabel, style: text.titleSmall),
+        ],
+      ),
     );
   }
 }
@@ -111,7 +257,7 @@ class _DriverCashRow extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Insets.sm),
+      padding: const EdgeInsets.symmetric(vertical: Insets.md),
       child: Row(
         children: [
           DriverAvatar.of(driver),
@@ -124,22 +270,38 @@ class _DriverCashRow extends StatelessWidget {
                 Text(
                   driver.lastCashSettlementAt == null
                       ? 'Sin cortes anteriores'
-                      : 'Último corte: ${DoTime.dateAndTime(driver.lastCashSettlementAt!)}',
+                      : 'Último corte: '
+                            '${DoTime.dateAndTime(driver.lastCashSettlementAt!)}',
                   style: text.bodySmall?.copyWith(color: palette.textMuted),
                 ),
               ],
             ),
           ),
-          Text(driver.cashOnHandCents.formatDOP, style: text.titleMedium),
+          // A fixed column so the figures line up under each other rather than
+          // ending wherever the name left off.
+          SizedBox(
+            width: 150,
+            child: Text(
+              driver.cashOnHandCents.formatDOP,
+              textAlign: TextAlign.right,
+              style: text.titleMedium,
+            ),
+          ),
           const SizedBox(width: Insets.lg),
-          ElevatedButton(
+          // Outlined, not filled: one of these per chofer, and a column of
+          // solid red buttons reads as a page full of warnings.
+          OutlinedButton.icon(
             key: Key('settle-${driver.id}'),
             onPressed: () => showDialog<void>(
               context: context,
               builder: (_) => _SettleDialog(driver: driver),
             ),
-            style: ElevatedButton.styleFrom(minimumSize: const Size(0, 40)),
-            child: const Text('Hacer corte'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+            ),
+            icon: const Icon(Icons.point_of_sale_outlined, size: 18),
+            label: const Text('Hacer corte'),
           ),
         ],
       ),
@@ -173,10 +335,9 @@ class _SettleDialogState extends ConsumerState<_SettleDialog> {
       _saving = true;
       _error = null;
     });
-    final result = await ref.read(functionsGatewayProvider).settleDriverCash(
-          driverId: widget.driver.id,
-          note: _note.text.trim(),
-        );
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .settleDriverCash(driverId: widget.driver.id, note: _note.text.trim());
     if (!mounted) return;
     switch (result) {
       case Ok(:final value):
@@ -280,33 +441,97 @@ class _SettleDialogState extends ConsumerState<_SettleDialog> {
   }
 }
 
-class _Kpi extends StatelessWidget {
-  const _Kpi({required this.label, required this.value, this.accent = false});
+/// The figures across the top, sharing the width evenly so their row ends
+/// where the cards below it do, and wrapping to fixed-width tiles when the
+/// window is too narrow to split three ways.
+class _KpiRow extends StatelessWidget {
+  const _KpiRow({required this.children});
 
+  final List<Widget> children;
+
+  /// Under this, three tiles side by side leave no room for the figures.
+  static const _wrapUnder = 860.0;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (constraints.maxWidth < _wrapUnder) {
+        return Wrap(
+          spacing: Insets.lg,
+          runSpacing: Insets.lg,
+          children: [
+            for (final child in children) SizedBox(width: 280, child: child),
+          ],
+        );
+      }
+      return IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (index, child) in children.indexed) ...[
+              if (index > 0) const SizedBox(width: Insets.lg),
+              Expanded(child: child),
+            ],
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// One figure across the top: an icon in a tinted circle, what it counts, and
+/// the number itself in the colour that says how to read it.
+class _Kpi extends StatelessWidget {
+  const _Kpi({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.color,
+  });
+
+  final IconData icon;
   final String label;
   final String value;
-  final bool accent;
+
+  /// Null for a plain figure. A colour both tints the icon and colours the
+  /// number, so the tile reads as one thing rather than two.
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final palette = context.palette;
-    return SizedBox(
-      width: 260,
-      child: FloatingCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            FieldLabel(label),
-            const SizedBox(height: Insets.sm),
-            Text(
-              value,
-              style: text.headlineMedium?.copyWith(
-                color: accent ? palette.brand : palette.text,
-              ),
+    final tone = color ?? palette.textMuted;
+
+    return FloatingCard(
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: tone.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
             ),
-          ],
-        ),
+            child: Icon(icon, size: 21, color: tone),
+          ),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FieldLabel(label),
+                const SizedBox(height: Insets.xxs),
+                Text(
+                  value,
+                  style: text.headlineSmall?.copyWith(
+                    color: color ?? palette.text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

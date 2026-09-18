@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
@@ -5,10 +8,11 @@ import 'package:grua_core/grua_core.dart';
 import '../shared/form_dialog.dart';
 
 /// Opens the form for a new insurance company. Returns its id, or null.
+/// A tap outside closes an untouched form and asks before throwing away a
+/// filled-in one; see [FormDialogScope].
 Future<String?> showCreateInsurerDialog(BuildContext context) =>
     showDialog<String>(
       context: context,
-      barrierDismissible: false,
       builder: (_) => const InsurerFormDialog(),
     );
 
@@ -16,7 +20,6 @@ Future<String?> showCreateInsurerDialog(BuildContext context) =>
 Future<bool?> showEditInsurerDialog(BuildContext context, Insurer insurer) =>
     showDialog<bool>(
       context: context,
-      barrierDismissible: false,
       builder: (_) => InsurerFormDialog(editing: insurer),
     );
 
@@ -81,12 +84,46 @@ class _InsurerFormDialogState extends ConsumerState<InsurerFormDialog> {
     final bps => (bps / 100).toStringAsFixed(1),
   };
 
+  /// Every field as it stood when the form opened. An edit starts out
+  /// unchanged rather than fully typed.
+  late final List<Object?> _opened;
+
   @override
   void initState() {
     super.initState();
+    _opened = _snapshot();
     // The example under the field follows what is typed.
     _payout.addListener(() => setState(() {}));
   }
+
+  /// Every field, in a fixed order, to compare against [_opened].
+  List<Object?> _snapshot() => [
+    for (final c in [
+      _name,
+      _rnc,
+      _billingEmail,
+      _contactName,
+      _contactEmail,
+      _contactPhone,
+      _payout,
+    ])
+      c.text.trim(),
+  ];
+
+  bool get _dirty => !listEquals(_snapshot(), _opened);
+
+  /// Closes the form, through the panel's one rule for it.
+  Future<void> _close() => closeFormDialog(
+    context,
+    dirty: _dirty,
+    submitting: _submitting,
+    question: _isEdit
+        ? '¿Descartar los cambios?'
+        : '¿Descartar la aseguradora?',
+    detail: _isEdit
+        ? 'Los cambios que hiciste no se guardan.'
+        : 'Lo que escribiste se pierde y la empresa no se agrega.',
+  );
 
   @override
   void dispose() {
@@ -167,187 +204,202 @@ class _InsurerFormDialogState extends ConsumerState<InsurerFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FormDialogHeader(
-              icon: Icons.shield_outlined,
-              title: _isEdit ? 'Editar aseguradora' : 'Nueva aseguradora',
-              subtitle:
-                  'Sus datos de facturación y lo que se le paga al chofer.',
-              onClose: _submitting ? null : () => Navigator.of(context).pop(),
-            ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(
-                  Insets.xxl,
-                  Insets.xl,
-                  Insets.xxl,
-                  Insets.lg,
-                ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const FormSection(
-                        'Empresa',
-                        note: 'Como aparece en la factura del mes.',
-                      ),
-                      LabeledField(
-                        label: 'Razón social',
-                        required: true,
-                        child: TextFormField(
-                          key: const Key('insurer-name'),
-                          controller: _name,
-                          textCapitalization: TextCapitalization.words,
-                          decoration: const InputDecoration(
-                            hintText: 'Seguros Universal, S. A.',
-                            prefixIcon: Icon(Icons.business_outlined, size: 18),
-                          ),
-                          validator: (v) => (v ?? '').trim().length < 2
-                              ? 'Escribe el nombre.'
-                              : null,
+    return FormDialogScope(
+      onClose: () => unawaited(_close()),
+      child: Dialog(
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FormDialogHeader(
+                icon: Icons.shield_outlined,
+                title: _isEdit ? 'Editar aseguradora' : 'Nueva aseguradora',
+                subtitle:
+                    'Sus datos de facturación y lo que se le paga al chofer.',
+                onClose: _submitting ? null : () => unawaited(_close()),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(
+                    Insets.xxl,
+                    Insets.xl,
+                    Insets.xxl,
+                    Insets.lg,
+                  ),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const FormSection(
+                          'Empresa',
+                          note: 'Como aparece en la factura del mes.',
                         ),
-                      ),
-                      FormRow(
-                        left: LabeledField(
-                          label: 'RNC',
+                        LabeledField(
+                          label: 'Razón social',
                           required: true,
-                          help: 'Nueve dígitos, como lo emite la DGII.',
                           child: TextFormField(
-                            key: const Key('insurer-rnc'),
-                            controller: _rnc,
-                            inputFormatters: [RncInputFormatter()],
-                            keyboardType: TextInputType.number,
+                            key: const Key('insurer-name'),
+                            controller: _name,
+                            textCapitalization: TextCapitalization.words,
                             decoration: const InputDecoration(
-                              hintText: '1-30-00000-1',
-                              prefixIcon: Icon(Icons.badge_outlined, size: 18),
-                            ),
-                            validator: DoValidators.companyRnc,
-                          ),
-                        ),
-                        right: LabeledField(
-                          label: 'Correo de facturación',
-                          required: true,
-                          help: 'Adonde va la factura del mes.',
-                          child: TextFormField(
-                            key: const Key('insurer-billing-email'),
-                            controller: _billingEmail,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration: const InputDecoration(
-                              hintText: 'facturas@empresa.com.do',
+                              hintText: 'Seguros Universal, S. A.',
                               prefixIcon: Icon(
-                                Icons.receipt_long_outlined,
+                                Icons.business_outlined,
                                 size: 18,
                               ),
                             ),
-                            validator: DoValidators.email,
+                            validator: (v) => (v ?? '').trim().length < 2
+                                ? 'Escribe el nombre.'
+                                : null,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: Insets.sm),
-                      const FormSection(
-                        'Contacto',
-                        note:
-                            'Opcional: a quién llamar por un servicio o una '
-                            'factura.',
-                      ),
-                      if (!_showContact)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            key: const Key('add-insurer-contact'),
-                            onPressed: () =>
-                                setState(() => _showContact = true),
-                            icon: const Icon(Icons.person_add_alt, size: 18),
-                            label: const Text('Agregar contacto'),
-                          ),
-                        ),
-                      if (_showContact) ...[
                         FormRow(
                           left: LabeledField(
-                            label: 'Nombre',
+                            label: 'RNC',
+                            required: true,
+                            help: 'Nueve dígitos, como lo emite la DGII.',
                             child: TextFormField(
-                              key: const Key('insurer-contact-name'),
-                              controller: _contactName,
-                              textCapitalization: TextCapitalization.words,
+                              key: const Key('insurer-rnc'),
+                              controller: _rnc,
+                              inputFormatters: [RncInputFormatter()],
+                              keyboardType: TextInputType.number,
                               decoration: const InputDecoration(
-                                hintText: 'Marta Reyes',
+                                hintText: '1-30-00000-1',
                                 prefixIcon: Icon(
-                                  Icons.person_outline,
+                                  Icons.badge_outlined,
                                   size: 18,
+                                ),
+                              ),
+                              validator: DoValidators.companyRnc,
+                            ),
+                          ),
+                          right: LabeledField(
+                            label: 'Correo de facturación',
+                            required: true,
+                            help: 'Adonde va la factura del mes.',
+                            child: TextFormField(
+                              key: const Key('insurer-billing-email'),
+                              controller: _billingEmail,
+                              keyboardType: TextInputType.emailAddress,
+                              decoration: const InputDecoration(
+                                hintText: 'facturas@empresa.com.do',
+                                prefixIcon: Icon(
+                                  Icons.receipt_long_outlined,
+                                  size: 18,
+                                ),
+                              ),
+                              validator: DoValidators.email,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: Insets.sm),
+                        const FormSection(
+                          'Contacto',
+                          note:
+                              'Opcional: a quién llamar por un servicio o una '
+                              'factura.',
+                        ),
+                        if (!_showContact)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              key: const Key('add-insurer-contact'),
+                              onPressed: () =>
+                                  setState(() => _showContact = true),
+                              icon: const Icon(Icons.person_add_alt, size: 18),
+                              label: const Text('Agregar contacto'),
+                            ),
+                          ),
+                        if (_showContact) ...[
+                          FormRow(
+                            left: LabeledField(
+                              label: 'Nombre',
+                              child: TextFormField(
+                                key: const Key('insurer-contact-name'),
+                                controller: _contactName,
+                                textCapitalization: TextCapitalization.words,
+                                decoration: const InputDecoration(
+                                  hintText: 'Marta Reyes',
+                                  prefixIcon: Icon(
+                                    Icons.person_outline,
+                                    size: 18,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            right: LabeledField(
+                              label: 'Teléfono',
+                              child: TextFormField(
+                                key: const Key('insurer-contact-phone'),
+                                controller: _contactPhone,
+                                keyboardType: TextInputType.phone,
+                                inputFormatters: [DoPhoneInputFormatter()],
+                                decoration: const InputDecoration(
+                                  hintText: '(809) 555-0123',
+                                  prefixIcon: Icon(
+                                    Icons.call_outlined,
+                                    size: 18,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                          right: LabeledField(
-                            label: 'Teléfono',
+                          LabeledField(
+                            label: 'Correo',
                             child: TextFormField(
-                              key: const Key('insurer-contact-phone'),
-                              controller: _contactPhone,
-                              keyboardType: TextInputType.phone,
-                              inputFormatters: [DoPhoneInputFormatter()],
+                              key: const Key('insurer-contact-email'),
+                              controller: _contactEmail,
+                              keyboardType: TextInputType.emailAddress,
                               decoration: const InputDecoration(
-                                hintText: '(809) 555-0123',
-                                prefixIcon: Icon(Icons.call_outlined, size: 18),
+                                hintText: 'marta@empresa.com.do',
+                                prefixIcon: Icon(
+                                  Icons.alternate_email,
+                                  size: 18,
+                                ),
                               ),
+                              validator: (v) => (v ?? '').trim().isEmpty
+                                  ? null
+                                  : DoValidators.email(v),
                             ),
                           ),
-                        ),
-                        LabeledField(
-                          label: 'Correo',
-                          child: TextFormField(
-                            key: const Key('insurer-contact-email'),
-                            controller: _contactEmail,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration: const InputDecoration(
-                              hintText: 'marta@empresa.com.do',
-                              prefixIcon: Icon(Icons.alternate_email, size: 18),
-                            ),
-                            validator: (v) => (v ?? '').trim().isEmpty
-                                ? null
-                                : DoValidators.email(v),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: Insets.sm),
-                      const FormSection(
-                        'Pago al chofer',
-                        note:
-                            'Lo que recibe el chofer por cada grúa de esta '
-                            'empresa, sobre el precio sin ITBIS.',
-                      ),
-                      _PayoutField(
-                        controller: _payout,
-                        validator: _payoutProblem,
-                      ),
-                      if (_error != null) ...[
+                        ],
                         const SizedBox(height: Insets.sm),
-                        InlineNotice(
-                          key: const Key('insurer-form-error'),
-                          tone: NoticeTone.error,
-                          icon: Icons.error_outline,
-                          message: _error!,
+                        const FormSection(
+                          'Pago al chofer',
+                          note:
+                              'Lo que recibe el chofer por cada grúa de esta '
+                              'empresa, sobre el precio sin ITBIS.',
                         ),
+                        _PayoutField(
+                          controller: _payout,
+                          validator: _payoutProblem,
+                        ),
+                        if (_error != null) ...[
+                          const SizedBox(height: Insets.sm),
+                          InlineNotice(
+                            key: const Key('insurer-form-error'),
+                            tone: NoticeTone.error,
+                            icon: Icons.error_outline,
+                            message: _error!,
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            FormDialogFooter(
-              submitting: _submitting,
-              note: '* Obligatorio',
-              label: _isEdit ? 'Guardar cambios' : 'Crear aseguradora',
-              onCancel: () => Navigator.of(context).pop(),
-              onSubmit: _submit,
-            ),
-          ],
+              FormDialogFooter(
+                submitting: _submitting,
+                note: '* Obligatorio',
+                label: _isEdit ? 'Guardar cambios' : 'Crear aseguradora',
+                onCancel: () => unawaited(_close()),
+                onSubmit: _submit,
+              ),
+            ],
+          ),
         ),
       ),
     );
