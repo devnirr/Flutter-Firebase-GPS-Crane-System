@@ -20,6 +20,16 @@ val localProperties = Properties().apply {
 
 // The repo-root .env (git-ignored) shares the key across both apps. Its
 // KEY=VALUE lines are valid .properties syntax, so Properties parses it as is.
+// The upload keystore, kept out of git: android/key.properties names the
+// file and its passwords. Without it a release build falls back to the debug
+// key, so `flutter run --release` still works on a dev machine — but Play
+// refuses a debug-signed bundle, so a store build needs this file.
+val keyProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasUploadKey = keyProperties.getProperty("storeFile") != null
+
 val envProperties = Properties().apply {
     val file = rootProject.file("../../../.env")
     if (file.exists()) file.inputStream().use { load(it) }
@@ -62,11 +72,27 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasUploadKey) {
+            create("release") {
+                storeFile = rootProject.file(keyProperties.getProperty("storeFile"))
+                storePassword = keyProperties.getProperty("storePassword")
+                keyAlias = keyProperties.getProperty("keyAlias")
+                keyPassword = keyProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasUploadKey) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+            // Left unshrunk on purpose: LiveKit and the Firebase SDKs load
+            // classes by reflection, and R8 stripping one of them breaks only
+            // the release build, on a device. Not worth the megabytes here.
         }
     }
 }

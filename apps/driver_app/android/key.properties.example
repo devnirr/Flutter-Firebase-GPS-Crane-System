@@ -1,0 +1,9 @@
+# Copy to key.properties (git-ignored) and fill in. The keystore itself lives
+# outside the repo — losing it means this app can never be updated on Play.
+#
+#   keytool -genkey -v -keystore %USERPROFILE%\gruasrd-upload.jks \
+#     -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+storeFile=C:/Users/YOU/gruasrd-upload.jks
+storePassword=
+keyAlias=upload
+keyPassword=

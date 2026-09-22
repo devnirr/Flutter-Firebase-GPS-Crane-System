@@ -46,6 +46,7 @@ dependencies:
   fl_chart: ^1.2.0
 
 dev_dependencies:
+  flutter_launcher_icons: ^0.14.4
   flutter_test:
     sdk: flutter
   integration_test:
@@ -60,3 +61,17 @@ flutter:
   assets:
     - assets/images/
     - assets/sounds/
+
+# The launcher icon, generated from the company logo:
+#   flutter pub run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/logo_icon.jpeg
+  min_sdk_android: 24
+  remove_alpha_ios: true
+  # Android 8+ draws its own shape around the icon: the logo sits on the blue
+  # it is drawn on, inset so the mask cannot cut into the lettering.
+  adaptive_icon_background: "#1B4FD8"
+  adaptive_icon_foreground: assets/logo_icon.jpeg
+  adaptive_icon_foreground_inset: 18

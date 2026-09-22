@@ -15,7 +15,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
 
     <application
-        android:label="client_app"
+        android:label="Cliente"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <meta-data
