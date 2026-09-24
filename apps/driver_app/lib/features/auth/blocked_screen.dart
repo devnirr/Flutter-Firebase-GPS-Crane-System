@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
-import 'app_presence.dart';
 import 'license_verification_view.dart';
+import 'sign_out_button.dart';
 
 /// Shown when a chofer can sign in but cannot work.
 ///
@@ -76,10 +76,7 @@ class BlockedScreen extends ConsumerWidget {
                       label: const Text('Llamar a la oficina'),
                     ),
                   const SizedBox(height: Insets.md),
-                  OutlinedButton(
-                    onPressed: () => signOutDriver(ref),
-                    child: const Text('Cerrar sesión'),
-                  ),
+                  const SignOutButton(outlined: true),
                 ],
               ),
             ),

@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
-import 'app_presence.dart';
 import 'correct_registration_screen.dart';
 import 'license_upload.dart';
+import 'sign_out_button.dart';
 
 /// What a self-registered chofer sees until the office activates them: where
 /// the licence check stands, and new photos to send when it asks for them.
@@ -86,10 +86,7 @@ class LicenseVerificationView extends ConsumerWidget {
                     bottom: Insets.gutter,
                     left: Insets.gutter,
                     right: Insets.gutter,
-                    child: TextButton(
-                      onPressed: submitting ? null : () => signOutDriver(ref),
-                      child: const Text('Cerrar sesión'),
-                    ),
+                    child: SignOutButton(enabled: !submitting),
                   ),
                 ],
               )
@@ -112,12 +109,7 @@ class LicenseVerificationView extends ConsumerWidget {
                               child: Center(child: body),
                             ),
                           ),
-                          TextButton(
-                            onPressed: submitting
-                                ? null
-                                : () => signOutDriver(ref),
-                            child: const Text('Cerrar sesión'),
-                          ),
+                          SignOutButton(enabled: !submitting),
                         ],
                       ),
                     ),

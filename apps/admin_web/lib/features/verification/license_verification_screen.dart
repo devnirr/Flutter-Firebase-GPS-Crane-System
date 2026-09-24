@@ -35,8 +35,9 @@ enum LicenseQueue {
   bool contains(Driver driver) {
     final state = driver.licenseVerification?.state;
     return switch (this) {
-      LicenseQueue.toActivate => state == LicenseVerificationState.verified &&
-          driver.status == DriverStatus.inactive,
+      LicenseQueue.toActivate =>
+        state == LicenseVerificationState.verified &&
+            driver.status == DriverStatus.inactive,
       LicenseQueue.manualReview =>
         state == LicenseVerificationState.manualReview,
       LicenseQueue.rejected => state == LicenseVerificationState.rejected,
@@ -49,9 +50,8 @@ enum LicenseQueue {
 }
 
 /// Choferes with a licence check, the archived left out.
-List<Driver> choferesWithLicenseCheck(List<Driver> drivers) => drivers
-    .where((d) => !d.archived && d.licenseVerification != null)
-    .toList();
+List<Driver> choferesWithLicenseCheck(List<Driver> drivers) =>
+    drivers.where((d) => !d.archived && d.licenseVerification != null).toList();
 
 /// What the sidebar badge counts: licences waiting on the office.
 int licensesNeedingOffice(List<Driver> drivers) =>
@@ -75,18 +75,23 @@ class _LicenseVerificationScreenState
     final drivers = choferesWithLicenseCheck(roster.value ?? const []);
 
     final query = _query.trim().toLowerCase();
-    final shown = drivers.where((d) {
-      if (!_queue.contains(d)) return false;
-      if (query.isEmpty) return true;
-      return d.name.toLowerCase().contains(query) || d.cedula.contains(query);
-    }).toList()
-      // Oldest first: whoever has waited longest is next.
-      ..sort(
-        (a, b) => (a.licenseVerification?.updatedAt ?? a.createdAt ?? DateTime(0))
-            .compareTo(
-          b.licenseVerification?.updatedAt ?? b.createdAt ?? DateTime(0),
-        ),
-      );
+    final shown =
+        drivers.where((d) {
+            if (!_queue.contains(d)) return false;
+            if (query.isEmpty) return true;
+            return d.name.toLowerCase().contains(query) ||
+                d.cedula.contains(query);
+          }).toList()
+          // Oldest first: whoever has waited longest is next.
+          ..sort(
+            (a, b) =>
+                (a.licenseVerification?.updatedAt ?? a.createdAt ?? DateTime(0))
+                    .compareTo(
+                      b.licenseVerification?.updatedAt ??
+                          b.createdAt ??
+                          DateTime(0),
+                    ),
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -164,7 +169,8 @@ class _LicenseVerificationScreenState
     if (drivers.isEmpty) {
       return const EmptyState(
         title: 'Sin registros desde la app',
-        message: 'Cuando un chofer se registre desde la app, su licencia '
+        message:
+            'Cuando un chofer se registre desde la app, su licencia '
             'aparecerá aquí.',
         icon: Icons.verified_user_outlined,
       );
@@ -223,6 +229,7 @@ class _Table extends StatelessWidget {
             rows: [
               for (final driver in drivers)
                 DataRow(
+                  key: ValueKey(driver.id),
                   onSelectChanged: (_) => onReview(driver),
                   cells: [
                     DataCell(
@@ -237,8 +244,9 @@ class _Table extends StatelessWidget {
                               Text(driver.name, style: text.titleSmall),
                               Text(
                                 driver.email,
-                                style: text.bodySmall
-                                    ?.copyWith(color: palette.textMuted),
+                                style: text.bodySmall?.copyWith(
+                                  color: palette.textMuted,
+                                ),
                               ),
                             ],
                           ),
@@ -276,8 +284,9 @@ class _Table extends StatelessWidget {
                     DataCell(
                       Text(
                         _when(driver.licenseVerification!.updatedAt),
-                        style: text.bodySmall
-                            ?.copyWith(color: palette.textMuted),
+                        style: text.bodySmall?.copyWith(
+                          color: palette.textMuted,
+                        ),
                       ),
                     ),
                     DataCell(
@@ -315,10 +324,15 @@ class LicenseStatePill extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final (fg, bg) = switch (state) {
-      LicenseVerificationState.verified => (palette.success, palette.successTint),
+      LicenseVerificationState.verified => (
+        palette.success,
+        palette.successTint,
+      ),
       LicenseVerificationState.rejected => (palette.danger, palette.dangerTint),
-      LicenseVerificationState.manualReview =>
-        (palette.warning, palette.warningTint),
+      LicenseVerificationState.manualReview => (
+        palette.warning,
+        palette.warningTint,
+      ),
       _ => (palette.textMuted, palette.surfaceSubtle),
     };
 

@@ -92,7 +92,8 @@ class CashScreen extends ConsumerWidget {
             count: holding.length,
             emptyMessage: 'Ningún chofer tiene efectivo por entregar.',
             rows: [
-              for (final driver in holding) _DriverCashRow(driver: driver),
+              for (final driver in holding)
+                _DriverCashRow(key: ValueKey(driver.id), driver: driver),
             ],
           ),
           const SizedBox(height: Insets.xl),
@@ -102,7 +103,8 @@ class CashScreen extends ConsumerWidget {
             count: settlements.length,
             emptyMessage: 'Todavía no hay cortes.',
             rows: [
-              for (final corte in settlements) _SettlementRow(corte: corte),
+              for (final corte in settlements)
+                _SettlementRow(key: ValueKey(corte.id), corte: corte),
             ],
           ),
         ],
@@ -191,7 +193,7 @@ class _Section extends StatelessWidget {
 
 /// One corte already taken in.
 class _SettlementRow extends StatelessWidget {
-  const _SettlementRow({required this.corte});
+  const _SettlementRow({required this.corte, super.key});
 
   final CashSettlement corte;
 
@@ -249,7 +251,7 @@ class _SettlementRow extends StatelessWidget {
 }
 
 class _DriverCashRow extends StatelessWidget {
-  const _DriverCashRow({required this.driver});
+  const _DriverCashRow({required this.driver, super.key});
 
   final Driver driver;
 

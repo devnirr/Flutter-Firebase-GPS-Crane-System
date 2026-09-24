@@ -252,6 +252,34 @@ Future<void> main() async {
     expect(find.text('Licencia verificada'), findsOneWidget);
   });
 
+  testWidgets('an inactive account can sign out',
+      (tester) async {
+    final backend = DemoBackend()..seed();
+    final driver = backend.createDriver(
+      name: 'Ramón Peña Díaz',
+      cedula: '00100000017',
+      phone: '+18095550000',
+      email: 'ramon@gruasrd.do',
+      licenseNumber: 'L-1',
+      licenseExpiry: DateTime.now().add(const Duration(days: 300)),
+    )!;
+    final app = harness(backend);
+    backend.currentUserId = driver.id;
+    await tester.pumpWidget(app);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, 'ramon@gruasrd.do');
+    await tester.enterText(find.byType(TextFormField).last, 'secret123');
+    await tester.tap(find.text('ENTRAR'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(find.text('Cuenta no activa'), findsOneWidget);
+
+    // The demo signs out at once, so the spinner the button shows on a real
+    // connection has no frame to appear in; what matters here is the result.
+    await tester.tap(find.text('Cerrar sesión'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(find.text('ENTRAR'), findsOneWidget);
+  });
+
   testWidgets('signing in reaches the home screen', (tester) async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();

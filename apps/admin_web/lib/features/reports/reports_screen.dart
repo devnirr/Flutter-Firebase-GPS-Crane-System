@@ -266,6 +266,7 @@ class _DriverLeaderboard extends ConsumerWidget {
         else
           for (final (index, row) in top.indexed)
             Padding(
+              key: ValueKey(row.driver.id),
               padding: const EdgeInsets.symmetric(
                 horizontal: Insets.lg,
                 vertical: Insets.md,

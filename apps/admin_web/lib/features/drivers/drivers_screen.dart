@@ -143,7 +143,8 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
     if (drivers.isEmpty) {
       return const EmptyState(
         title: 'Todavía no hay choferes',
-        message: 'Crea el primero con "Nuevo chofer", o espera a que alguien '
+        message:
+            'Crea el primero con "Nuevo chofer", o espera a que alguien '
             'se registre desde la app.',
         icon: Icons.badge_outlined,
       );
@@ -183,11 +184,11 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
   }
 
   Future<void> _viewDriver(Driver driver) => showDriverDetailsDialog(
-        context,
-        driver,
-        onEdit: () => unawaited(_editDriver(driver)),
-        onChangeStatus: (target) => unawaited(_changeStatus(driver, target)),
-      );
+    context,
+    driver,
+    onEdit: () => unawaited(_editDriver(driver)),
+    onChangeStatus: (target) => unawaited(_changeStatus(driver, target)),
+  );
 
   /// Activates, deactivates or suspends [driver] after the office confirms.
   ///
@@ -209,15 +210,13 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
     final reason = await showDriverStatusDialog(context, driver, target);
     if (reason == null || !mounted) return;
 
-    final result = await ref.read(functionsGatewayProvider).setDriverStatus(
-          driverId: driver.id,
-          status: target,
-          reason: reason,
-        );
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .setDriverStatus(driverId: driver.id, status: target, reason: reason);
     toast.show(
       result.isErr
           ? result.failureOrNull?.userMessage ??
-              'No se pudo cambiar el estado del chofer.'
+                'No se pudo cambiar el estado del chofer.'
           : switch (target) {
               DriverStatus.active => '${driver.name} ya puede trabajar.',
               DriverStatus.suspended => '${driver.name} fue suspendido.',
@@ -262,11 +261,13 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
     if (confirmed != true || !mounted) return;
 
     final toast = Toaster.of(context);
-    final result =
-        await ref.read(functionsGatewayProvider).deleteDriver(driver.id);
+    final result = await ref
+        .read(functionsGatewayProvider)
+        .deleteDriver(driver.id);
     toast.show(
       result.isErr
-          ? result.failureOrNull?.userMessage ?? 'No se pudo eliminar al chofer.'
+          ? result.failureOrNull?.userMessage ??
+                'No se pudo eliminar al chofer.'
           : '${driver.name} fue eliminado.',
       tone: result.isErr ? ToastTone.error : ToastTone.success,
     );
@@ -374,12 +375,18 @@ class _DriverTable extends StatelessWidget {
             rows: [
               for (final driver in drivers)
                 DataRow(
+                  // Keyed by the chofer, not by where they sit: deleting one
+                  // shifts every row below it up, and unkeyed rows are matched
+                  // by position, so a row would be handed the next chofer's
+                  // data while keeping what it had already drawn.
+                  key: ValueKey(driver.id),
                   cells: [
                     DataCell(
                       Row(
                         children: [
                           DriverAvatar.of(
                             driver,
+                            key: ValueKey('avatar-${driver.id}'),
                             appOpen: appOpen.contains(driver.id),
                           ),
                           const SizedBox(width: Insets.md),
@@ -393,13 +400,15 @@ class _DriverTable extends StatelessWidget {
                               if (driver.email.isNotEmpty)
                                 Text(
                                   driver.email,
-                                  style: text.bodySmall
-                                      ?.copyWith(color: palette.textStrong),
+                                  style: text.bodySmall?.copyWith(
+                                    color: palette.textStrong,
+                                  ),
                                 ),
                               Text(
                                 driver.phone,
-                                style: text.bodySmall
-                                    ?.copyWith(color: palette.textMuted),
+                                style: text.bodySmall?.copyWith(
+                                  color: palette.textMuted,
+                                ),
                               ),
                             ],
                           ),
@@ -412,7 +421,7 @@ class _DriverTable extends StatelessWidget {
                         driver.assignedTruckId == null
                             ? 'Sin asignar'
                             : '${driver.assignedTruckPlate} · '
-                                '${driver.truckType.label}',
+                                  '${driver.truckType.label}',
                       ),
                     ),
                     // Presence is the avatar's dot, with its label on hover.
@@ -472,7 +481,10 @@ class _DriverTable extends StatelessWidget {
                             tooltip: 'Ver',
                             visualDensity: VisualDensity.compact,
                             onPressed: () => onView(driver),
-                            icon: const Icon(Icons.visibility_outlined, size: 20),
+                            icon: const Icon(
+                              Icons.visibility_outlined,
+                              size: 20,
+                            ),
                           ),
                           IconButton(
                             tooltip: 'Editar',
@@ -543,10 +555,16 @@ class _StatusPill extends StatelessWidget {
 
     final (label, fg, bg) = switch (status) {
       DriverStatus.active => ('Activo', palette.success, palette.successTint),
-      DriverStatus.inactive =>
-        ('Inactivo', palette.textMuted, palette.surfaceSubtle),
-      DriverStatus.suspended =>
-        ('Suspendido', palette.danger, palette.dangerTint),
+      DriverStatus.inactive => (
+        'Inactivo',
+        palette.textMuted,
+        palette.surfaceSubtle,
+      ),
+      DriverStatus.suspended => (
+        'Suspendido',
+        palette.danger,
+        palette.dangerTint,
+      ),
       DriverStatus.unknown => ('—', palette.textMuted, palette.surfaceSubtle),
     };
 

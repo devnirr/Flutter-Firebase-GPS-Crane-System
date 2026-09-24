@@ -93,7 +93,12 @@ class DriverAvatar extends StatelessWidget {
 
     final picked = bytes;
     if (picked != null) {
-      return Image.memory(picked, fit: BoxFit.cover, errorBuilder: fallback);
+      return Image.memory(
+        picked,
+        key: ValueKey(picked),
+        fit: BoxFit.cover,
+        errorBuilder: fallback,
+      );
     }
     if (photoUrl.isEmpty) return initials;
 
@@ -101,11 +106,23 @@ class DriverAvatar extends StatelessWidget {
     if (photoUrl.startsWith('data:')) {
       final decoded = Uri.tryParse(photoUrl)?.data?.contentAsBytes();
       if (decoded == null) return initials;
-      return Image.memory(decoded, fit: BoxFit.cover, errorBuilder: fallback);
+      return Image.memory(
+        decoded,
+        key: ValueKey(photoUrl),
+        fit: BoxFit.cover,
+        errorBuilder: fallback,
+      );
     }
 
     return Image.network(
       photoUrl,
+      // Keyed by the photo itself. A list that drops a row — a chofer
+      // deleted — shifts every row below it up, and Flutter then updates the
+      // image element in place with the next chofer's URL. Until that photo
+      // arrives the element keeps painting the frame it already had, which
+      // put the deleted chofer's face on the row below. A key tied to the
+      // source retires the old element instead of feeding it a new URL.
+      key: ValueKey(photoUrl),
       fit: BoxFit.cover,
       // The web renderer decodes images itself, which needs CORS headers the
       // bucket does not send by default; an <img> element needs none.
