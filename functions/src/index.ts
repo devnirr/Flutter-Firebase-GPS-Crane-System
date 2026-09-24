@@ -61,7 +61,7 @@ export {
   setDriverPhoto,
   setDriverStatus,
   updateDriver,
-  archiveDriver,
+  deleteDriver,
   assignServiceManually,
   confirmHeavyService,
   bootstrapFirstAdmin,

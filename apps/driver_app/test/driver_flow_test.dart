@@ -151,6 +151,11 @@ Future<void> main() async {
     );
     expect(find.text('Licencia verificada'), findsOneWidget);
     expect(backend.driver(created.id)?.status, DriverStatus.inactive);
+
+    // The result sits in the middle of the screen, not under the steps.
+    final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+    final title = tester.getCenter(find.text('Licencia verificada')).dy;
+    expect(title, inInclusiveRange(screen.height * 0.4, screen.height * 0.6));
   });
 
   testWidgets('the registration form refuses a bad cédula and a mismatch',

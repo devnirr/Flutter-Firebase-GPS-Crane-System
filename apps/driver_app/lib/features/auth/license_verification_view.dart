@@ -24,73 +24,106 @@ class LicenseVerificationView extends ConsumerWidget {
 
     // "Sending" wins over whatever the record says: new photos are on their
     // way, and the old verdict is about to be replaced.
-    final body = submitting ||
-            state == LicenseVerificationState.processing
+    final body = submitting || state == LicenseVerificationState.processing
         ? _Progress(sending: submitting)
         : switch (state) {
             LicenseVerificationState.verified => const _Outcome(
-                icon: Icons.verified_outlined,
-                color: BrandColors.success,
-                title: 'Licencia verificada',
-                message: 'Tu licencia pasó la verificación. La oficina '
-                    'activará tu cuenta pronto.',
-              ),
+              icon: Icons.verified_outlined,
+              color: BrandColors.success,
+              title: 'Licencia verificada',
+              message:
+                  'Tu licencia pasó la verificación. La oficina '
+                  'activará tu cuenta pronto.',
+            ),
             LicenseVerificationState.manualReview => const _Outcome(
-                icon: Icons.manage_search_outlined,
-                color: BrandColors.warning,
-                title: 'En revisión',
-                message: 'La oficina revisará tus documentos y activará tu '
-                    'cuenta.',
-              ),
+              icon: Icons.manage_search_outlined,
+              color: BrandColors.warning,
+              title: 'En revisión',
+              message:
+                  'La oficina revisará tus documentos y activará tu '
+                  'cuenta.',
+            ),
             LicenseVerificationState.rejected => _Resubmit(
-                driver: driver,
-                title: 'Licencia rechazada',
-                message: verification.reason.isNotEmpty
-                    ? verification.reason
-                    : 'No pudimos verificar tu licencia. Sube fotos nuevas.',
-              ),
+              driver: driver,
+              title: 'Licencia rechazada',
+              message: verification.reason.isNotEmpty
+                  ? verification.reason
+                  : 'No pudimos verificar tu licencia. Sube fotos nuevas.',
+            ),
             _ => _Resubmit(
-                driver: driver,
-                title: 'Falta tu licencia',
-                message: 'No recibimos las fotos de tu licencia. Súbelas '
-                    'para verificar tu cuenta.',
-              ),
+              driver: driver,
+              title: 'Falta tu licencia',
+              message:
+                  'No recibimos las fotos de tu licencia. Súbelas '
+                  'para verificar tu cuenta.',
+            ),
           };
 
     return Scaffold(
       backgroundColor: BrandColors.white,
       body: SafeArea(
-        // Steps on top, the result centred in the space between, sign-out at
-        // the bottom. When the photo form outgrows the screen, the whole page
-        // scrolls instead.
-        child: CustomScrollView(
-          slivers: [
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: Padding(
-                padding: const EdgeInsets.all(Insets.gutter),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: Insets.xl),
-                    _Steps(state: state, sending: submitting),
-                    Expanded(
-                      child: Padding(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: Insets.xxl),
-                        child: Center(child: body),
+        // A result sits in the exact middle of the screen, with the steps on
+        // top and sign-out at the bottom laid over it. The photo form is
+        // taller than a phone, so it gets a page that scrolls instead.
+        child: body is! _Resubmit
+            ? Stack(
+                children: [
+                  Positioned.fill(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: Insets.gutter,
                       ),
+                      child: Center(child: body),
                     ),
-                    TextButton(
+                  ),
+                  Positioned(
+                    top: Insets.gutter + Insets.xl,
+                    left: Insets.gutter,
+                    right: Insets.gutter,
+                    child: _Steps(state: state, sending: submitting),
+                  ),
+                  Positioned(
+                    bottom: Insets.gutter,
+                    left: Insets.gutter,
+                    right: Insets.gutter,
+                    child: TextButton(
                       onPressed: submitting ? null : () => signOutDriver(ref),
                       child: const Text('Cerrar sesión'),
                     ),
-                  ],
-                ),
+                  ),
+                ],
+              )
+            : CustomScrollView(
+                slivers: [
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Padding(
+                      padding: const EdgeInsets.all(Insets.gutter),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: Insets.xl),
+                          _Steps(state: state, sending: submitting),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: Insets.xxl,
+                              ),
+                              child: Center(child: body),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: submitting
+                                ? null
+                                : () => signOutDriver(ref),
+                            child: const Text('Cerrar sesión'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -129,10 +162,15 @@ class _Steps extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 14,
-                backgroundColor:
-                    i <= step ? BrandColors.red : BrandColors.grey200,
+                backgroundColor: i <= step
+                    ? BrandColors.red
+                    : BrandColors.grey200,
                 child: i < step
-                    ? const Icon(Icons.check, size: 16, color: BrandColors.white)
+                    ? const Icon(
+                        Icons.check,
+                        size: 16,
+                        color: BrandColors.white,
+                      )
                     : Text(
                         '${i + 1}',
                         style: text.labelMedium?.copyWith(
@@ -161,6 +199,7 @@ class _Progress extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         const SizedBox(
           width: 56,
@@ -202,6 +241,7 @@ class _Outcome extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 64, color: color),
         const SizedBox(height: Insets.lg),
@@ -246,7 +286,8 @@ class _ResubmitState extends ConsumerState<_Resubmit> {
     final attempts = widget.driver.licenseVerification?.attempts ?? 0;
     // Only a rejection has compared the details with the card; with no
     // photos yet there is nothing to correct them against.
-    final canCorrect = widget.driver.licenseVerification?.state ==
+    final canCorrect =
+        widget.driver.licenseVerification?.state ==
         LicenseVerificationState.rejected;
 
     return Column(
@@ -315,10 +356,7 @@ class _ResubmitState extends ConsumerState<_Resubmit> {
           InlineNotice(message: _error!, tone: NoticeTone.error),
         ],
         const SizedBox(height: Insets.xl),
-        ElevatedButton(
-          onPressed: _send,
-          child: const Text('ENVIAR LICENCIA'),
-        ),
+        ElevatedButton(onPressed: _send, child: const Text('ENVIAR LICENCIA')),
       ],
     );
   }

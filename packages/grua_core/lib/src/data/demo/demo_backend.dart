@@ -966,18 +966,21 @@ class DemoBackend {
     return null;
   }
 
-  /// Mirrors the `archiveDriver` callable. Returns the refusal, or null.
-  String? archiveDriver(String driverId) {
+  /// Mirrors the `deleteDriver` callable. Returns the refusal, or null.
+  String? deleteDriver(String driverId) {
     final driver = _drivers[driverId];
-    if (driver == null) return 'Chofer no encontrado.';
-    if (driver.archived) return null;
+    if (driver == null) return null;
     if (driver.isBusy) {
       return 'Este chofer tiene un servicio en curso. Elimínalo cuando termine.';
+    }
+    if (driver.cashOnHandCents > 0) {
+      return 'Este chofer tiene efectivo pendiente. Haz el corte antes de '
+          'eliminarlo.';
     }
 
     final truckId = driver.assignedTruckId;
     final truck = truckId == null ? null : _trucks[truckId];
-    if (truck != null) {
+    if (truck != null && truck.assignedDriverId == driverId) {
       _trucks[truckId!] = truck.copyWith(
         assignedDriverId: null,
         assignedDriverName: '',
@@ -985,17 +988,10 @@ class DemoBackend {
       );
     }
 
-    _drivers[driverId] = driver.copyWith(
-      archived: true,
-      status: DriverStatus.inactive,
-      statusReason: 'Eliminado por la oficina',
-      isOnline: false,
-      assignedTruckId: null,
-      assignedTruckPlate: '',
-      truckType: TruckType.unknown,
-      updatedAt: _now(),
-    );
+    _drivers.remove(driverId);
+    _documents.remove(driverId);
     _live.remove(driverId);
+    _uploads.removeWhere((path, _) => path.startsWith('drivers/$driverId/'));
     _emitDrivers();
     _emitTrucks();
     _emitLive();

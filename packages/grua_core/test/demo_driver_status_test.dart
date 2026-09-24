@@ -48,14 +48,16 @@ void main() {
     expect(suspended.isOnline, isFalse);
   });
 
-  test('an archived chofer cannot be brought back by activation', () {
-    backend.archiveDriver(driver.id);
+  test('a deleted chofer is gone and cannot be brought back', () {
+    expect(backend.deleteDriver(driver.id), isNull);
 
+    expect(backend.driver(driver.id), isNull);
     expect(
       backend.setDriverStatus(driver.id, DriverStatus.active),
-      'Este chofer fue eliminado.',
+      'Chofer no encontrado.',
     );
-    expect(backend.driver(driver.id)!.status, DriverStatus.inactive);
+    // Deleting twice is not an error.
+    expect(backend.deleteDriver(driver.id), isNull);
   });
 
   test('an unknown chofer is refused', () {

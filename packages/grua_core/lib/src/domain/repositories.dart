@@ -1063,10 +1063,10 @@ abstract interface class FunctionsGateway {
   /// the chofer holds a job.
   Future<Result<void>> updateDriver(String driverId, DriverUpdate update);
 
-  /// Takes a chofer off the roster: the record is archived, not erased, so
-  /// their services and earnings keep a name, and the account is disabled.
-  /// Refused while the chofer holds a job.
-  Future<Result<void>> archiveDriver(String driverId);
+  /// Deletes a chofer for good — login, record, papers and photos — freeing
+  /// their email and cédula. Past services, cortes and earnings stay as the
+  /// company's history. Refused while the chofer holds a job or cash.
+  Future<Result<void>> deleteDriver(String driverId);
 
   /// Clears a chofer to work, or stops them.
   ///

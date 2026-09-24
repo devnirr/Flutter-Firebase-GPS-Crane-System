@@ -882,7 +882,7 @@ Future<void> main() async {
     expect(find.text('wreyes@gruasrd.do'), findsOneWidget);
   });
 
-  testWidgets('deleting a chofer archives them and takes them off the roster',
+  testWidgets('deleting a chofer removes them for good',
       (tester) async {
     setDesktopSize(tester);
     final backend = DemoBackend()..seed();
@@ -895,13 +895,14 @@ Future<void> main() async {
     await tester.pumpAndSettle();
     expect(find.text('¿Eliminar a Wilfredo Antonio Reyes?'), findsOneWidget);
 
+    expect(find.textContaining('no se puede deshacer'), findsOneWidget);
+
     await tester.tap(find.text('Eliminar'));
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
-    // Archived, not erased: the record is still there for its history.
-    final archived = backend.driver(wilfredo.id)!;
-    expect(archived.archived, isTrue);
-    expect(archived.status, DriverStatus.inactive);
+    // Gone, not archived: the cédula is free for a new registration.
+    expect(backend.driver(wilfredo.id), isNull);
+    expect(backend.allDrivers.any((d) => d.cedula == '40212345678'), isFalse);
     expect(find.text('Wilfredo Antonio Reyes'), findsNothing);
     expect(find.text('Wilfredo Antonio Reyes fue eliminado.'), findsOneWidget);
   });

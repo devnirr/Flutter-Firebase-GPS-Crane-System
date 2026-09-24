@@ -25,6 +25,10 @@ class DriversScreen extends ConsumerStatefulWidget {
 
 class _DriversScreenState extends ConsumerState<DriversScreen> {
   DriverStatus? _filter;
+
+  /// Shows only the choferes archived before "Eliminar" deleted for good, so
+  /// the office can finish removing them.
+  var _archived = false;
   String _query = '';
 
   @override
@@ -32,9 +36,9 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
     final roster = ref.watch(allDriversProvider);
     final text = Theme.of(context).textTheme;
 
-    // A deleted chofer is archived, not erased; the roster is for the living.
+    // Choferes archived before deletion was permanent are kept apart.
     final drivers = (roster.value ?? const <Driver>[])
-        .where((d) => !d.archived)
+        .where((d) => d.archived == _archived)
         .toList();
 
     final query = _query.trim().toLowerCase();
@@ -77,7 +81,11 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
                     ),
                     _StatusFilter(
                       value: _filter,
-                      onChanged: (value) => setState(() => _filter = value),
+                      archived: _archived,
+                      onChanged: (value, {archived = false}) => setState(() {
+                        _filter = value;
+                        _archived = archived;
+                      }),
                     ),
                   ],
                 ),
@@ -125,6 +133,13 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
       return const BrandLoader(message: 'Cargando choferes…');
     }
 
+    if (drivers.isEmpty && _archived) {
+      return const EmptyState(
+        title: 'No hay choferes archivados',
+        message: 'Los choferes eliminados ahora se borran por completo.',
+        icon: Icons.inventory_2_outlined,
+      );
+    }
     if (drivers.isEmpty) {
       return const EmptyState(
         title: 'Todavía no hay choferes',
@@ -162,6 +177,7 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
     // inactive, which the "Activos" filter would otherwise hide.
     setState(() {
       _filter = null;
+      _archived = false;
       _query = '';
     });
   }
@@ -215,16 +231,18 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
   Future<void> _editDriver(Driver driver) =>
       showEditDriverDialog(context, driver);
 
-  /// Archives rather than erases: services, earnings and the audit trail all
-  /// name this chofer. The account is disabled and the row leaves the roster.
+  /// Deletes for good: login, record, papers and photos, freeing the email
+  /// and the cédula. Past services and cortes stay as the company's history.
   Future<void> _deleteDriver(Driver driver) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('¿Eliminar a ${driver.name}?'),
         content: const Text(
-          'Sale de la lista de choferes y ya no puede entrar a la app. '
-          'Sus servicios y ganancias se conservan.',
+          'Se borran para siempre su cuenta, sus datos, su licencia y sus '
+          'fotos. Su correo y su cédula quedan libres para un registro nuevo. '
+          'Sus servicios y cortes anteriores se conservan en el historial. '
+          'Esto no se puede deshacer.',
         ),
         actions: [
           TextButton(
@@ -245,7 +263,7 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
 
     final toast = Toaster.of(context);
     final result =
-        await ref.read(functionsGatewayProvider).archiveDriver(driver.id);
+        await ref.read(functionsGatewayProvider).deleteDriver(driver.id);
     toast.show(
       result.isErr
           ? result.failureOrNull?.userMessage ?? 'No se pudo eliminar al chofer.'
@@ -256,28 +274,44 @@ class _DriversScreenState extends ConsumerState<DriversScreen> {
 }
 
 class _StatusFilter extends StatelessWidget {
-  const _StatusFilter({required this.value, required this.onChanged});
+  const _StatusFilter({
+    required this.value,
+    required this.archived,
+    required this.onChanged,
+  });
 
   final DriverStatus? value;
-  final ValueChanged<DriverStatus?> onChanged;
+  final bool archived;
+  final void Function(DriverStatus? value, {bool archived}) onChanged;
+
+  /// "Archivados" is not a status, so the menu keys on a string.
+  static const _archivedKey = 'archived';
 
   @override
   Widget build(BuildContext context) {
     return DropdownButtonHideUnderline(
-      child: DropdownButton<DriverStatus?>(
-        value: value,
-        hint: const Text('Todos'),
-        onChanged: onChanged,
-        items: const [
-          DropdownMenuItem(child: Text('Todos')),
-          DropdownMenuItem(value: DriverStatus.active, child: Text('Activos')),
+      child: DropdownButton<String>(
+        value: archived ? _archivedKey : (value?.wire ?? 'all'),
+        onChanged: (key) => key == _archivedKey
+            ? onChanged(null, archived: true)
+            : onChanged(key == 'all' ? null : DriverStatus.fromWire(key)),
+        items: [
+          const DropdownMenuItem(value: 'all', child: Text('Todos')),
           DropdownMenuItem(
-            value: DriverStatus.inactive,
-            child: Text('Inactivos'),
+            value: DriverStatus.active.wire,
+            child: const Text('Activos'),
           ),
           DropdownMenuItem(
-            value: DriverStatus.suspended,
-            child: Text('Suspendidos'),
+            value: DriverStatus.inactive.wire,
+            child: const Text('Inactivos'),
+          ),
+          DropdownMenuItem(
+            value: DriverStatus.suspended.wire,
+            child: const Text('Suspendidos'),
+          ),
+          const DropdownMenuItem(
+            value: _archivedKey,
+            child: Text('Archivados'),
           ),
         ],
       ),

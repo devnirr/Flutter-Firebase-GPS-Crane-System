@@ -650,8 +650,8 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
       _callVoid('updateDriver', {'driverId': driverId, ...update.toJson()});
 
   @override
-  Future<Result<void>> archiveDriver(String driverId) =>
-      _callVoid('archiveDriver', {'driverId': driverId});
+  Future<Result<void>> deleteDriver(String driverId) =>
+      _callVoid('deleteDriver', {'driverId': driverId});
 
   @override
   Future<Result<void>> confirmHeavyService({

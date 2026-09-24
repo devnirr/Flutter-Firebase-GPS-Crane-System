@@ -643,75 +643,97 @@ export const updateDriver = onCall({ region, cors: true }, async (request) => {
 });
 
 /**
- * "Deletes" a chofer: archives the record and disables the account.
+ * Deletes a chofer for good: their login, their record, their papers and
+ * photos, and their place on the live map. The email and the cédula are free
+ * again the moment it returns.
  *
- * Nothing is erased. Services, earnings and the audit trail all name this
- * chofer, and a history with holes in it answers nobody's questions. The
- * roster hides archived choferes, dispatch already skips them, and a disabled
- * Auth user can neither sign in nor refresh a token. Refused mid-tow, like a
- * deactivation.
+ * What stays is the company's own history — past services, cortes, earnings
+ * and the audit trail. Those are the books, and they keep the chofer's name
+ * as it was when the work was done.
+ *
+ * Refused mid-tow, like a deactivation, and while the chofer still holds cash
+ * for the company: that money has to be collected in a corte first, or it
+ * leaves the books with them. Safe to run twice; a chofer already gone is
+ * cleaned up again rather than refused, which is also how the accounts
+ * archived before deletion existed get removed.
  */
-export const archiveDriver = onCall({ region, cors: true }, async (request) => {
-  const parsed = z
-    .object({ driverId: z.string().min(1).max(64) })
-    .safeParse(request.data);
-  if (!parsed.success) throw invalidArgument('Datos inválidos.');
+export const deleteDriver = onCall(
+  { region, cors: true, timeoutSeconds: 120 },
+  async (request) => {
+    const parsed = z
+      .object({ driverId: z.string().min(1).max(64) })
+      .safeParse(request.data);
+    if (!parsed.success) throw invalidArgument('Datos inválidos.');
 
-  const caller = requireAdmin(request);
-  const { driverId } = parsed.data;
+    const caller = requireAdmin(request);
+    const { driverId } = parsed.data;
 
-  const driverRef = Paths.driver(driverId);
-  const driver = (await driverRef.get()).data();
-  if (!driver) throw precondition(Code.notFound, 'Chofer no encontrado.');
-  if (driver['archived'] === true) return { ok: true };
+    const driverRef = Paths.driver(driverId);
+    const driver = (await driverRef.get()).data();
 
-  const busyWith = driver['currentServiceId'] as string | undefined;
-  if (busyWith) {
-    throw precondition(
-      Code.driverBusy,
-      'Este chofer tiene un servicio en curso. Elimínalo cuando termine.',
-      { serviceId: busyWith },
-    );
-  }
+    if (driver) {
+      const busyWith = driver['currentServiceId'] as string | undefined;
+      if (busyWith) {
+        throw precondition(
+          Code.driverBusy,
+          'Este chofer tiene un servicio en curso. Elimínalo cuando termine.',
+          { serviceId: busyWith },
+        );
+      }
+      const cash = Number(driver['cashOnHandCents'] ?? 0);
+      if (cash > 0) {
+        throw precondition(
+          Code.invalidInput,
+          'Este chofer tiene efectivo pendiente. Haz el corte antes de eliminarlo.',
+          { cashOnHandCents: cash },
+        );
+      }
 
-  const truckId = driver['assignedTruckId'] as string | null | undefined;
-  const now = FieldValue.serverTimestamp();
-  const batch = db.batch();
-  batch.update(driverRef, {
-    archived: true,
-    archivedAt: now,
-    archivedBy: caller.uid,
-    status: DriverStatus.inactive,
-    statusReason: 'Eliminado por la oficina',
-    isOnline: false,
-    assignedTruckId: null,
-    assignedTruckPlate: '',
-    truckType: 'unknown',
-    updatedAt: now,
-  });
-  if (truckId) {
-    // The grúa goes back to the pool for the next chofer.
-    batch.update(Paths.truck(truckId), {
-      assignedDriverId: null,
-      assignedDriverName: '',
-      updatedAt: now,
+      const truckId = driver['assignedTruckId'] as string | null | undefined;
+      if (truckId) {
+        // The grúa goes back to the pool for the next chofer.
+        const truck = await Paths.truck(truckId).get();
+        if (truck.data()?.['assignedDriverId'] === driverId) {
+          await Paths.truck(truckId).update({
+            assignedDriverId: null,
+            assignedDriverName: '',
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      }
+    }
+
+    // The record with its documents and push tokens, and a profile document
+    // if one was ever made.
+    await db.recursiveDelete(driverRef);
+    await db.recursiveDelete(Paths.user(driverId));
+
+    // Licence photos and the profile photo.
+    await getStorage()
+      .bucket()
+      .deleteFiles({ prefix: `drivers/${driverId}/` })
+      .catch((error: unknown) => {
+        logger.warn('driver.deleteFilesFailed', { driverId, error: String(error) });
+      });
+
+    await Paths.live(driverId).remove().catch(() => undefined);
+    await Paths.presence(driverId).remove().catch(() => undefined);
+
+    await getAuth()
+      .deleteUser(driverId)
+      .catch((error: unknown) => {
+        if ((error as { code?: string }).code !== 'auth/user-not-found') throw error;
+      });
+
+    // Who was deleted, by name only: the trail says what happened without
+    // keeping the papers that were just removed.
+    await audit(caller.uid, 'deleteDriver', driverId, {
+      name: (driver?.['name'] as string | undefined) ?? '',
     });
-  }
-  await batch.commit();
-
-  // Off the live map at once rather than after the stale-position sweep.
-  await Paths.live(driverId).remove().catch(() => undefined);
-  await getAuth()
-    .updateUser(driverId, { disabled: true })
-    .catch((error: unknown) => {
-      if ((error as { code?: string }).code !== 'auth/user-not-found') throw error;
-    });
-  await getAuth().revokeRefreshTokens(driverId).catch(() => undefined);
-
-  await audit(caller.uid, 'archiveDriver', driverId);
-  logger.info('driver.archived', { driverId, by: caller.uid });
-  return { ok: true };
-});
+    logger.info('driver.deleted', { driverId, by: caller.uid });
+    return { ok: true };
+  },
+);
 
 /**
  * A dispatcher assigns the job by hand.

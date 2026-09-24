@@ -1638,8 +1638,8 @@ class DemoFunctionsGateway implements FunctionsGateway {
   }
 
   @override
-  Future<Result<void>> archiveDriver(String driverId) =>
-      _delayed(_refusedOr(_backend.archiveDriver(driverId)));
+  Future<Result<void>> deleteDriver(String driverId) =>
+      _delayed(_refusedOr(_backend.deleteDriver(driverId)));
 
   @override
   Future<Result<void>> confirmHeavyService({
