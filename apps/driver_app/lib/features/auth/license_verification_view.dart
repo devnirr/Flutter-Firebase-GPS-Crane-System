@@ -60,22 +60,36 @@ class LicenseVerificationView extends ConsumerWidget {
     return Scaffold(
       backgroundColor: BrandColors.white,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(Insets.gutter),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: Insets.xl),
-              _Steps(state: state, sending: submitting),
-              const SizedBox(height: Insets.xxl),
-              body,
-              const SizedBox(height: Insets.xl),
-              TextButton(
-                onPressed: submitting ? null : () => signOutDriver(ref),
-                child: const Text('Cerrar sesión'),
+        // Steps on top, the result centred in the space between, sign-out at
+        // the bottom. When the photo form outgrows the screen, the whole page
+        // scrolls instead.
+        child: CustomScrollView(
+          slivers: [
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Padding(
+                padding: const EdgeInsets.all(Insets.gutter),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: Insets.xl),
+                    _Steps(state: state, sending: submitting),
+                    Expanded(
+                      child: Padding(
+                        padding:
+                            const EdgeInsets.symmetric(vertical: Insets.xxl),
+                        child: Center(child: body),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: submitting ? null : () => signOutDriver(ref),
+                      child: const Text('Cerrar sesión'),
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
