@@ -121,6 +121,7 @@ export type DriverStatus = (typeof DriverStatus)[keyof typeof DriverStatus];
 /** Paperwork a chofer must keep current. Mirrors `DriverDocumentType` in Dart. */
 export const DriverDocumentType = {
   licencia: 'licencia',
+  licenciaReverso: 'licencia_reverso',
   cedula: 'cedula',
   seguro: 'seguro',
   marbete: 'marbete',
@@ -140,6 +141,26 @@ export const DocumentReviewState = {
 
 export type DocumentReviewState =
   (typeof DocumentReviewState)[keyof typeof DocumentReviewState];
+
+/**
+ * Where a self-registered chofer's licence check stands. Mirrors
+ * `LicenseVerificationState` in Dart. Choferes the office opened never get
+ * one: the office saw their papers in person.
+ */
+export const LicenseVerificationState = {
+  /** Registered; the two photos have not been submitted for checking yet. */
+  awaitingDocuments: 'awaiting_documents',
+  processing: 'processing',
+  /** Passed every check. The account still waits for an admin to activate it. */
+  verified: 'verified',
+  /** Failed a check the chofer can fix with new photos. */
+  rejected: 'rejected',
+  /** Needs a person: an unclear result, a suspected edit, or too many tries. */
+  manualReview: 'manual_review',
+} as const;
+
+export type LicenseVerificationState =
+  (typeof LicenseVerificationState)[keyof typeof LicenseVerificationState];
 
 export const DriverLiveState = {
   idle: 'idle',

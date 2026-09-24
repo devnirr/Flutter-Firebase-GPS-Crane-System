@@ -101,16 +101,23 @@ Future<void> main() async {
     await tester.tap(find.text('ACEPTAR'));
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Subir foto'));
-    await tester.tap(find.text('Subir foto'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Elegir de la galería'));
-    await tester.pumpAndSettle();
-    expect(find.text('licencia.jpg'), findsOneWidget);
+    // Front, then back: each side is its own field.
+    for (var side = 0; side < 2; side++) {
+      await tester.ensureVisible(find.text('Subir foto').first);
+      await tester.tap(find.text('Subir foto').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Elegir de la galería'));
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('licencia.jpg'), findsNWidgets(2));
+    expect(find.text('Subir foto'), findsNothing);
 
     await tester.ensureVisible(find.text('ENVIAR REGISTRO'));
     await tester.tap(find.text('ENVIAR REGISTRO'));
-    await tester.pumpAndSettle(const Duration(seconds: 1));
+    // Not pumpAndSettle: the waiting screen spins until the check answers.
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 400));
+    }
 
     final created =
         backend.allDrivers.firstWhere((d) => d.cedula == '40200123459');
@@ -118,15 +125,32 @@ Future<void> main() async {
     expect(created.createdBy, created.id);
     expect(created.mustChangePassword, isFalse);
 
-    // Signed straight in, and parked on the review screen rather than home.
-    expect(find.text('Solicitud en revisión'), findsOneWidget);
+    // Signed straight in, and parked on the licence check rather than home.
+    expect(find.text('Enviando tu licencia…'), findsOneWidget);
     expect(find.text('PEDIDOS DISPONIBLES'), findsNothing);
 
-    // Let the uploads that run after sign-in finish.
+    // Let the uploads and the check that run after sign-in finish.
     await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
 
     // The profile photo landed on the record the office's roster draws from.
     expect(backend.driver(created.id)?.photoUrl, startsWith('data:image/jpeg'));
+
+    // Both sides went up, and the check passed — which still leaves the
+    // account inactive until the office activates it.
+    expect(
+      backend.documents(created.id).map((d) => d.type),
+      containsAll([
+        DriverDocumentType.licencia,
+        DriverDocumentType.licenciaReverso,
+      ]),
+    );
+    expect(
+      backend.driver(created.id)?.licenseVerification?.state,
+      LicenseVerificationState.verified,
+    );
+    expect(find.text('Licencia verificada'), findsOneWidget);
+    expect(backend.driver(created.id)?.status, DriverStatus.inactive);
   });
 
   testWidgets('the registration form refuses a bad cédula and a mismatch',
@@ -156,7 +180,8 @@ Future<void> main() async {
 
     expect(find.text('Esa cédula no es válida.'), findsOneWidget);
     expect(find.text('Las contraseñas no coinciden.'), findsOneWidget);
-    expect(find.text('Sube la foto de la licencia.'), findsOneWidget);
+    expect(find.text('Sube el frente de la licencia.'), findsOneWidget);
+    expect(find.text('Sube el reverso de la licencia.'), findsOneWidget);
     expect(find.text('Agrega tu foto de perfil.'), findsOneWidget);
     expect(backend.allDrivers.length, before);
   });

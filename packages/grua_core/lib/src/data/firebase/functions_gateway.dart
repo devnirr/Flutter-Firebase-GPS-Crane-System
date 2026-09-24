@@ -38,11 +38,12 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
   Future<Result<T>> _call<T>(
     String name,
     Map<String, dynamic> payload,
-    T Function(Map<String, dynamic> data) parse,
-  ) async {
+    T Function(Map<String, dynamic> data) parse, {
+    Duration timeout = _timeout,
+  }) async {
     try {
       final result = await _functions
-          .httpsCallable(name, options: HttpsCallableOptions(timeout: _timeout))
+          .httpsCallable(name, options: HttpsCallableOptions(timeout: timeout))
           // Firestore's dialect does not travel: see [callablePayload].
           .call<Object?>(callablePayload(payload));
 
@@ -733,6 +734,27 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
         {'driverId': driverId, 'storagePath': storagePath},
         (data) => data['photoUrl'] as String? ?? '',
       );
+
+  @override
+  Future<Result<LicenseVerificationState>> verifyDriverLicense() => _call(
+        'verifyDriverLicense',
+        {},
+        (data) => LicenseVerificationState.fromWire(data['state'] as String?),
+        // The model reads three photos; the function itself allows two minutes.
+        timeout: const Duration(seconds: 120),
+      );
+
+  @override
+  Future<Result<void>> reviewLicenseVerification({
+    required String driverId,
+    required bool approve,
+    String reason = '',
+  }) =>
+      _callVoid('reviewLicenseVerification', {
+        'driverId': driverId,
+        'decision': approve ? 'approve' : 'reject',
+        'reason': reason,
+      });
 
   @override
   Future<Result<String>> invoiceDownloadUrl(String invoiceId) =>

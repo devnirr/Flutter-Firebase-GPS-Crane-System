@@ -157,6 +157,10 @@ abstract interface class DriverRepository {
     required String contentType,
   });
 
+  /// A short-lived URL to show an uploaded document. Staff, or the chofer
+  /// it belongs to.
+  Future<Result<String>> documentUrl(String storagePath);
+
   /// Uploads the chofer's profile photo and returns the object path. Like a
   /// document, it only counts once the caller passes the path to
   /// [FunctionsGateway.setDriverPhoto]: `photoUrl` is server-written too.
@@ -1133,6 +1137,19 @@ abstract interface class FunctionsGateway {
   Future<Result<String>> setDriverPhoto({
     required String driverId,
     required String storagePath,
+  });
+
+  /// Runs the automatic check on the signed-in chofer's licence photos, once
+  /// both sides are attached, and returns where it landed. Takes up to a
+  /// minute; the driver record streams the same result.
+  Future<Result<LicenseVerificationState>> verifyDriverLicense();
+
+  /// The office's verdict on a licence, overriding the automatic one. A
+  /// rejection needs a [reason], which the chofer reads.
+  Future<Result<void>> reviewLicenseVerification({
+    required String driverId,
+    required bool approve,
+    String reason,
   });
 
   /// Pushes the chofer's live ETA to `tracking/{serviceId}` for the client.

@@ -68,6 +68,10 @@ export {
   setAdminRole,
   whoAmI,
 } from './callables/admin.js';
+export {
+  verifyDriverLicense,
+  reviewLicenseVerification,
+} from './callables/licenseVerification.js';
 export { createTruck, updateTruck, archiveTruck } from './callables/trucks.js';
 export {
   createInsurer,

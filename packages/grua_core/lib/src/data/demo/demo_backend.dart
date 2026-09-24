@@ -871,6 +871,9 @@ class DemoBackend {
       // A chofer who signed up chose their own password and opened the
       // account themselves; one the office opened carries a temporary one.
       mustChangePassword: !selfRegistered,
+      // Only a chofer who signed up goes through the licence check.
+      licenseVerification:
+          selfRegistered ? const LicenseVerification() : null,
       createdBy: selfRegistered ? id : currentUserId,
       createdAt: _now(),
       updatedAt: _now(),
@@ -1239,6 +1242,110 @@ class DemoBackend {
   final _uploads = <String, String>{};
 
   void storeUpload(String path, String dataUri) => _uploads[path] = dataUri;
+
+  /// The data URI kept for [path], standing in for a download URL.
+  String? uploadUrl(String path) => _uploads[path];
+
+  final _documents = <String, Map<DriverDocumentType, DriverDocument>>{};
+
+  /// What `watchDocuments` shows for [uid].
+  List<DriverDocument> documents(String uid) =>
+      (_documents[uid] ?? const {}).values.toList();
+
+  /// Mirrors the `attachDriverDocument` callable.
+  void attachDocument(String driverId, DriverDocument document) {
+    (_documents[driverId] ??= {})[document.type] = document;
+    // The document stream rides on the driver one; see `watchDocuments`.
+    _emitDrivers();
+  }
+
+  /// Mirrors `verifyDriverLicense`, with a model that reads every licence
+  /// as exactly what the chofer typed. Returns the new state, or the refusal.
+  (LicenseVerificationState?, String?) verifyLicense(String driverId) {
+    final driver = _drivers[driverId];
+    final current = driver?.licenseVerification;
+    if (driver == null) return (null, 'Chofer no encontrado.');
+    if (current == null) {
+      return (
+        null,
+        'Tu cuenta la abrió la oficina y no necesita esta verificación.',
+      );
+    }
+    if (!current.state.acceptsPhotos) return (current.state, null);
+
+    final docs = _documents[driverId] ?? const {};
+    if (!docs.containsKey(DriverDocumentType.licencia) ||
+        !docs.containsKey(DriverDocumentType.licenciaReverso)) {
+      return (null, 'Faltan fotos: sube el frente y el reverso de tu licencia.');
+    }
+
+    const labels = [
+      ('document', 'Es una licencia de conducir (frente y reverso)'),
+      ('legible', 'Las fotos se leen con claridad'),
+      ('integrity', 'Sin señales de alteración'),
+      ('name', 'El nombre coincide'),
+      ('cedula', 'La cédula coincide'),
+      ('licenseNumber', 'El número de licencia coincide'),
+      ('expiryMatches', 'La fecha de vencimiento coincide'),
+      ('notExpired', 'La licencia está vigente'),
+      ('face', 'La cara coincide con la foto de perfil'),
+    ];
+    final expiry = driver.licenseExpiry;
+    _drivers[driverId] = driver.copyWith(
+      licenseVerification: current.copyWith(
+        state: LicenseVerificationState.verified,
+        reason: '',
+        attempts: current.attempts + 1,
+        checks: [
+          for (final (key, label) in labels)
+            LicenseCheck(key: key, label: label, result: 'pass'),
+        ],
+        extracted: LicenseReading(
+          fullName: driver.name.toUpperCase(),
+          cedula: driver.displayCedula,
+          licenseNumber: driver.licenseNumber,
+          expiryDate: expiry == null
+              ? ''
+              : expiry.toIso8601String().substring(0, 10),
+        ),
+        notes: 'Modo demo: la verificación siempre pasa.',
+        startedAt: _now(),
+        completedAt: _now(),
+        updatedAt: _now(),
+      ),
+    );
+    _emitDrivers();
+    return (LicenseVerificationState.verified, null);
+  }
+
+  /// Mirrors `reviewLicenseVerification`. Returns the refusal, or null.
+  String? reviewLicense(
+    String driverId, {
+    required bool approve,
+    String reason = '',
+  }) {
+    final driver = _drivers[driverId];
+    final current = driver?.licenseVerification;
+    if (driver == null) return 'Chofer no encontrado.';
+    if (current == null) return 'Este chofer no tiene verificación de licencia.';
+    if (!approve && reason.trim().length < 3) {
+      return 'Escribe el motivo del rechazo.';
+    }
+    _drivers[driverId] = driver.copyWith(
+      licenseVerification: current.copyWith(
+        state: approve
+            ? LicenseVerificationState.verified
+            : LicenseVerificationState.rejected,
+        reason: approve ? '' : reason.trim(),
+        attempts: approve ? current.attempts : 0,
+        reviewedBy: currentUserId,
+        reviewedAt: _now(),
+        updatedAt: _now(),
+      ),
+    );
+    _emitDrivers();
+    return null;
+  }
 
   /// Mirrors the `setDriverPhoto` callable. Returns the URL, or null when
   /// nothing was uploaded at [path] or the chofer does not exist.

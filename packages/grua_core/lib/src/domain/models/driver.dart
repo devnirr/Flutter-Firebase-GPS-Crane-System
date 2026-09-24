@@ -67,6 +67,10 @@ abstract class Driver with _$Driver {
     @NullableTimestampConverter() DateTime? lastOnlineAt,
     @Default(false) bool mustChangePassword,
     @Default(false) bool archived,
+
+    /// The automatic licence check. Only choferes who registered from the app
+    /// have one; the office saw the papers of those it opened itself.
+    LicenseVerification? licenseVerification,
   }) = _Driver;
 
   const Driver._();
@@ -113,6 +117,69 @@ abstract class Driver with _$Driver {
     if (digits.length != 11) return cedula;
     return '${digits.substring(0, 3)}-${digits.substring(3, 10)}-${digits.substring(10)}';
   }
+}
+
+/// `drivers/{uid}.licenseVerification`, written by `verifyDriverLicense` and
+/// by the office through `reviewLicenseVerification`.
+@freezed
+abstract class LicenseVerification with _$LicenseVerification {
+  const factory LicenseVerification({
+    @JsonKey(unknownEnumValue: LicenseVerificationState.unknown)
+    @Default(LicenseVerificationState.awaitingDocuments)
+    LicenseVerificationState state,
+
+    /// Why it was rejected or sent to a person, in words for the chofer.
+    @Default('') String reason,
+    @Default(0) int attempts,
+    @Default(<LicenseCheck>[]) List<LicenseCheck> checks,
+
+    /// What the model read off the card, for the office to compare.
+    LicenseReading? extracted,
+
+    /// The model's note for a reviewer.
+    @Default('') String notes,
+    @Default('') String reviewedBy,
+    @NullableTimestampConverter() DateTime? startedAt,
+    @NullableTimestampConverter() DateTime? completedAt,
+    @NullableTimestampConverter() DateTime? reviewedAt,
+    @NullableTimestampConverter() DateTime? updatedAt,
+  }) = _LicenseVerification;
+
+  factory LicenseVerification.fromJson(Map<String, dynamic> json) =>
+      _$LicenseVerificationFromJson(json);
+}
+
+/// One line of a licence check: `pass`, `fail` or `unclear`.
+@freezed
+abstract class LicenseCheck with _$LicenseCheck {
+  const factory LicenseCheck({
+    @Default('') String key,
+    @Default('') String label,
+    @Default('unclear') String result,
+    @Default('') String detail,
+  }) = _LicenseCheck;
+
+  const LicenseCheck._();
+
+  factory LicenseCheck.fromJson(Map<String, dynamic> json) =>
+      _$LicenseCheckFromJson(json);
+
+  bool get passed => result == 'pass';
+  bool get failed => result == 'fail';
+}
+
+/// The text printed on the licence, as the model read it.
+@freezed
+abstract class LicenseReading with _$LicenseReading {
+  const factory LicenseReading({
+    @Default('') String fullName,
+    @Default('') String cedula,
+    @Default('') String licenseNumber,
+    @Default('') String expiryDate,
+  }) = _LicenseReading;
+
+  factory LicenseReading.fromJson(Map<String, dynamic> json) =>
+      _$LicenseReadingFromJson(json);
 }
 
 /// A chofer's availability as the roster shows it. Derived, never stored.

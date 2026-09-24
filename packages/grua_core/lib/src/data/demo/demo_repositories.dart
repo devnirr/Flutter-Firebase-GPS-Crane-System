@@ -283,7 +283,7 @@ class DemoDriverRepository implements DriverRepository {
 
   @override
   Stream<List<DriverDocument>> watchDocuments(String uid) =>
-      Stream.value(const []);
+      _backend.driverUpdates.map((_) => _backend.documents(uid));
 
   @override
   Future<void> publishLivePosition(DriverLivePosition position) async =>
@@ -313,10 +313,27 @@ class DemoDriverRepository implements DriverRepository {
     required Uint8List bytes,
     required String fileName,
     required String contentType,
-  }) =>
-      // Nothing is stored: there is no bucket in demo mode. The path is shaped
-      // like the real one so a screen showing it looks the same either way.
-      _delayed(Result.ok('drivers/$driverId/docs/${type.wire}_$fileName'));
+  }) {
+    // There is no bucket in demo mode: the bytes are kept as a data URI under
+    // a path shaped like the real one.
+    final path = 'drivers/$driverId/docs/${type.wire}_'
+        '${DateTime.now().microsecondsSinceEpoch}_$fileName';
+    _backend.storeUpload(
+      path,
+      UriData.fromBytes(bytes, mimeType: contentType).toString(),
+    );
+    return _delayed(Result.ok(path));
+  }
+
+  @override
+  Future<Result<String>> documentUrl(String storagePath) {
+    final url = _backend.uploadUrl(storagePath);
+    return _delayed(
+      url == null
+          ? const Result<String>.err(Failure(FailureCode.notFound))
+          : Result<String>.ok(url),
+    );
+  }
 
   @override
   Future<Result<String>> uploadDriverPhoto({
@@ -1695,8 +1712,46 @@ class DemoFunctionsGateway implements FunctionsGateway {
     required String contentType,
     required int sizeBytes,
     DateTime? expiresAt,
-  }) async =>
-      _delayed(const Result.ok(null));
+  }) {
+    _backend.attachDocument(
+      driverId,
+      DriverDocument(
+        type: type,
+        storagePath: storagePath,
+        fileName: fileName,
+        contentType: contentType,
+        sizeBytes: sizeBytes,
+        uploadedBy: _backend.currentUserId,
+        uploadedAt: DateTime.now(),
+        expiresAt: expiresAt,
+      ),
+    );
+    return _delayed(const Result.ok(null));
+  }
+
+  @override
+  Future<Result<LicenseVerificationState>> verifyDriverLicense() {
+    final (state, refusal) = _backend.verifyLicense(_backend.currentUserId);
+    return _delayed(
+      state == null
+          ? Result<LicenseVerificationState>.err(
+              Failure(FailureCode.invalidInput, message: refusal),
+            )
+          : Result<LicenseVerificationState>.ok(state),
+    );
+  }
+
+  @override
+  Future<Result<void>> reviewLicenseVerification({
+    required String driverId,
+    required bool approve,
+    String reason = '',
+  }) =>
+      _delayed(
+        _refusedOr(
+          _backend.reviewLicense(driverId, approve: approve, reason: reason),
+        ),
+      );
 
   @override
   Future<Result<String>> setDriverPhoto({

@@ -25,6 +25,7 @@ import 'features/services/services_screen.dart';
 import 'features/settlements/settlements_screen.dart';
 import 'features/shell/admin_shell.dart';
 import 'features/trucks/trucks_screen.dart';
+import 'features/verification/license_verification_screen.dart';
 
 abstract final class Routes {
   static const login = '/entrar';
@@ -32,6 +33,7 @@ abstract final class Routes {
   static const services = '/servicios';
   static const clients = '/clientes';
   static const drivers = '/choferes';
+  static const licenses = '/verificacion';
   static const trucks = '/gruas';
   static const reports = '/reportes';
   static const cash = '/efectivo';
@@ -216,6 +218,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(path: Routes.clients, builder: (_, _) => const ClientsScreen()),
           GoRoute(path: Routes.drivers, builder: (_, _) => const DriversScreen()),
+          GoRoute(
+            path: Routes.licenses,
+            builder: (_, _) => const LicenseVerificationScreen(),
+          ),
           GoRoute(path: Routes.trucks, builder: (_, _) => const TrucksScreen()),
           GoRoute(path: Routes.reports, builder: (_, _) => const ReportsScreen()),
           GoRoute(path: Routes.cash, builder: (_, _) => const CashScreen()),

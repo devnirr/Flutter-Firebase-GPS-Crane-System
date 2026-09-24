@@ -1545,4 +1545,126 @@ Future<void> main() async {
     backend.dispose();
     await tester.pump();
   });
+
+  // -------------------------------------------------------------------------
+  // Licence verification
+  // -------------------------------------------------------------------------
+
+  /// A chofer who registered from the app, with both sides of the licence up
+  /// and the automatic check run.
+  Driver seedSelfRegistered(DemoBackend backend) {
+    final driver = backend.createDriver(
+      name: 'Yulissa Marte Peña',
+      cedula: '40298765432',
+      phone: '+18095551111',
+      email: 'yulissa@gruasrd.do',
+      licenseNumber: '40298765432',
+      licenseExpiry: DateTime.now().add(const Duration(days: 400)),
+      selfRegistered: true,
+    )!;
+    for (final type in [
+      DriverDocumentType.licencia,
+      DriverDocumentType.licenciaReverso,
+    ]) {
+      final path = 'drivers/${driver.id}/docs/${type.wire}.jpg';
+      backend
+        ..storeUpload(path, 'data:image/jpeg;base64,AAAA')
+        ..attachDocument(
+          driver.id,
+          DriverDocument(type: type, storagePath: path),
+        );
+    }
+    backend.verifyLicense(driver.id);
+    return backend.driver(driver.id)!;
+  }
+
+  Future<void> openVerification(WidgetTester tester) async {
+    await signIn(tester);
+    await tester.tap(find.text('Verificación'));
+    await tester.pumpAndSettle();
+    // "Revisar" is the table's last column, past a sideways scroll in the
+    // test font.
+    if (find.text('Revisar').evaluate().isNotEmpty) {
+      await tester.ensureVisible(find.text('Revisar'));
+      await tester.pumpAndSettle();
+    }
+  }
+
+  testWidgets('a verified licence waits in "Por activar" with a sidebar badge',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    final yulissa = seedSelfRegistered(backend);
+    // One the office opened itself never goes through the check.
+    seedWilfredo(backend);
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await openVerification(tester);
+
+    expect(find.text('Por activar (1)'), findsOneWidget);
+    expect(find.text(yulissa.name), findsOneWidget);
+    expect(find.text('Wilfredo Antonio Reyes'), findsNothing);
+
+    await tester.tap(find.text('Revisar'));
+    await tester.pumpAndSettle();
+
+    // Both sides and the profile photo, and every check that passed.
+    expect(find.text('Frente'), findsOneWidget);
+    expect(find.text('Reverso'), findsOneWidget);
+    expect(find.text('La cédula coincide'), findsOneWidget);
+    expect(find.text('Aprobar licencia'), findsNothing);
+    expect(find.text('Activar chofer'), findsOneWidget);
+  });
+
+  testWidgets('the office activates a verified chofer from the review',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    final yulissa = seedSelfRegistered(backend);
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await openVerification(tester);
+    await tester.tap(find.text('Revisar'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Activar chofer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Activar'));
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+
+    expect(backend.driver(yulissa.id)!.status, DriverStatus.active);
+    expect(find.text('${yulissa.name} ya puede trabajar.'), findsOneWidget);
+  });
+
+  testWidgets('rejecting a licence needs a reason the chofer then reads',
+      (tester) async {
+    setDesktopSize(tester);
+    final backend = DemoBackend()..seed();
+    final yulissa = seedSelfRegistered(backend);
+    await tester.pumpWidget(harness(backend));
+    await tester.pumpAndSettle();
+    await openVerification(tester);
+    await tester.tap(find.text('Revisar'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Rechazar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Rechazar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Escribe el motivo del rechazo.'), findsOneWidget);
+
+    await tester.enterText(
+      find.byType(TextFormField).last,
+      'La foto del reverso está cortada.',
+    );
+    await tester.tap(find.widgetWithText(TextButton, 'Rechazar'));
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+
+    final check = backend.driver(yulissa.id)!.licenseVerification!;
+    expect(check.state, LicenseVerificationState.rejected);
+    expect(check.reason, 'La foto del reverso está cortada.');
+    // A fresh set of tries for the new photos, and still not working.
+    expect(check.attempts, 0);
+    expect(backend.driver(yulissa.id)!.status, DriverStatus.inactive);
+  });
 }

@@ -554,6 +554,10 @@ class FirebaseDriverRepository implements DriverRepository {
       });
 
   @override
+  Future<Result<String>> documentUrl(String storagePath) =>
+      _guard(() => FirebaseStorage.instance.ref(storagePath).getDownloadURL());
+
+  @override
   Future<Result<String>> uploadDriverPhoto({
     required String driverId,
     required Uint8List bytes,

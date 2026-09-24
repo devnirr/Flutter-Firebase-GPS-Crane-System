@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import '../verification/license_verification_screen.dart';
 import 'theme_toggle.dart';
 
 /// The panel chrome: dark sidebar, top bar, content.
@@ -61,6 +62,11 @@ class _Sidebar extends ConsumerWidget {
     (label: 'Servicios', icon: Icons.list_alt_outlined, route: Routes.services),
     (label: 'Clientes', icon: Icons.people_outline, route: Routes.clients),
     (label: 'Choferes', icon: Icons.badge_outlined, route: Routes.drivers),
+    (
+      label: 'Verificación',
+      icon: Icons.verified_user_outlined,
+      route: Routes.licenses,
+    ),
     (label: 'Grúas', icon: Icons.local_shipping_outlined, route: Routes.trucks),
     (label: 'Efectivo', icon: Icons.payments_outlined, route: Routes.cash),
     (
@@ -83,6 +89,11 @@ class _Sidebar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Licences the office has to act on: verified and waiting to be
+    // activated, or handed to a person by the check.
+    final licenses =
+        licensesNeedingOffice(ref.watch(allDriversProvider).value ?? const []);
+
     return Container(
       width: 232,
       color: context.palette.sidebar,
@@ -118,6 +129,7 @@ class _Sidebar extends ConsumerWidget {
               label: item.label,
               icon: item.icon,
               selected: _isSelected(item.route),
+              count: item.route == Routes.licenses ? licenses : 0,
               onTap: () => context.go(item.route),
             ),
           const Spacer(),
@@ -146,12 +158,16 @@ class _NavItem extends StatelessWidget {
     required this.icon,
     required this.selected,
     required this.onTap,
+    this.count = 0,
   });
 
   final String label;
   final IconData icon;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Items waiting behind this entry; shown as a pill when above zero.
+  final int count;
 
   @override
   Widget build(BuildContext context) {
@@ -188,6 +204,23 @@ class _NavItem extends StatelessWidget {
                       ),
                 ),
               ),
+              if (count > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Insets.sm,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected ? BrandColors.white : palette.danger,
+                    borderRadius: Corners.brXs,
+                  ),
+                  child: Text(
+                    '$count',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: selected ? palette.brand : BrandColors.white,
+                        ),
+                  ),
+                ),
             ],
           ),
         ),

@@ -353,6 +353,10 @@ enum VehicleCondition {
 enum DriverDocumentType {
   @JsonValue('licencia')
   licencia('licencia', 'Licencia de conducir', required: true),
+  /// The back of the same card, kept as its own record so a reviewer sees
+  /// both sides and a missing one is obvious.
+  @JsonValue('licencia_reverso')
+  licenciaReverso('licencia_reverso', 'Licencia de conducir (reverso)', required: true),
   @JsonValue('cedula')
   cedula('cedula', 'Cédula', required: true),
   @JsonValue('seguro')
@@ -376,6 +380,46 @@ enum DriverDocumentType {
 
   static DriverDocumentType fromWire(String? wire) =>
       _resolve(DriverDocumentType.values, wire, (v) => v.wire, DriverDocumentType.unknown);
+}
+
+/// Where a self-registered chofer's automatic licence check stands. Mirrors
+/// `LicenseVerificationState` in `functions/src/lib/enums.ts`.
+enum LicenseVerificationState {
+  @JsonValue('awaiting_documents')
+  awaitingDocuments('awaiting_documents', 'Esperando fotos'),
+  @JsonValue('processing')
+  processing('processing', 'Verificando'),
+
+  /// Passed every check. The account still waits for the office to activate it.
+  @JsonValue('verified')
+  verified('verified', 'Verificada'),
+
+  /// Failed a check the chofer can fix by sending new photos.
+  @JsonValue('rejected')
+  rejected('rejected', 'Rechazada'),
+
+  /// Needs a person: an unclear result, a suspected edit, or too many tries.
+  @JsonValue('manual_review')
+  manualReview('manual_review', 'Revisión manual'),
+  @JsonValue('unknown')
+  unknown('unknown', 'Desconocido');
+
+  const LicenseVerificationState(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  /// The chofer may send new photos.
+  bool get acceptsPhotos =>
+      this == LicenseVerificationState.awaitingDocuments ||
+      this == LicenseVerificationState.rejected;
+
+  static LicenseVerificationState fromWire(String? wire) => _resolve(
+        LicenseVerificationState.values,
+        wire,
+        (v) => v.wire,
+        LicenseVerificationState.unknown,
+      );
 }
 
 enum DocumentReviewState {

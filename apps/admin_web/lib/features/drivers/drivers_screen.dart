@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../shared/toast.dart';
+import '../verification/license_verification_screen.dart';
 import 'create_driver_dialog.dart';
 import 'driver_details_dialog.dart';
 import 'driver_status_dialog.dart';
@@ -381,7 +382,27 @@ class _DriverTable extends StatelessWidget {
                       ),
                     ),
                     // Presence is the avatar's dot, with its label on hover.
-                    DataCell(_StatusPill(status: driver.status)),
+                    // A chofer who registered from the app also shows where
+                    // the licence check stands, until they are working.
+                    DataCell(
+                      driver.licenseVerification == null ||
+                              driver.status == DriverStatus.active
+                          ? _StatusPill(status: driver.status)
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _StatusPill(status: driver.status),
+                                const SizedBox(height: Insets.xxs),
+                                Tooltip(
+                                  message: 'Licencia',
+                                  child: LicenseStatePill(
+                                    state: driver.licenseVerification!.state,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
                     DataCell(
                       Text(
                         driver.acceptanceLabel,

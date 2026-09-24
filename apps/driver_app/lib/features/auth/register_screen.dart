@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:grua_core/grua_core.dart';
 
 import '../../router.dart';
+import 'license_upload.dart';
 
 /// Chofer self-registration.
 ///
@@ -13,8 +14,8 @@ import '../../router.dart';
 /// assign, plus a password, since nobody is reading a temporary one out.
 ///
 /// Submitting opens an `inactive` account and signs the chofer in. The router
-/// then shows the review screen, and nothing works until the office has
-/// verified the licence and activated the account.
+/// then shows the waiting screen while the licence photos are checked, and
+/// nothing works until the office has activated the account.
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
 
@@ -37,8 +38,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   var _obscure = true;
   DateTime? _licenseExpiry;
   String? _expiryError;
-  PickedPhoto? _licensePhoto;
-  String? _photoError;
+  PickedPhoto? _licenseFront;
+  String? _frontError;
+  PickedPhoto? _licenseBack;
+  String? _backError;
   PickedPhoto? _avatar;
   String? _avatarError;
 
@@ -236,13 +239,23 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   ),
                 ),
                 _Field(
-                  label: 'Foto de la licencia',
+                  label: 'Licencia (frente)',
                   help: 'Una foto clara del frente. Máximo 10 MB.',
-                  child: _PhotoField(
-                    photo: _licensePhoto,
-                    error: _photoError,
-                    onPick: _pickPhoto,
-                    onClear: () => setState(() => _licensePhoto = null),
+                  child: LicensePhotoField(
+                    photo: _licenseFront,
+                    error: _frontError,
+                    onPick: () => _pickLicense(back: false),
+                    onClear: () => setState(() => _licenseFront = null),
+                  ),
+                ),
+                _Field(
+                  label: 'Licencia (reverso)',
+                  help: 'Una foto clara de la parte de atrás. Máximo 10 MB.',
+                  child: LicensePhotoField(
+                    photo: _licenseBack,
+                    error: _backError,
+                    onPick: () => _pickLicense(back: true),
+                    onClear: () => setState(() => _licenseBack = null),
                   ),
                 ),
 
@@ -336,35 +349,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     }
   }
 
-  /// Asks camera or gallery, then fetches the photo. Null when cancelled.
-  Future<PickedPhoto?> _choosePhoto() async {
-    final source = await showModalBottomSheet<PhotoSource>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Tomar foto'),
-              onTap: () => Navigator.of(context).pop(PhotoSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Elegir de la galería'),
-              onTap: () => Navigator.of(context).pop(PhotoSource.gallery),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (source == null || !mounted) return null;
-    return await ref.read(photoPickerProvider)(source);
-  }
-
   Future<void> _pickAvatar() async {
-    final picked = await _choosePhoto();
+    final picked = await choosePhoto(context, ref);
     if (picked == null || !mounted) return;
 
     // Matches the 5 MB ceiling storage.rules puts on profile photos.
@@ -381,22 +367,21 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     });
   }
 
-  Future<void> _pickPhoto() async {
-    final picked = await _choosePhoto();
+  /// Picks one side of the licence.
+  Future<void> _pickLicense({required bool back}) async {
+    final picked = await choosePhoto(context, ref);
     if (picked == null || !mounted) return;
 
-    // Matches the 10 MB ceiling in storage.rules — better said here than as a
-    // refused upload after the account already exists.
-    if (picked.bytes.lengthInBytes > 10 * 1024 * 1024) {
-      setState(() {
-        _licensePhoto = null;
-        _photoError = 'La foto pesa más de 10 MB.';
-      });
-      return;
-    }
+    final error = licensePhotoTooBig(picked);
+    final photo = error == null ? picked : null;
     setState(() {
-      _licensePhoto = picked;
-      _photoError = null;
+      if (back) {
+        _licenseBack = photo;
+        _backError = error;
+      } else {
+        _licenseFront = photo;
+        _frontError = error;
+      }
     });
   }
 
@@ -409,21 +394,31 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     FocusScope.of(context).unfocus();
 
     final formOk = _formKey.currentState?.validate() ?? false;
-    // The date and the photo are not form fields, so they are checked here and
+    // The date and the photos are not form fields, so they are checked here and
     // reported the way a validator would.
     setState(() {
       _expiryError = _licenseExpiry == null
           ? 'Escoge la fecha de vencimiento.'
           : null;
-      _photoError = _licensePhoto == null ? 'Sube la foto de la licencia.' : null;
+      _frontError =
+          _licenseFront == null ? 'Sube el frente de la licencia.' : null;
+      _backError =
+          _licenseBack == null ? 'Sube el reverso de la licencia.' : null;
       _avatarError = _avatar == null ? 'Agrega tu foto de perfil.' : null;
       _error = null;
     });
 
     final expiry = _licenseExpiry;
-    final photo = _licensePhoto;
+    final front = _licenseFront;
+    final back = _licenseBack;
     final avatar = _avatar;
-    if (!formOk || expiry == null || photo == null || avatar == null) return;
+    if (!formOk ||
+        expiry == null ||
+        front == null ||
+        back == null ||
+        avatar == null) {
+      return;
+    }
 
     setState(() => _submitting = true);
 
@@ -433,6 +428,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final gateway = ref.read(functionsGatewayProvider);
     final auth = ref.read(authRepositoryProvider);
     final drivers = ref.read(driverRepositoryProvider);
+    final submitting = ref.read(licenseSubmittingProvider.notifier);
     final messenger = ScaffoldMessenger.of(context);
 
     final email = _email.text.trim();
@@ -463,8 +459,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       return;
     }
 
+    // Up before the sign-in, so the waiting screen the router opens next
+    // says "sending" rather than asking for photos already on their way.
+    submitting.set(busy: true);
     final signedIn = await auth.signInWithEmail(email, password);
     if (signedIn.isErr) {
+      submitting.set(busy: false);
       // The account exists, so sending the form again would only hit the
       // duplicate-cédula refusal. Point the chofer at the sign-in screen.
       if (mounted) {
@@ -477,6 +477,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       return;
     }
 
+    // The avatar first: the licence check compares the face on the card
+    // with it.
     final warnings = [
       await _attachAvatar(
         drivers: drivers,
@@ -484,11 +486,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         driverId: driverId,
         photo: avatar,
       ),
-      await _attachLicence(
+      await submitLicense(
         drivers: drivers,
         gateway: gateway,
+        submitting: submitting,
         driverId: driverId,
-        photo: photo,
+        front: front,
+        back: back,
         expiry: expiry,
       ),
     ].nonNulls;
@@ -522,50 +526,6 @@ Future<String?> _attachAvatar({
   if (set.isErr) {
     return 'Tu cuenta fue creada, pero tu foto no quedó registrada. '
         'La oficina te la pedirá.';
-  }
-  return null;
-}
-
-/// Uploads the licence and records it against the new account. Returns what
-/// went wrong, or null.
-///
-/// A failure here does not undo the registration: the account is real, and the
-/// office asks for the photo during review rather than the chofer starting over
-/// into a duplicate-cédula refusal.
-Future<String?> _attachLicence({
-  required DriverRepository drivers,
-  required FunctionsGateway gateway,
-  required String driverId,
-  required PickedPhoto photo,
-  required DateTime expiry,
-}) async {
-  final upload = await drivers.uploadDocument(
-    driverId: driverId,
-    type: DriverDocumentType.licencia,
-    bytes: photo.bytes,
-    fileName: photo.name,
-    contentType: photo.contentType,
-  );
-
-  final path = upload.valueOrNull;
-  if (path == null) {
-    return 'Tu cuenta fue creada, pero la foto de la licencia no se subió. '
-        'La oficina te la pedirá.';
-  }
-
-  final attached = await gateway.attachDriverDocument(
-    driverId: driverId,
-    type: DriverDocumentType.licencia,
-    storagePath: path,
-    fileName: photo.name,
-    contentType: photo.contentType,
-    sizeBytes: photo.bytes.lengthInBytes,
-    expiresAt: expiry,
-  );
-
-  if (attached.isErr) {
-    return 'Tu cuenta fue creada, pero la foto de la licencia no quedó '
-        'registrada. La oficina te la pedirá.';
   }
   return null;
 }
@@ -730,119 +690,6 @@ class _AvatarField extends StatelessWidget {
           Text(
             error!,
             textAlign: TextAlign.center,
-            style: text.bodySmall?.copyWith(color: BrandColors.danger),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _PhotoField extends StatelessWidget {
-  const _PhotoField({
-    required this.photo,
-    required this.error,
-    required this.onPick,
-    required this.onClear,
-  });
-
-  final PickedPhoto? photo;
-  final String? error;
-  final VoidCallback onPick;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final picked = photo;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(Insets.md),
-          decoration: BoxDecoration(
-            color: BrandColors.offWhite,
-            borderRadius: Corners.brMd,
-            border: Border.all(
-              color: error != null ? BrandColors.danger : BrandColors.grey200,
-            ),
-          ),
-          child: Row(
-            children: [
-              if (picked != null) ...[
-                ClipRRect(
-                  borderRadius: Corners.brSm,
-                  child: Image.memory(
-                    picked.bytes,
-                    width: 48,
-                    height: 48,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(
-                      width: 48,
-                      height: 48,
-                      color: BrandColors.grey100,
-                      alignment: Alignment.center,
-                      child: const Icon(
-                        Icons.image_outlined,
-                        color: BrandColors.grey600,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: Insets.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        picked.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.bodyMedium,
-                      ),
-                      Text(
-                        picked.sizeLabel,
-                        style: text.bodySmall
-                            ?.copyWith(color: BrandColors.grey600),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Quitar',
-                  onPressed: onClear,
-                  icon: const Icon(Icons.delete_outline),
-                ),
-              ] else ...[
-                const Icon(Icons.badge_outlined, color: BrandColors.grey600),
-                const SizedBox(width: Insets.md),
-                Expanded(
-                  child: Text(
-                    'Ningún archivo seleccionado',
-                    style: text.bodyMedium
-                        ?.copyWith(color: BrandColors.grey600),
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onPick,
-                  // The theme's buttons are full width; inside a row they have
-                  // to be told their own size.
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 40),
-                    padding: const EdgeInsets.symmetric(horizontal: Insets.md),
-                  ),
-                  icon: const Icon(Icons.photo_camera_outlined, size: 18),
-                  label: const Text('Subir foto'),
-                ),
-              ],
-            ],
-          ),
-        ),
-        if (error != null) ...[
-          const SizedBox(height: Insets.xs),
-          Text(
-            error!,
             style: text.bodySmall?.copyWith(color: BrandColors.danger),
           ),
         ],

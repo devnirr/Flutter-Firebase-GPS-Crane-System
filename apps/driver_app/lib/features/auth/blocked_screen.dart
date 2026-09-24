@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
 import 'app_presence.dart';
+import 'license_verification_view.dart';
 
 /// Shown when a chofer can sign in but cannot work.
 ///
@@ -15,6 +16,15 @@ class BlockedScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final driver = ref.watch(currentDriverProvider).value;
+
+    // A chofer who signed up from the app waits on the licence check first,
+    // and that screen says where it stands.
+    if (driver != null &&
+        driver.status == DriverStatus.inactive &&
+        driver.licenseVerification != null) {
+      return LicenseVerificationView(driver: driver);
+    }
+
     final support = ref.watch(appSettingsProvider).value?.supportPhone ?? '';
 
     // An account the chofer opened from the app is waiting on its first

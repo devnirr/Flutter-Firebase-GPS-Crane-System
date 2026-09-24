@@ -10,6 +10,7 @@ import {
   DriverDocumentType,
   DriverLiveState,
   DriverStatus,
+  LicenseVerificationState,
   OperatorReviewState,
   ServiceEventName,
   UserRole,
@@ -302,6 +303,14 @@ export const registerDriver = onCall({ region, cors: true }, async (request) => 
       // The chofer chose this password; there is no temporary one to replace.
       mustChangePassword: false,
       selfRegistered: true,
+      // Opened from a phone, so nobody has seen the licence: it is checked
+      // once both photos are up (`verifyDriverLicense`). Accounts the office
+      // opens carry no such field and skip the check.
+      licenseVerification: {
+        state: LicenseVerificationState.awaitingDocuments,
+        attempts: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
       createdBy: uid,
       ...newDriverDefaults(),
     });
