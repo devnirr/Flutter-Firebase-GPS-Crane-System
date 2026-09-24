@@ -1144,6 +1144,16 @@ abstract interface class FunctionsGateway {
   /// minute; the driver record streams the same result.
   Future<Result<LicenseVerificationState>> verifyDriverLicense();
 
+  /// The signed-in chofer fixes what they typed at registration, while their
+  /// licence check is rejected or waiting on photos. Follow it with
+  /// [verifyDriverLicense] to check the same photos against the new details.
+  Future<Result<void>> correctDriverRegistration({
+    required String name,
+    required String cedula,
+    required String licenseNumber,
+    required DateTime licenseExpiry,
+  });
+
   /// The office's verdict on a licence, overriding the automatic one. A
   /// rejection needs a [reason], which the chofer reads.
   Future<Result<void>> reviewLicenseVerification({

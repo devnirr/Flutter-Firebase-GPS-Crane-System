@@ -745,6 +745,20 @@ class FirebaseFunctionsGateway implements FunctionsGateway {
       );
 
   @override
+  Future<Result<void>> correctDriverRegistration({
+    required String name,
+    required String cedula,
+    required String licenseNumber,
+    required DateTime licenseExpiry,
+  }) =>
+      _callVoid('correctDriverRegistration', {
+        'name': name,
+        'cedula': cedula,
+        'licenseNumber': licenseNumber,
+        'licenseExpiry': licenseExpiry.toUtc().toIso8601String(),
+      });
+
+  @override
   Future<Result<void>> reviewLicenseVerification({
     required String driverId,
     required bool approve,

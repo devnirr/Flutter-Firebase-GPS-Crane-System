@@ -71,6 +71,7 @@ export {
 export {
   verifyDriverLicense,
   reviewLicenseVerification,
+  correctDriverRegistration,
 } from './callables/licenseVerification.js';
 export { createTruck, updateTruck, archiveTruck } from './callables/trucks.js';
 export {

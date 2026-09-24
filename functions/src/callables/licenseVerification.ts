@@ -1,9 +1,15 @@
+import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 import { onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
-import { DriverDocumentType, LicenseVerificationState, UserRole } from '../lib/enums.js';
+import {
+  DriverDocumentType,
+  DriverStatus,
+  LicenseVerificationState,
+  UserRole,
+} from '../lib/enums.js';
 import { Code, invalidArgument, permissionDenied, precondition } from '../lib/errors.js';
 import { FieldValue, Paths, Timestamp, db } from '../lib/firestore.js';
 import { requireAdmin, requireAuth } from '../lib/guards.js';
@@ -14,7 +20,7 @@ import {
   afterAttempt,
   decideLicense,
 } from '../lib/licenseCheck.js';
-import { audit } from './admin.js';
+import { audit, isValidCedula } from './admin.js';
 import { region } from './region.js';
 
 /**
@@ -260,5 +266,89 @@ export const reviewLicenseVerification = onCall({ region, cors: true }, async (r
 
   await audit(caller.uid, 'reviewLicenseVerification', driverId, { decision, reason });
   logger.info('license.reviewed', { driverId, decision, by: caller.uid });
+  return { ok: true };
+});
+
+const correctionInput = z.object({
+  name: z.string().trim().min(3).max(120),
+  cedula: z.string().min(11).max(20),
+  licenseNumber: z.string().trim().min(1).max(40),
+  licenseExpiry: z.string().datetime(),
+});
+
+/**
+ * A self-registered chofer fixes what they typed, after the check found it
+ * does not match their licence.
+ *
+ * Only while the check is waiting on them — rejected, or photos never sent —
+ * and the account inactive: once the licence is verified, or a person is
+ * looking at it, what they typed is what was checked and stays put. Clearing
+ * `inputKey` lets `verifyDriverLicense` read the same photos again against the
+ * corrected details, so a typo does not cost a new set of photos.
+ */
+export const correctDriverRegistration = onCall({ region, cors: true }, async (request) => {
+  const caller = requireAuth(request);
+  if (caller.role !== UserRole.driver) throw permissionDenied();
+
+  const parsed = correctionInput.safeParse(request.data);
+  if (!parsed.success) throw invalidArgument('Revisa tus datos.');
+  const input = parsed.data;
+
+  if (!isValidCedula(input.cedula)) throw invalidArgument('La cédula no es válida.');
+  const cedula = input.cedula.replace(/\D/g, '');
+
+  const licenseExpiry = new Date(input.licenseExpiry);
+  if (licenseExpiry.getTime() <= Date.now()) {
+    throw invalidArgument('Tu licencia está vencida.');
+  }
+
+  const driverRef = Paths.driver(caller.uid);
+  await db.runTransaction(async (tx) => {
+    const [snap, duplicate] = await Promise.all([
+      tx.get(driverRef),
+      tx.get(Paths.drivers().where('cedula', '==', cedula).limit(2)),
+    ]);
+    const driver = snap.data();
+    if (!driver) throw precondition(Code.notFound, 'Chofer no encontrado.');
+
+    const state = (driver[Field] as Record<string, unknown> | undefined)?.['state'];
+    const editable =
+      state === LicenseVerificationState.rejected ||
+      state === LicenseVerificationState.awaitingDocuments;
+    if (!editable || driver['status'] !== DriverStatus.inactive) {
+      throw precondition(
+        Code.invalidInput,
+        'Ya no puedes cambiar tus datos. Comunícate con la oficina.',
+      );
+    }
+
+    if (duplicate.docs.some((d) => d.id !== caller.uid)) {
+      throw precondition(
+        Code.invalidInput,
+        'Ya existe un chofer con esa cédula. Comunícate con la oficina.',
+      );
+    }
+
+    tx.update(driverRef, {
+      name: input.name,
+      cedula,
+      licenseNumber: input.licenseNumber,
+      licenseExpiry,
+      [`${Field}.inputKey`]: '',
+      [`${Field}.updatedAt`]: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  // The name the office and the customer see everywhere else.
+  await getAuth()
+    .updateUser(caller.uid, { displayName: input.name })
+    .catch(() => undefined);
+
+  await audit(caller.uid, 'correctDriverRegistration', caller.uid, {
+    cedula,
+    licenseNumber: input.licenseNumber,
+  });
+  logger.info('license.registrationCorrected', { driverId: caller.uid });
   return { ok: true };
 });

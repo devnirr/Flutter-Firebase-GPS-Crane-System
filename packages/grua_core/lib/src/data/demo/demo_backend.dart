@@ -1281,6 +1281,7 @@ class DemoBackend {
 
     const labels = [
       ('document', 'Es una licencia de conducir (frente y reverso)'),
+      ('dominican', 'Emitida en la República Dominicana'),
       ('legible', 'Las fotos se leen con claridad'),
       ('integrity', 'Sin señales de alteración'),
       ('name', 'El nombre coincide'),
@@ -1316,6 +1317,37 @@ class DemoBackend {
     );
     _emitDrivers();
     return (LicenseVerificationState.verified, null);
+  }
+
+  /// Mirrors `correctDriverRegistration`. Returns the refusal, or null.
+  String? correctRegistration(
+    String driverId, {
+    required String name,
+    required String cedula,
+    required String licenseNumber,
+    required DateTime licenseExpiry,
+  }) {
+    final driver = _drivers[driverId];
+    final check = driver?.licenseVerification;
+    if (driver == null) return 'Chofer no encontrado.';
+    if (check == null ||
+        !check.state.acceptsPhotos ||
+        driver.status != DriverStatus.inactive) {
+      return 'Ya no puedes cambiar tus datos. Comunícate con la oficina.';
+    }
+    final digits = cedula.replaceAll(RegExp(r'\D'), '');
+    if (_drivers.values.any((d) => d.id != driverId && d.cedula == digits)) {
+      return 'Ya existe un chofer con esa cédula. Comunícate con la oficina.';
+    }
+    _drivers[driverId] = driver.copyWith(
+      name: name,
+      cedula: digits,
+      licenseNumber: licenseNumber,
+      licenseExpiry: licenseExpiry,
+      updatedAt: _now(),
+    );
+    _emitDrivers();
+    return null;
   }
 
   /// Mirrors `reviewLicenseVerification`. Returns the refusal, or null.

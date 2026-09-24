@@ -40,13 +40,26 @@ misma licencia y, si existe, (3) la foto de perfil que el chofer se tomó.
 
 Tu trabajo es SOLO LEER y OBSERVAR. No decides si se aprueba.
 
-- frontIsLicense: true solo si la imagen 1 es el frente de una licencia de conducir
-  dominicana (INTRANT / DGTT), física y original.
-- backIsLicense: true solo si la imagen 2 es el reverso de una licencia de conducir dominicana.
+- frontIsLicense: true si la imagen 1 es el frente de una licencia de conducir física,
+  de cualquier país.
+- backIsLicense: true si la imagen 2 es el reverso de una licencia de conducir física,
+  de cualquier país.
+- issuer: quién emitió la licencia, en español: "República Dominicana", "Texas, EE. UU.",
+  "Puerto Rico"… Cadena vacía si no es una licencia o no se sabe.
+- isDominican: true solo si la licencia la emitió la República Dominicana (INTRANT / DGTT).
 - imageQuality: "good" si todo el texto importante se lee; "poor" si se lee con dudas;
   "unreadable" si no se puede leer.
 - fullName, cedula, licenseNumber: copia exactamente lo impreso. Cadena vacía si no se lee.
-- expiryDate: fecha de vencimiento en formato YYYY-MM-DD. Cadena vacía si no se lee.
+- expiryPrinted: la fecha de VENCIMIENTO copiada exactamente como está impresa, sin
+  convertirla (por ejemplo "26/11/2029"). Cadena vacía si no se lee.
+- expiryDate: esa misma fecha de vencimiento en formato YYYY-MM-DD. Cadena vacía si no se lee.
+
+Licencia dominicana (INTRANT), para ubicar cada dato:
+- El nombre ocupa una o dos líneas junto a la foto: cópialo completo.
+- El número de 11 dígitos debajo de la foto (por ejemplo "00112511589") es la cédula y
+  también el número de licencia: ponlo en cedula y en licenseNumber.
+- Las fechas están en formato DÍA/MES/AÑO. El vencimiento es la fecha bajo "Vence".
+  NO la confundas con "Emisión", "Nacimiento" ni "Primera Emisión" (en el reverso).
 - faceMatch: compara la cara de la licencia con la foto de perfil. "match" si parecen la
   misma persona, "no_match" si claramente son personas distintas, "unclear" si no se
   puede saber, "no_face" si la licencia no muestra una cara. Sin foto de perfil: "unclear".
@@ -62,10 +75,13 @@ const schema = {
   properties: {
     frontIsLicense: { type: Type.BOOLEAN },
     backIsLicense: { type: Type.BOOLEAN },
+    issuer: { type: Type.STRING },
+    isDominican: { type: Type.BOOLEAN },
     imageQuality: { type: Type.STRING, enum: ['good', 'poor', 'unreadable'] },
     fullName: { type: Type.STRING },
     cedula: { type: Type.STRING },
     licenseNumber: { type: Type.STRING },
+    expiryPrinted: { type: Type.STRING },
     expiryDate: { type: Type.STRING },
     faceMatch: { type: Type.STRING, enum: ['match', 'no_match', 'unclear', 'no_face'] },
     tamperingSuspected: { type: Type.BOOLEAN },
@@ -74,10 +90,13 @@ const schema = {
   required: [
     'frontIsLicense',
     'backIsLicense',
+    'issuer',
+    'isDominican',
     'imageQuality',
     'fullName',
     'cedula',
     'licenseNumber',
+    'expiryPrinted',
     'expiryDate',
     'faceMatch',
     'tamperingSuspected',
@@ -122,10 +141,13 @@ export async function readLicense(
   return {
     frontIsLicense: raw.frontIsLicense === true,
     backIsLicense: raw.backIsLicense === true,
+    issuer: raw.issuer ?? '',
+    isDominican: raw.isDominican === true,
     imageQuality: raw.imageQuality ?? 'unreadable',
     fullName: raw.fullName ?? '',
     cedula: raw.cedula ?? '',
     licenseNumber: raw.licenseNumber ?? '',
+    expiryPrinted: raw.expiryPrinted ?? '',
     expiryDate: raw.expiryDate ?? '',
     faceMatch: raw.faceMatch ?? 'unclear',
     tamperingSuspected: raw.tamperingSuspected === true,

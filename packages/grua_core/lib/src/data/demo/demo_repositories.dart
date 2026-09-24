@@ -1742,6 +1742,25 @@ class DemoFunctionsGateway implements FunctionsGateway {
   }
 
   @override
+  Future<Result<void>> correctDriverRegistration({
+    required String name,
+    required String cedula,
+    required String licenseNumber,
+    required DateTime licenseExpiry,
+  }) =>
+      _delayed(
+        _refusedOr(
+          _backend.correctRegistration(
+            _backend.currentUserId,
+            name: name,
+            cedula: cedula,
+            licenseNumber: licenseNumber,
+            licenseExpiry: licenseExpiry,
+          ),
+        ),
+      );
+
+  @override
   Future<Result<void>> reviewLicenseVerification({
     required String driverId,
     required bool approve,

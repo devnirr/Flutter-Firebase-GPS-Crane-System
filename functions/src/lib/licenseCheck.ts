@@ -13,16 +13,22 @@ import { dateKey } from './time.js';
 
 /** What the model reports about the two sides and the profile photo. */
 export interface LicenseReading {
-  /** The front is a Dominican driver's licence. */
+  /** The front is a driver's licence, from any country. */
   frontIsLicense: boolean;
-  /** The back is the back of a Dominican driver's licence. */
+  /** The back is the back of a driver's licence, from any country. */
   backIsLicense: boolean;
+  /** Who issued it, in Spanish: `República Dominicana`, `Texas, EE. UU.`… */
+  issuer: string;
+  /** Issued by the Dominican Republic. Only these can tow here. */
+  isDominican: boolean;
   /** How readable the two photos are, taken together. */
   imageQuality: 'good' | 'poor' | 'unreadable';
   fullName: string;
   cedula: string;
   licenseNumber: string;
-  /** `YYYY-MM-DD`, or '' when it cannot be read. */
+  /** The expiry exactly as printed, unconverted: `26/11/2029`. */
+  expiryPrinted: string;
+  /** The model's own `YYYY-MM-DD` for it, or '' when it cannot be read. */
   expiryDate: string;
   /** The face on the licence against the profile photo. */
   faceMatch: 'match' | 'no_match' | 'unclear' | 'no_face';
@@ -116,6 +122,33 @@ export function compareLicenseNumber(
 
 const isoDate = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * `26/11/2029` → `2029-11-26`. Dominican licences print day first; a value
+ * that cannot be a real date gives ''.
+ */
+export function parsePrintedDate(printed: string): string {
+  const match = /(\d{1,2})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{4})/.exec(printed);
+  if (!match) return '';
+  const [day, month, year] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return '';
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+/**
+ * The expiry the card shows, read in code from the printed text and checked
+ * against the model's own conversion. When the two disagree the reading is
+ * not trusted either way: `conflict` sends the check to a person rather than
+ * rejecting a valid licence as expired.
+ */
+export function printedExpiry(reading: LicenseReading): { date: string; conflict: boolean } {
+  const parsed = parsePrintedDate(reading.expiryPrinted);
+  const model = isoDate.test(reading.expiryDate) ? reading.expiryDate : '';
+  if (parsed && model && parsed !== model) return { date: '', conflict: true };
+  return { date: parsed || model, conflict: false };
+}
+
 /** Builds the checks and decides. [now] is injected for the tests. */
 export function decideLicense(
   reading: LicenseReading,
@@ -133,10 +166,19 @@ export function decideLicense(
     'Es una licencia de conducir (frente y reverso)',
     isLicense ? 'pass' : 'fail',
     !reading.frontIsLicense
-      ? 'El frente no parece una licencia dominicana.'
+      ? 'El frente no parece una licencia de conducir.'
       : !reading.backIsLicense
-        ? 'El reverso no parece el de una licencia dominicana.'
+        ? 'El reverso no parece el de una licencia de conducir.'
         : '',
+  );
+
+  // Separate from the above so a foreign licence is told so, rather than
+  // being told its photos are not a licence at all.
+  add(
+    'dominican',
+    'Emitida en la República Dominicana',
+    !isLicense ? 'unclear' : reading.isDominican ? 'pass' : 'fail',
+    reading.issuer ? `Emitida por: ${reading.issuer}` : '',
   );
 
   add(
@@ -178,27 +220,33 @@ export function decideLicense(
     `Escrito: ${claim.licenseNumber} · En la licencia: ${reading.licenseNumber || '—'}`,
   );
 
-  const printedExpiry = isoDate.test(reading.expiryDate) ? reading.expiryDate : '';
+  const { date: cardExpiry, conflict } = printedExpiry(reading);
   const typedExpiry = claim.licenseExpiry ? dateKey(claim.licenseExpiry) : '';
+  const printedDetail = reading.expiryPrinted || cardExpiry || '—';
   add(
     'expiryMatches',
     'La fecha de vencimiento coincide',
-    printedExpiry === '' || typedExpiry === ''
+    cardExpiry === '' || typedExpiry === ''
       ? 'unclear'
-      : printedExpiry === typedExpiry
+      : cardExpiry === typedExpiry
         ? 'pass'
         : 'fail',
-    `Escrita: ${typedExpiry || '—'} · En la licencia: ${printedExpiry || '—'}`,
+    `Escrita: ${typedExpiry || '—'} · En la licencia: ${printedDetail}`,
   );
 
   // The card is the authority on its own expiry; the typed date only stands
-  // in when the card could not be read.
-  const effectiveExpiry = printedExpiry || typedExpiry;
+  // in when the card could not be read at all. A reading that contradicts
+  // itself decides nothing.
+  const effectiveExpiry = conflict ? '' : cardExpiry || typedExpiry;
   add(
     'notExpired',
     'La licencia está vigente',
     effectiveExpiry === '' ? 'unclear' : effectiveExpiry >= dateKey(now) ? 'pass' : 'fail',
-    effectiveExpiry === '' ? '' : `Vence: ${effectiveExpiry}`,
+    conflict
+      ? `No se pudo leer con certeza: ${reading.expiryPrinted} / ${reading.expiryDate}`
+      : effectiveExpiry === ''
+        ? ''
+        : `Vence: ${effectiveExpiry}`,
   );
 
   const face: CheckResult = !options.hasProfilePhoto
@@ -230,6 +278,17 @@ export function decideLicense(
       checks,
     };
   }
+  if (failed('dominican')) {
+    return {
+      state: LicenseVerificationState.rejected,
+      reason:
+        (reading.issuer
+          ? `Esta licencia es de ${reading.issuer.replace(/\.+$/, '')}. `
+          : 'Esta licencia no es dominicana. ') +
+        'Solo aceptamos licencias de conducir emitidas en la República Dominicana.',
+      checks,
+    };
+  }
   if (failed('legible')) {
     return {
       state: LicenseVerificationState.rejected,
@@ -258,7 +317,7 @@ export function decideLicense(
       state: LicenseVerificationState.rejected,
       reason:
         `Lo que escribiste no coincide con tu licencia: ${joinSpanish(mismatches)}. ` +
-        'Sube fotos de tu propia licencia, o llama a la oficina si tus datos están mal escritos.',
+        'Si escribiste mal tus datos, corrígelos; si no, sube fotos de tu propia licencia.',
       checks,
     };
   }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:grua_core/grua_core.dart';
 
 import 'app_presence.dart';
+import 'correct_registration_screen.dart';
 import 'license_upload.dart';
 
 /// What a self-registered chofer sees until the office activates them: where
@@ -19,7 +20,6 @@ class LicenseVerificationView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final verification = driver.licenseVerification!;
     final submitting = ref.watch(licenseSubmittingProvider);
-    final support = ref.watch(appSettingsProvider).value?.supportPhone ?? '';
     final state = verification.state;
 
     // "Sending" wins over whatever the record says: new photos are on their
@@ -40,7 +40,7 @@ class LicenseVerificationView extends ConsumerWidget {
                 color: BrandColors.warning,
                 title: 'En revisión',
                 message: 'La oficina revisará tus documentos y activará tu '
-                    'cuenta. Si tienes dudas, llama a la oficina.',
+                    'cuenta.',
               ),
             LicenseVerificationState.rejected => _Resubmit(
                 driver: driver,
@@ -69,16 +69,7 @@ class LicenseVerificationView extends ConsumerWidget {
               _Steps(state: state, sending: submitting),
               const SizedBox(height: Insets.xxl),
               body,
-              const SizedBox(height: Insets.xxl),
-              if (support.isNotEmpty)
-                OutlinedButton.icon(
-                  onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Llamando a $support…')),
-                  ),
-                  icon: const Icon(Icons.call, size: 20),
-                  label: const Text('Llamar a la oficina'),
-                ),
-              const SizedBox(height: Insets.sm),
+              const SizedBox(height: Insets.xl),
               TextButton(
                 onPressed: submitting ? null : () => signOutDriver(ref),
                 child: const Text('Cerrar sesión'),
@@ -212,7 +203,7 @@ class _Outcome extends StatelessWidget {
   }
 }
 
-/// The reason, and two fresh photos to send.
+/// The reason, a way to fix mistyped details, and two fresh photos to send.
 class _Resubmit extends ConsumerStatefulWidget {
   const _Resubmit({
     required this.driver,
@@ -239,6 +230,10 @@ class _ResubmitState extends ConsumerState<_Resubmit> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final attempts = widget.driver.licenseVerification?.attempts ?? 0;
+    // Only a rejection has compared the details with the card; with no
+    // photos yet there is nothing to correct them against.
+    final canCorrect = widget.driver.licenseVerification?.state ==
+        LicenseVerificationState.rejected;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -265,6 +260,20 @@ class _ResubmitState extends ConsumerState<_Resubmit> {
           Text(
             'Intento $attempts de 3. Después, la oficina revisa tus '
             'documentos.',
+            textAlign: TextAlign.center,
+            style: text.bodySmall?.copyWith(color: BrandColors.grey600),
+          ),
+        ],
+        if (canCorrect) ...[
+          const SizedBox(height: Insets.lg),
+          OutlinedButton.icon(
+            onPressed: () => showCorrectRegistration(context, widget.driver),
+            icon: const Icon(Icons.edit_outlined, size: 20),
+            label: const Text('Corregir mis datos'),
+          ),
+          const SizedBox(height: Insets.sm),
+          Text(
+            'O sube fotos nuevas de tu licencia:',
             textAlign: TextAlign.center,
             style: text.bodySmall?.copyWith(color: BrandColors.grey600),
           ),

@@ -186,6 +186,67 @@ Future<void> main() async {
     expect(backend.allDrivers.length, before);
   });
 
+  testWidgets('a rejected chofer corrects a typo and the same photos pass',
+      (tester) async {
+    final backend = DemoBackend()..seed();
+    final driver = backend.createDriver(
+      name: 'Victr Manuel Perez',
+      cedula: '00112511589',
+      phone: '+18093333333',
+      email: 'victor@gruasrd.do',
+      licenseNumber: '00112511589',
+      licenseExpiry: DateTime.now().add(const Duration(days: 900)),
+      selfRegistered: true,
+    )!;
+    for (final type in [
+      DriverDocumentType.licencia,
+      DriverDocumentType.licenciaReverso,
+    ]) {
+      backend.attachDocument(
+        driver.id,
+        DriverDocument(type: type, storagePath: 'drivers/${driver.id}/${type.wire}'),
+      );
+    }
+    backend
+      ..verifyLicense(driver.id)
+      ..reviewLicense(
+        driver.id,
+        approve: false,
+        reason: 'Lo que escribiste no coincide con tu licencia: el nombre.',
+      );
+
+    final app = harness(backend);
+    // Signed in as the new chofer rather than the seeded one.
+    backend.currentUserId = driver.id;
+    await tester.pumpWidget(app);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, 'victor@gruasrd.do');
+    await tester.enterText(find.byType(TextFormField).last, 'secret123');
+    await tester.tap(find.text('ENTRAR'));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(find.text('Licencia rechazada'), findsOneWidget);
+    await tester.tap(find.text('Corregir mis datos'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Victr Manuel Perez'),
+      'Victor Manuel Perez Perez',
+    );
+    await tester.ensureVisible(find.text('GUARDAR Y VERIFICAR'));
+    await tester.tap(find.text('GUARDAR Y VERIFICAR'));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+    await tester.pumpAndSettle();
+
+    final saved = backend.driver(driver.id)!;
+    expect(saved.name, 'Victor Manuel Perez Perez');
+    // Checked again with the photos already up, no new ones asked for.
+    expect(saved.licenseVerification?.state, LicenseVerificationState.verified);
+    expect(find.text('Licencia verificada'), findsOneWidget);
+  });
+
   testWidgets('signing in reaches the home screen', (tester) async {
     await tester.pumpWidget(harness(DemoBackend()..seed()));
     await tester.pumpAndSettle();

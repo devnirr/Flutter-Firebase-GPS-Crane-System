@@ -52,7 +52,7 @@ export async function audit(
 }
 
 /** Dominican cédula: 11 digits, with a check digit. */
-function isValidCedula(raw: string): boolean {
+export function isValidCedula(raw: string): boolean {
   const digits = raw.replace(/\D/g, '');
   if (digits.length !== 11) return false;
 

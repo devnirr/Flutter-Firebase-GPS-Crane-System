@@ -7,6 +7,7 @@ import {
   compareLicenseNumber,
   compareNames,
   decideLicense,
+  parsePrintedDate,
 } from '../src/lib/licenseCheck.js';
 
 const now = new Date('2026-09-24T15:00:00Z');
@@ -22,10 +23,13 @@ const claim: LicenseClaim = {
 const clean: LicenseReading = {
   frontIsLicense: true,
   backIsLicense: true,
+  issuer: 'República Dominicana',
+  isDominican: true,
   imageQuality: 'good',
   fullName: 'WILFREDO ANTONIO REYES MARTÍNEZ',
   cedula: '402-0012345-9',
   licenseNumber: '40200123459',
+  expiryPrinted: '15/03/2028',
   expiryDate: '2028-03-15',
   faceMatch: 'match',
   tamperingSuspected: false,
@@ -59,12 +63,41 @@ describe('license check', () => {
     expect(verdict.reason).toContain('no parecen una licencia');
   });
 
+  it('tells a foreign licence it is foreign, not that it is no licence', () => {
+    const verdict = decide({ isDominican: false, issuer: 'Texas, EE. UU.' });
+    expect(verdict.state).toBe('rejected');
+    expect(verdict.reason).toBe(
+      'Esta licencia es de Texas, EE. UU. Solo aceptamos licencias de conducir ' +
+        'emitidas en la República Dominicana.',
+    );
+    expect(verdict.checks.find((c) => c.key === 'document')?.result).toBe('pass');
+  });
+
   it('rejects an unreadable photo', () => {
     expect(decide({ imageQuality: 'unreadable' }).state).toBe('rejected');
   });
 
+  it('reads printed dates day first', () => {
+    expect(parsePrintedDate('26/11/2029')).toBe('2029-11-26');
+    expect(parsePrintedDate('Vence 2/9/2025')).toBe('2025-09-02');
+    expect(parsePrintedDate('31/02/2029')).toBe('');
+    expect(parsePrintedDate('')).toBe('');
+  });
+
+  it('does not call a licence expired when the model mixes up its dates', () => {
+    // The card says 26/11/2029, but the model converted the issue date.
+    const verdict = decide({ expiryPrinted: '26/11/2029', expiryDate: '2025-09-02' });
+    expect(verdict.state).toBe('manual_review');
+    expect(verdict.checks.find((c) => c.key === 'notExpired')?.result).toBe('unclear');
+  });
+
+  it('trusts the printed text over a missing conversion', () => {
+    const verdict = decide({ expiryPrinted: '15/03/2028', expiryDate: '' });
+    expect(verdict.state).toBe('verified');
+  });
+
   it('rejects an expired licence', () => {
-    const verdict = decide({ expiryDate: '2026-09-23' });
+    const verdict = decide({ expiryPrinted: '23/09/2026', expiryDate: '2026-09-23' });
     expect(verdict.state).toBe('rejected');
     expect(verdict.reason).toContain('vencida');
   });
